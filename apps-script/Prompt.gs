@@ -3,7 +3,7 @@
  */
 
 // Gemini `responseSchema` (OpenAPI subset). Validation.gs re-checks everything regardless.
-const GEMINI_RESPONSE_SCHEMA = {
+const RF_GEMINI_RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
     reels: {
@@ -47,11 +47,11 @@ const GEMINI_RESPONSE_SCHEMA = {
  * `previousErrors` (optional) feeds validation failures back for a corrective retry.
  */
 function buildGeminiPrompt(product, previousErrors) {
-  const L = CONFIG.LIMITS;
+  const L = RF_CONFIG.LIMITS;
   const facts = parseConfirmedFeatures(product.features);
   const lines = [
     '당신은 한국 인스타그램 홈데코 릴스(9:16 세로 숏폼) 대본 작가입니다.',
-    '아래 상품에 대해 서로 다른 컨셉의 릴스 대본을 정확히 ' + CONFIG.REELS_PER_PRODUCT + '개 작성하세요.',
+    '아래 상품에 대해 서로 다른 컨셉의 릴스 대본을 정확히 ' + RF_CONFIG.REELS_PER_PRODUCT + '개 작성하세요.',
     '',
     '## 상품',
     '- 상품ID: ' + product.id,

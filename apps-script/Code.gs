@@ -1,8 +1,18 @@
 /**
  * Reels Factory — Google Sheets menu and workflow orchestration.
+ *
+ * @OnlyCurrentDoc
  */
 
+/**
+ * Simple trigger. If this Apps Script project already has its own onOpen(), delete this one
+ * and add the line `addReelsFactoryMenu();` inside the existing onOpen() instead.
+ */
 function onOpen() {
+  addReelsFactoryMenu();
+}
+
+function addReelsFactoryMenu() {
   SpreadsheetApp.getUi()
     .createMenu('릴스 팩토리')
     .addItem('선택한 상품으로 릴스 대본 3개 생성', 'generateReelsForSelectedProduct')
@@ -15,25 +25,69 @@ function onOpen() {
     .addToUi();
 }
 
-/** Creates missing REELS / PERFORMANCE / LOG sheets and verifies PRODUCTS headers. Never edits PRODUCTS. */
+/**
+ * Creates missing REELS / PERFORMANCE / LOG sheets and verifies PRODUCTS headers.
+ * Never edits PRODUCTS. For existing REELS / PERFORMANCE / LOG sheets, missing headers are
+ * appended to the right end of row 1 only after the user confirms.
+ */
 function setupSheets() {
   const ui = SpreadsheetApp.getUi();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const report = [];
   try {
-    const fields = CONFIG.PRODUCT_FIELDS;
-    requireHeaders_(
-      getProductsSheet_(ss),
-      Object.keys(fields).map(function (k) {
-        return fields[k];
-      })
+    const fields = RF_CONFIG.PRODUCT_FIELDS;
+    const productHeaders = Object.keys(fields).map(function (k) {
+      return fields[k];
+    });
+    const productsMissing = missingHeaders_(getProductsSheet_(ss), productHeaders);
+    report.push(
+      productsMissing.length
+        ? '✗ PRODUCTS: 헤더 없음 → ' + productsMissing.join(', ') + ' (PRODUCTS는 자동 수정하지 않습니다. 1행 헤더 이름을 확인하세요.)'
+        : '✓ PRODUCTS: 필요한 헤더 9개 확인'
     );
-    ensureSheet_(ss, CONFIG.SHEETS.REELS, CONFIG.REELS_HEADERS);
-    ensureSheet_(ss, CONFIG.SHEETS.PERFORMANCE, CONFIG.PERFORMANCE_HEADERS);
-    ensureSheet_(ss, CONFIG.SHEETS.LOG, CONFIG.LOG_HEADERS);
-    ui.alert('시트 준비 완료: PRODUCTS 헤더 확인, REELS / PERFORMANCE / LOG 준비됨.');
+
+    const managed = [
+      [RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS],
+      [RF_CONFIG.SHEETS.PERFORMANCE, RF_CONFIG.PERFORMANCE_HEADERS],
+      [RF_CONFIG.SHEETS.LOG, RF_CONFIG.LOG_HEADERS],
+    ];
+    const toFix = [];
+    managed.forEach(function (m) {
+      const existing = findSheet_(ss, m[0]);
+      if (!existing || (existing.getLastRow() === 0 && existing.getLastColumn() === 0)) {
+        ensureSheet_(ss, m[0], m[1]);
+        report.push('✓ ' + m[0] + ': ' + (existing ? '빈 시트에 헤더 작성' : '새로 만듦'));
+        return;
+      }
+      const missing = missingHeaders_(existing, m[1]);
+      if (missing.length) toFix.push({ sheet: existing, headers: m[1], missing: missing });
+      else report.push('✓ ' + m[0] + ': 기존 시트 확인');
+    });
+
+    if (toFix.length) {
+      const answer = ui.alert(
+        '기존 시트에 헤더 추가',
+        toFix
+          .map(function (t) {
+            return t.sheet.getName() + ': ' + t.missing.join(', ');
+          })
+          .join('\n') +
+          '\n\n위 헤더를 각 시트 1행 오른쪽 끝 빈 칸에 추가할까요? 기존 셀과 데이터는 바뀌지 않습니다.',
+        ui.ButtonSet.YES_NO
+      );
+      toFix.forEach(function (t) {
+        if (answer === ui.Button.YES) {
+          appendMissingHeaders_(t.sheet, t.headers);
+          report.push('✓ ' + t.sheet.getName() + ': 헤더 추가 → ' + t.missing.join(', '));
+        } else {
+          report.push('✗ ' + t.sheet.getName() + ': 헤더 없음 → ' + t.missing.join(', '));
+        }
+      });
+    }
+    ui.alert('시트 준비 결과\n\n' + report.join('\n'));
   } catch (e) {
     logEvent_('ERROR', 'setupSheets', '', e.message, e.stack);
-    ui.alert('시트 준비 실패\n\n' + e.message);
+    ui.alert('시트 준비 실패\n\n' + report.concat([e.message]).join('\n'));
   }
 }
 
@@ -61,7 +115,7 @@ function promptForGeminiApiKey() {
  */
 function generateValidatedRecords_(product, existingIds, existingKeywords) {
   let lastErrors = [];
-  for (let attempt = 1; attempt <= CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
     const raw = callGemini(buildGeminiPrompt(product, lastErrors));
     const result = prepareReelRecords(product, raw, existingIds, existingKeywords, {
       model: getGeminiModel(),
@@ -70,15 +124,15 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
     if (!result.errors.length) return { records: result.records, attempts: attempt };
     lastErrors = result.errors;
     logEvent_(
-      attempt < CONFIG.MAX_GEMINI_ATTEMPTS ? 'WARN' : 'ERROR',
+      attempt < RF_CONFIG.MAX_GEMINI_ATTEMPTS ? 'WARN' : 'ERROR',
       'validateGemini',
       product.id,
-      '검증 실패 (시도 ' + attempt + '/' + CONFIG.MAX_GEMINI_ATTEMPTS + '): ' + result.errors.length + '건',
+      '검증 실패 (시도 ' + attempt + '/' + RF_CONFIG.MAX_GEMINI_ATTEMPTS + '): ' + result.errors.length + '건',
       result.errors.join('\n') + '\n\n--- 원본 응답 ---\n' + raw
     );
   }
   throw new Error(
-    'Gemini 응답이 ' + CONFIG.MAX_GEMINI_ATTEMPTS + '회 모두 검증에 실패했습니다. REELS에는 아무것도 기록하지 않았습니다.\n' +
+    'Gemini 응답이 ' + RF_CONFIG.MAX_GEMINI_ATTEMPTS + '회 모두 검증에 실패했습니다. REELS에는 아무것도 기록하지 않았습니다.\n' +
       '자세한 내용은 LOG 시트를 확인하세요.\n\n- ' + lastErrors.slice(0, 8).join('\n- ')
   );
 }
@@ -90,7 +144,9 @@ function generateReelsForSelectedProduct() {
   const active = ss.getActiveSheet();
   const range = active.getActiveRange();
 
-  if (active.getName() !== CONFIG.SHEETS.PRODUCTS || !range || range.getNumRows() !== 1 || range.getRow() < 2) {
+  const productsTab = findSheet_(ss, RF_CONFIG.SHEETS.PRODUCTS);
+  const onProducts = productsTab && active.getName() === productsTab.getName();
+  if (!onProducts || !range || range.getNumRows() !== 1 || range.getRow() < 2) {
     ui.alert('PRODUCTS 시트에서 상품 행 하나(2행 이상)를 선택한 뒤 다시 실행하세요.');
     return;
   }
@@ -113,12 +169,12 @@ function generateReelsForSelectedProduct() {
     }
 
     const productsMap = getHeaderMap_(productsSheet);
-    const dupProducts = findDuplicates(readColumn_(productsSheet, productsMap, CONFIG.PRODUCT_FIELDS.id));
+    const dupProducts = findDuplicates(readColumn_(productsSheet, productsMap, RF_CONFIG.PRODUCT_FIELDS.id));
     if (dupProducts.indexOf(product.id) !== -1) {
       throw new Error('PRODUCTS에 상품ID "' + product.id + '"가 여러 번 있습니다. 중복을 정리한 뒤 다시 실행하세요.');
     }
 
-    const reelsSheet = ensureSheet_(ss, CONFIG.SHEETS.REELS, CONFIG.REELS_HEADERS);
+    const reelsSheet = ensureSheet_(ss, RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS);
     const reelsMap = getHeaderMap_(reelsSheet);
     const existingIds = readColumn_(reelsSheet, reelsMap, '릴스ID');
     const existingKeywords = readColumn_(reelsSheet, reelsMap, 'ManyChat 키워드');
@@ -154,7 +210,7 @@ function generateReelsForSelectedProduct() {
 
     let msg = 'REELS에 ' + ids.length + '개 행을 추가했습니다:\n' + ids.join('\n') +
       '\n\n다음 단계: 대본 검토 → Flow 프롬프트로 Google Flow에서 수동 생성 → MP4를 Drive에 업로드.';
-    if (!isPermissionApproved(product.permission)) msg += '\n\n⚠ ' + CONFIG.PERMISSION_UNVERIFIED_NOTE;
+    if (!isPermissionApproved(product.permission)) msg += '\n\n⚠ ' + RF_CONFIG.PERMISSION_UNVERIFIED_NOTE;
     ui.alert(msg);
   } catch (e) {
     logEvent_('ERROR', 'generateReels', productId, e.message, e.stack);

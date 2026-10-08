@@ -1,7 +1,8 @@
 # Google Sheets schema
 
 The Apps Script code finds every column **by its row-1 header name**, not by position.
-Columns can be reordered and extra operator columns can be added; required headers must keep their exact names.
+Columns can be reordered and extra operator columns can be added. Header matching ignores spaces and letter case
+(`상품 ID` = `상품ID`), and tab names tolerate surrounding spaces / case (`Products ` = `PRODUCTS`); otherwise the words must match.
 
 The script **never edits the PRODUCTS sheet** and never rewrites an existing header row.
 If a required header is missing it stops with an error naming the missing header.
@@ -21,6 +22,9 @@ If a required header is missing it stops with an error naming the missing header
 | I | 제작 상태 | no | Not modified by the script. |
 
 ## REELS (created by the script if missing)
+
+If a REELS tab already exists without some of these headers, **시트 준비** offers to append only the missing headers
+to the right end of row 1 (after confirmation; existing cells are never changed).
 
 One row per reel script. Three rows are appended per generation run, in a single write, only after all three pass validation.
 

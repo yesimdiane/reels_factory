@@ -46,7 +46,7 @@ function buildCta(keyword) {
 
 function isPermissionApproved(permissionValue) {
   const v = normalizeText(permissionValue);
-  return CONFIG.PERMISSION_APPROVED_VALUES.indexOf(v) !== -1;
+  return RF_CONFIG.PERMISSION_APPROVED_VALUES.indexOf(v) !== -1;
 }
 
 /**
@@ -76,7 +76,7 @@ function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
       .join('\n');
 
     const notes = [];
-    if (!approved) notes.push(CONFIG.PERMISSION_UNVERIFIED_NOTE);
+    if (!approved) notes.push(RF_CONFIG.PERMISSION_UNVERIFIED_NOTE);
     notes.push('게시·DM 자동화 전 사람 검토 필요.');
 
     return {
@@ -89,13 +89,13 @@ function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
       '자막': reel.captions.map(normalizeText).join('\n'),
       '장면(JSON)': JSON.stringify(reel.scenes),
       'Flow 프롬프트': flowPrompts,
-      'Flow 생성': CONFIG.FLOW_STATUS_MANUAL,
+      'Flow 생성': RF_CONFIG.FLOW_STATUS_MANUAL,
       'CTA': buildCta(keyword),
       'ManyChat 키워드': keyword,
-      '광고 표기': CONFIG.AFFILIATE_DISCLOSURE,
+      '광고 표기': RF_CONFIG.AFFILIATE_DISCLOSURE,
       '사용한 확인 기능': reel.facts_used.map(normalizeText).join('\n'),
       '영상 사용 허가 상태': normalizeText(product.permission) || '미확인',
-      '제작 상태': CONFIG.REEL_STATUS_SCRIPT_REVIEW,
+      '제작 상태': RF_CONFIG.REEL_STATUS_SCRIPT_REVIEW,
       '검토 메모': notes.join(' '),
       '생성 모델': meta.model,
       '생성일시': meta.generatedAt,

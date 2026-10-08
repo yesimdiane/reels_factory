@@ -26,10 +26,10 @@ function parseConfirmedFeatures(text) {
 /** Returns a list of actionable errors for a PRODUCTS row object. */
 function validateProduct(product) {
   const errors = [];
-  const f = CONFIG.PRODUCT_FIELDS;
+  const f = RF_CONFIG.PRODUCT_FIELDS;
   if (!normalizeText(product.id)) {
     errors.push('"' + f.id + '" 값이 비어 있습니다.');
-  } else if (!CONFIG.PRODUCT_ID_PATTERN.test(normalizeText(product.id))) {
+  } else if (!RF_CONFIG.PRODUCT_ID_PATTERN.test(normalizeText(product.id))) {
     errors.push('"' + f.id + '" 형식이 올바르지 않습니다: "' + product.id + '" (예: PRD-001).');
   }
   if (!normalizeText(product.name)) {
@@ -84,7 +84,7 @@ function viewerFacingTexts_(reel) {
  */
 function validateGeminiReels(payload, product) {
   const errors = [];
-  const L = CONFIG.LIMITS;
+  const L = RF_CONFIG.LIMITS;
   const facts = parseConfirmedFeatures(product.features);
   const factSet = {};
   facts.forEach(function (f) {
@@ -99,9 +99,9 @@ function validateGeminiReels(payload, product) {
     return { errors: ['응답에 "reels" 배열이 없습니다.'], reels: [] };
   }
   const reels = payload.reels;
-  if (reels.length !== CONFIG.REELS_PER_PRODUCT) {
+  if (reels.length !== RF_CONFIG.REELS_PER_PRODUCT) {
     errors.push(
-      '릴스 대본은 정확히 ' + CONFIG.REELS_PER_PRODUCT + '개여야 합니다 (받은 개수: ' + reels.length + ').'
+      '릴스 대본은 정확히 ' + RF_CONFIG.REELS_PER_PRODUCT + '개여야 합니다 (받은 개수: ' + reels.length + ').'
     );
   }
 
@@ -177,7 +177,7 @@ function validateGeminiReels(payload, product) {
         errors.push(p + '확인된 기능에 없는 수치가 포함되어 있습니다: "' + n + '".');
       }
     });
-    CONFIG.BANNED_PHRASES.forEach(function (phrase) {
+    RF_CONFIG.BANNED_PHRASES.forEach(function (phrase) {
       if (viewerText.indexOf(phrase) !== -1) {
         errors.push(p + '과장/검증 불가 표현이 포함되어 있습니다: "' + phrase + '".');
       }

@@ -31,7 +31,8 @@ Turn a verified product entry into three distinct 9:16 short-form video concepts
 - [ ] FFmpeg render workflow
 - [ ] ManyChat integration
 
-Setup and tests: [docs/setup.md](docs/setup.md). Run `npm test` locally (Node ≥ 20, no dependencies).
+Install: paste [`dist/ReelsFactory.gs`](dist/ReelsFactory.gs) into Extensions → Apps Script — step-by-step in [docs/setup.md](docs/setup.md).
+Developers: `npm test` (Node ≥ 20, no dependencies); `npm run build` after editing `apps-script/`.
 
 ## First product
 PRD-001 — 리템 우산꽂이 자석형 (magnetic umbrella holder).

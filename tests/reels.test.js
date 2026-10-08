@@ -44,10 +44,10 @@ test('PRD-001 fixture response produces 3 REELS records', () => {
     plain(res.records.map((r) => r['ManyChat 키워드'])),
     ['PRD001R01', 'PRD001R02', 'PRD001R03']
   );
-  const headers = gs('CONFIG.REELS_HEADERS');
+  const headers = gs('RF_CONFIG.REELS_HEADERS');
   for (const r of res.records) {
     assert.deepEqual(Object.keys(r).sort(), [...headers].sort());
-    assert.equal(r['광고 표기'], gs('CONFIG.AFFILIATE_DISCLOSURE'));
+    assert.equal(r['광고 표기'], gs('RF_CONFIG.AFFILIATE_DISCLOSURE'));
     assert.match(r['CTA'], new RegExp(r['ManyChat 키워드']));
     assert.match(r['Flow 생성'], /수동/);
     assert.match(r['검토 메모'], /허가 미확인/);

@@ -3,7 +3,12 @@
  * columns (and any extra columns the operator adds) are preserved.
  */
 
-/** Returns { headerName: 1-based column index } for row 1. */
+/** Header comparison key: ignores spaces, line breaks and letter case ("상품 ID" == "상품ID"). */
+function headerKey_(name) {
+  return normalizeText(name).replace(/\s+/g, '').toLowerCase();
+}
+
+/** Returns { headerKey: 1-based column index } for row 1. Use colOf_() to look up by header name. */
 function getHeaderMap_(sheet) {
   const lastCol = sheet.getLastColumn();
   const map = {};
@@ -12,24 +17,60 @@ function getHeaderMap_(sheet) {
     .getRange(1, 1, 1, lastCol)
     .getValues()[0]
     .forEach(function (h, i) {
-      const name = normalizeText(h);
-      if (name && !map[name]) map[name] = i + 1;
+      const key = headerKey_(h);
+      if (key && !map[key]) map[key] = i + 1;
     });
   return map;
 }
 
-function requireHeaders_(sheet, required) {
+/** 1-based column index of a header name, or 0 if absent. */
+function colOf_(map, headerName) {
+  return map[headerKey_(headerName)] || 0;
+}
+
+function missingHeaders_(sheet, required) {
   const map = getHeaderMap_(sheet);
-  const missing = required.filter(function (h) {
-    return !map[h];
+  return required.filter(function (h) {
+    return !colOf_(map, h);
   });
+}
+
+function requireHeaders_(sheet, required) {
+  const missing = missingHeaders_(sheet, required);
   if (missing.length) {
+    let hint = '헤더를 직접 추가하거나 이름을 확인하세요.';
+    if (sheet.getName() !== RF_CONFIG.SHEETS.PRODUCTS) {
+      hint = '메뉴 "릴스 팩토리 → 시트 준비"를 실행하면 기존 데이터를 건드리지 않고 1행 오른쪽 빈 칸에 누락된 헤더를 추가할 수 있습니다.';
+    }
     throw new Error(
       '"' + sheet.getName() + '" 시트 1행에 필요한 헤더가 없습니다: ' + missing.join(', ') +
-        '. 기존 데이터는 자동으로 수정하지 않습니다 — 헤더를 직접 추가하거나 이름을 확인하세요.'
+        '. 기존 데이터는 자동으로 수정하지 않습니다 — ' + hint
     );
   }
-  return map;
+  return getHeaderMap_(sheet);
+}
+
+/** Finds a sheet by name, tolerating surrounding spaces and letter case ("Products ", "products"). */
+function findSheet_(ss, name) {
+  const exact = ss.getSheetByName(name);
+  if (exact) return exact;
+  const want = normalizeText(name).toLowerCase();
+  const matches = ss.getSheets().filter(function (sh) {
+    return normalizeText(sh.getName()).toLowerCase() === want;
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/**
+ * Appends missing headers to the first empty cells at the right end of row 1.
+ * Existing headers and data are never moved or overwritten. Returns the headers added.
+ */
+function appendMissingHeaders_(sheet, headers) {
+  const missing = missingHeaders_(sheet, headers);
+  if (!missing.length) return [];
+  const start = sheet.getLastColumn() + 1;
+  sheet.getRange(1, start, 1, missing.length).setValues([missing]).setFontWeight('bold');
+  return missing;
 }
 
 /**
@@ -37,7 +78,7 @@ function requireHeaders_(sheet, required) {
  * Never modifies an existing header row; only verifies it.
  */
 function ensureSheet_(ss, name, headers) {
-  let sheet = ss.getSheetByName(name);
+  let sheet = findSheet_(ss, name);
   if (!sheet) {
     sheet = ss.insertSheet(name);
   }
@@ -50,14 +91,19 @@ function ensureSheet_(ss, name, headers) {
 }
 
 function getProductsSheet_(ss) {
-  const sheet = ss.getSheetByName(CONFIG.SHEETS.PRODUCTS);
-  if (!sheet) throw new Error('"' + CONFIG.SHEETS.PRODUCTS + '" 시트를 찾을 수 없습니다.');
+  const sheet = findSheet_(ss, RF_CONFIG.SHEETS.PRODUCTS);
+  if (!sheet) {
+    throw new Error(
+      '"' + RF_CONFIG.SHEETS.PRODUCTS + '" 시트를 찾을 수 없습니다. 상품 시트 탭 이름을 PRODUCTS로 바꾸거나 ' +
+        'Config의 RF_CONFIG.SHEETS.PRODUCTS를 실제 탭 이름으로 수정하세요.'
+    );
+  }
   return sheet;
 }
 
 /** Reads one PRODUCTS row into a product object. */
 function readProduct_(sheet, rowNumber) {
-  const fields = CONFIG.PRODUCT_FIELDS;
+  const fields = RF_CONFIG.PRODUCT_FIELDS;
   const headerNames = Object.keys(fields).map(function (k) {
     return fields[k];
   });
@@ -65,7 +111,7 @@ function readProduct_(sheet, rowNumber) {
   const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
   const product = { rowNumber: rowNumber };
   Object.keys(fields).forEach(function (k) {
-    product[k] = values[map[fields[k]] - 1];
+    product[k] = values[colOf_(map, fields[k]) - 1];
   });
   product.id = normalizeText(product.id);
   return product;
@@ -76,7 +122,7 @@ function readColumn_(sheet, map, headerName) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   return sheet
-    .getRange(2, map[headerName], lastRow - 1, 1)
+    .getRange(2, colOf_(map, headerName), lastRow - 1, 1)
     .getValues()
     .map(function (r) {
       return normalizeText(r[0]);
@@ -94,7 +140,8 @@ function appendRecords_(sheet, records) {
   const rows = records.map(function (rec) {
     const row = new Array(width).fill('');
     Object.keys(rec).forEach(function (h) {
-      if (map[h]) row[map[h] - 1] = rec[h];
+      const col = colOf_(map, h);
+      if (col) row[col - 1] = rec[h];
     });
     return row;
   });
@@ -106,7 +153,7 @@ function appendRecords_(sheet, records) {
 function logEvent_(level, action, productId, message, detail) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = ensureSheet_(ss, CONFIG.SHEETS.LOG, CONFIG.LOG_HEADERS);
+    const sheet = ensureSheet_(ss, RF_CONFIG.SHEETS.LOG, RF_CONFIG.LOG_HEADERS);
     appendRecords_(sheet, [
       {
         '일시': new Date(),

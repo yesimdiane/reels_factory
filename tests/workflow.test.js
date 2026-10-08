@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const SRC = path.join(__dirname, '..', 'apps-script');
+// Runs against the single-file bundle that users paste into Apps Script (see scripts/build-bundle.js).
+const BUNDLE = path.join(__dirname, '..', 'dist', 'ReelsFactory.gs');
 const PRODUCT_HEADERS = ['상품ID', '상품명', '카테고리', '확인된 기능', '타깃', '쿠팡파트너스 URL', '영상 소스 URL', '영상 사용 허가 상태', '제작 상태'];
 
 class MockSheet {
@@ -46,15 +47,17 @@ class MockSheet {
   setFrozenRows() {}
 }
 
-function setup({ productRows, reelsRows, geminiPayload, alertAnswer = 'YES' }) {
-  const products = new MockSheet('PRODUCTS', [PRODUCT_HEADERS, ...productRows]);
-  const sheets = { PRODUCTS: products };
+function setup({ productRows, reelsRows, geminiPayload, alertAnswer = 'YES', productsName = 'PRODUCTS', productHeaders = PRODUCT_HEADERS, extraSheets = {} }) {
+  const products = new MockSheet(productsName, [productHeaders, ...productRows]);
+  const sheets = { [productsName]: products };
   if (reelsRows) sheets.REELS = new MockSheet('REELS', reelsRows);
+  for (const [n, rows] of Object.entries(extraSheets)) sheets[n] = new MockSheet(n, rows);
   const alerts = [];
   let fetchCount = 0;
   const ss = {
     getSheetByName: (n) => sheets[n] || null,
     insertSheet: (n) => (sheets[n] = new MockSheet(n, [])),
+    getSheets: () => Object.values(sheets),
     getActiveSheet: () => products,
     toast() {},
   };
@@ -79,15 +82,14 @@ function setup({ productRows, reelsRows, geminiPayload, alertAnswer = 'YES' }) {
         const body = JSON.parse(opts.payload);
         assert.equal(body.generationConfig.responseMimeType, 'application/json');
         const payload = typeof geminiPayload === 'function' ? geminiPayload(fetchCount) : geminiPayload;
+        if (payload instanceof Error) throw payload;
         const text = JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(payload) }] } }] });
         return { getResponseCode: () => 200, getContentText: () => text };
       },
     },
     Utilities: { sleep() {} },
   });
-  for (const f of fs.readdirSync(SRC).filter((f) => f.endsWith('.gs')).sort()) {
-    vm.runInContext(fs.readFileSync(path.join(SRC, f), 'utf8'), ctx, { filename: f });
-  }
+  vm.runInContext(fs.readFileSync(BUNDLE, 'utf8'), ctx, { filename: 'ReelsFactory.gs' });
   return { ctx, sheets, products, alerts, fetches: () => fetchCount };
 }
 
@@ -123,7 +125,7 @@ test('generates 3 REELS rows for PRD-001 without touching PRODUCTS', () => {
 });
 
 test('writes by header name into an existing REELS sheet with reordered/extra columns', () => {
-  const headers = vm.runInContext('CONFIG.REELS_HEADERS', setup({ productRows: [] }).ctx).slice();
+  const headers = vm.runInContext('RF_CONFIG.REELS_HEADERS', setup({ productRows: [] }).ctx).slice();
   const reordered = ['운영자 메모', ...headers.reverse()];
   const existing = new Array(reordered.length).fill('');
   existing[0] = '기존 메모 유지';
@@ -199,4 +201,67 @@ test('rejects header row selection and missing features', () => {
   vm.runInContext('generateReelsForSelectedProduct()', env.ctx);
   assert.match(env.alerts.at(-1), /확인된 기능/);
   assert.equal(env.fetches(), 0);
+});
+
+test('tolerates spaced headers and a tab name with trailing space / different case', () => {
+  const spaced = ['상품 ID', '상품명', '카테고리', '확인된 기능 ', '타깃', '쿠팡파트너스 URL', '영상 소스 URL', '영상 사용 허가 상태', '제작 상태'];
+  const env = setup({ productRows: [], productsName: 'Products ', productHeaders: spaced, geminiPayload: fixturePayload() });
+  env.products.rows.push(prd001Row(env.ctx));
+  env.products.activeRow = 2;
+  vm.runInContext('generateReelsForSelectedProduct()', env.ctx);
+  assert.equal(env.sheets.REELS.rows.length, 4, env.alerts.at(-1));
+});
+
+test('setupSheets appends missing headers to an existing REELS sheet only after confirmation', () => {
+  const existing = [['릴스ID', '운영자 메모'], ['OLD-1', '보존']];
+  const env = setup({ productRows: [], reelsRows: existing, alertAnswer: 'NO' });
+  vm.runInContext('setupSheets()', env.ctx);
+  assert.deepEqual(env.sheets.REELS.rows[0], ['릴스ID', '운영자 메모'], 'declined → unchanged');
+  assert.match(env.alerts.at(-1), /✗ REELS/);
+
+  const env2 = setup({ productRows: [], reelsRows: existing, alertAnswer: 'YES' });
+  vm.runInContext('setupSheets()', env2.ctx);
+  const header = env2.sheets.REELS.rows[0];
+  assert.deepEqual(header.slice(0, 2), ['릴스ID', '운영자 메모']);
+  assert.equal(header.length, 2 + vm.runInContext('RF_CONFIG.REELS_HEADERS.length', env2.ctx) - 1);
+  assert.deepEqual(env2.sheets.REELS.rows[1], ['OLD-1', '보존']);
+  assert.ok(env2.sheets.PERFORMANCE && env2.sheets.LOG);
+  assert.match(env2.alerts.at(-1), /✓ PRODUCTS/);
+});
+
+test('setupSheets never edits PRODUCTS and reports its missing headers', () => {
+  const env = setup({ productRows: [], productHeaders: ['상품ID', '상품명'] });
+  const before = JSON.stringify(env.products.rows);
+  vm.runInContext('setupSheets()', env.ctx);
+  assert.equal(JSON.stringify(env.products.rows), before);
+  assert.match(env.alerts.at(-1), /✗ PRODUCTS.*확인된 기능/);
+});
+
+test('network/timeout errors from UrlFetchApp are retried, then reported clearly', () => {
+  const env = setup({ productRows: [], geminiPayload: () => new Error('Timeout: https://generativelanguage.googleapis.com') });
+  env.products.rows.push(prd001Row(env.ctx));
+  env.products.activeRow = 2;
+  vm.runInContext('generateReelsForSelectedProduct()', env.ctx);
+  assert.equal(env.fetches(), 3);
+  assert.match(env.alerts.at(-1), /Gemini API에 연결하지 못했습니다/);
+  assert.equal(env.sheets.REELS.rows.length, 1);
+});
+
+test('a transient network error followed by success still writes 3 rows', () => {
+  const good = fixturePayload();
+  const env = setup({ productRows: [], geminiPayload: (n) => (n === 1 ? new Error('Address unavailable') : good) });
+  env.products.rows.push(prd001Row(env.ctx));
+  env.products.activeRow = 2;
+  vm.runInContext('generateReelsForSelectedProduct()', env.ctx);
+  assert.equal(env.sheets.REELS.rows.length, 4);
+});
+
+test('onOpen builds the menu via addReelsFactoryMenu', () => {
+  const env = setup({ productRows: [] });
+  const items = [];
+  const menu = { addItem: (l, f) => (items.push(f), menu), addSeparator: () => menu, addToUi: () => {} };
+  vm.runInContext('SpreadsheetApp.getUi', env.ctx)().createMenu = () => menu;
+  vm.runInContext('onOpen()', env.ctx);
+  for (const fn of items) assert.equal(vm.runInContext(`typeof ${fn}`, env.ctx), 'function', fn);
+  assert.ok(items.includes('generateReelsForSelectedProduct'));
 });

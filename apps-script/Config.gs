@@ -5,7 +5,7 @@
  * Apps Script → Project Settings → Script Properties.
  */
 
-const CONFIG = {
+const RF_CONFIG = {
   SHEETS: {
     PRODUCTS: 'PRODUCTS',
     REELS: 'REELS',
@@ -70,7 +70,8 @@ const CONFIG = {
   REELS_PER_PRODUCT: 3,
 
   GEMINI_API_BASE: 'https://generativelanguage.googleapis.com/v1beta/models/',
-  DEFAULT_GEMINI_MODEL: 'gemini-2.5-flash',
+  // gemini-2.5-flash is scheduled for shutdown on 2026-10-16; override with Script Property GEMINI_MODEL.
+  DEFAULT_GEMINI_MODEL: 'gemini-3.5-flash',
   MAX_GEMINI_ATTEMPTS: 2,
 
   // Coupang Partners required disclosure wording. Inserted by code, never by the model.

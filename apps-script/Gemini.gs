@@ -17,7 +17,7 @@ function getGeminiApiKey_() {
 function getGeminiModel() {
   return (
     PropertiesService.getScriptProperties().getProperty('GEMINI_MODEL') ||
-    CONFIG.DEFAULT_GEMINI_MODEL
+    RF_CONFIG.DEFAULT_GEMINI_MODEL
   );
 }
 
@@ -27,13 +27,13 @@ function getGeminiModel() {
  */
 function callGemini(promptText) {
   const model = getGeminiModel();
-  const url = CONFIG.GEMINI_API_BASE + encodeURIComponent(model) + ':generateContent';
+  const url = RF_CONFIG.GEMINI_API_BASE + encodeURIComponent(model) + ':generateContent';
   const body = {
     contents: [{ role: 'user', parts: [{ text: promptText }] }],
+    // Temperature left at the model default: Gemini 3.x models are tuned for 1.0.
     generationConfig: {
-      temperature: 0.8,
       responseMimeType: 'application/json',
-      responseSchema: GEMINI_RESPONSE_SCHEMA,
+      responseSchema: RF_GEMINI_RESPONSE_SCHEMA,
     },
   };
   const options = {
@@ -47,8 +47,20 @@ function callGemini(promptText) {
   let response;
   let code;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    response = UrlFetchApp.fetch(url, options);
-    code = response.getResponseCode();
+    try {
+      response = UrlFetchApp.fetch(url, options);
+      code = response.getResponseCode();
+    } catch (e) {
+      // Network errors and UrlFetchApp timeouts throw even with muteHttpExceptions.
+      if (attempt === 3) {
+        throw new Error(
+          'Gemini API에 연결하지 못했습니다 (' + e.message + '). 인터넷/Google 서비스 상태를 확인하고 다시 시도하세요. ' +
+            '시간 초과가 반복되면 스크립트 속성 GEMINI_MODEL을 더 빠른 모델(예: Flash-Lite 계열)로 바꿔 보세요.'
+        );
+      }
+      Utilities.sleep(2000 * attempt);
+      continue;
+    }
     if (code !== 429 && code < 500) break;
     if (attempt < 3) Utilities.sleep(2000 * attempt);
   }
@@ -64,7 +76,10 @@ function callGemini(promptText) {
     let hint = '';
     if (code === 400) hint = ' (요청 형식 또는 모델명 GEMINI_MODEL을 확인하세요)';
     if (code === 401 || code === 403) hint = ' (GEMINI_API_KEY가 유효한지 확인하세요)';
-    if (code === 404) hint = ' (GEMINI_MODEL "' + model + '"이 존재하는지 확인하세요)';
+    if (code === 404) {
+      hint = ' (모델 "' + model + '"을 사용할 수 없습니다 — 종료된 모델일 수 있습니다. ' +
+        'Google AI Studio에서 현재 모델 ID를 확인해 스크립트 속성 GEMINI_MODEL에 입력하세요)';
+    }
     if (code === 429) hint = ' (요청 한도 초과 — 잠시 후 다시 시도하세요)';
     throw new Error('Gemini API 오류 HTTP ' + code + hint + ': ' + String(detail).slice(0, 500));
   }
