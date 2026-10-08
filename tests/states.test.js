@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const SRC = path.join(__dirname, '..', 'apps-script');
 const ctx = vm.createContext({ console });
-for (const f of ['Config.gs', 'Validation.gs', 'States.gs', 'Reels.gs', 'Prompt.gs', 'Fixtures.gs']) {
+for (const f of ['Config.gs', 'Validation.gs', 'States.gs', 'Reels.gs', 'Prompt.gs', 'Fixtures.gs', 'FlowPrompts.gs']) {
   vm.runInContext(fs.readFileSync(path.join(SRC, f), 'utf8'), ctx, { filename: f });
 }
 const gs = (expr) => vm.runInContext(expr, ctx);

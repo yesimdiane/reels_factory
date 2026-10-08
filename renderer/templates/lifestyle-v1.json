@@ -1,6 +1,6 @@
 {
   "name": "lifestyle-v1",
-  "version": 2,
+  "version": 3,
   "description": "Video-first lifestyle reel matched to the operator's reference Reel (seoul_jip_deco × yesimdiane): real footage, fast hard cuts (~1.8 s), one short single-line Korean caption per phrase, centred slightly below the middle, regular-weight white text with a thin dark edge.",
   "reference": {
     "source": "Operator reference Reel (Google Drive screen recording, 2026-10-09), measured with FFmpeg + pixel analysis; video area 1206x2028 visible of a 9:16 frame",
@@ -9,19 +9,53 @@
     "persistentCta": "'댓글에 '타일' 남겨주세요' centre ~74.5%, ~41 px, visible for the whole video",
     "footage": "creator on camera, hands handling the product, POV feet on the product, texture close-ups, wide shot of the space; natural daylight; no graphics or slides"
   },
-  "canvas": { "width": 1080, "height": 1920, "fps": 30 },
-  "safeArea": { "top": 0.12, "bottom": 0.2, "side": 0.06 },
-  "shots": { "minSec": 1.0, "targetSec": 1.8, "maxSec": 3.5, "stretchToleranceSec": 1.0, "clipHeadroomSec": 1.0 },
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30
+  },
+  "safeArea": {
+    "top": 0.12,
+    "bottom": 0.2,
+    "side": 0.06
+  },
+  "shots": {
+    "minSec": 1.0,
+    "targetSec": 1.8,
+    "maxSec": 3.5,
+    "stretchToleranceSec": 1.0,
+    "clipHeadroomSec": 1.0
+  },
   "shotlist": {
     "framing": {
-      "HOOK": ["미디엄 — 사람이 카메라를 보며 반응", "클로즈업 — 문제 상황 디테일"],
-      "PROBLEM": ["미디엄 — 불편한 상황", "클로즈업 — 문제 디테일"],
-      "DEMO": ["클로즈업 — 손으로 제품 사용", "POV — 사용하는 시점", "미디엄 — 사람과 제품"],
-      "BENEFIT": ["와이드 — 공간 전체", "POV — 걷거나 지나가며", "디테일 — 정리된 결과"],
-      "CTA": ["제품 클로즈업", "사람이 제품을 들고 카메라를 봄"]
+      "HOOK": [
+        "미디엄 — 사람이 카메라를 보며 반응",
+        "클로즈업 — 문제 상황 디테일"
+      ],
+      "PROBLEM": [
+        "미디엄 — 불편한 상황",
+        "클로즈업 — 문제 디테일"
+      ],
+      "DEMO": [
+        "클로즈업 — 손으로 제품 사용",
+        "POV — 사용하는 시점",
+        "미디엄 — 사람과 제품"
+      ],
+      "BENEFIT": [
+        "와이드 — 공간 전체",
+        "POV — 걷거나 지나가며",
+        "디테일 — 정리된 결과"
+      ],
+      "CTA": [
+        "제품 클로즈업",
+        "사람이 제품을 들고 카메라를 봄"
+      ]
     }
   },
-  "durationSec": { "min": 18, "max": 30 },
+  "durationSec": {
+    "min": 18,
+    "max": 30
+  },
   "subtitle": {
     "font": "NanumSquareRound",
     "size": 48,
@@ -35,31 +69,55 @@
     "maxLines": 1,
     "maxWidthRatio": 0.62,
     "lineHeight": 1.25,
-    "holdSec": 0.15
+    "holdSec": 0.15,
+    "translation": {
+      "enabled": false,
+      "comment": "Operator decision: Korean subtitles only (the reference also shows a small English line)."
+    }
   },
   "persistentCta": {
-    "enabled": false,
-    "comment": "The reference keeps '댓글에 '키워드' 남겨주세요' on screen for the whole video. Off by default because the operator asked for no promotional text on every frame; set enabled to true to match the reference exactly.",
+    "enabled": true,
+    "comment": "Operator decision (matches the reference): small comment-keyword line for the whole video, lower safe area. {키워드} = the reel's ManyChat keyword (PRODUCTS.'ManyChat 키워드' if set).",
     "text": "댓글에 '{키워드}' 남겨주세요",
     "centerY": 0.745,
-    "size": 41
+    "size": 38
   },
-  "narration": { "leadInSec": 0.15, "tailSec": 0.35 },
+  "narration": {
+    "leadInSec": 0.15,
+    "tailSec": 0.35
+  },
   "disclosure": {
     "inVideo": false,
     "comment": "Operator decision: the Coupang Partners disclosure goes in the Instagram caption (first line [광고] + full sentence), not in the video. Set inVideo to true to show it at the start and end of the video.",
     "startSec": 2.5,
     "onLastScene": true,
     "size": 34,
-    "persistentTag": { "enabled": false, "text": "광고", "size": 30 }
+    "persistentTag": {
+      "enabled": false,
+      "text": "광고",
+      "size": 30
+    }
   },
   "assets": {
     "minShortSide": 720,
-    "allowedSources": ["own-footage", "licensed", "flow-generated"],
-    "realProductBeats": ["DEMO", "BENEFIT", "CTA"],
-    "realProductSources": ["own-footage", "licensed"],
+    "allowedSources": [
+      "flow-generated",
+      "own-footage",
+      "licensed"
+    ],
+    "defaultSource": "flow-generated",
+    "realProductBeats": [
+      "DEMO",
+      "BENEFIT",
+      "CTA"
+    ],
+    "sceneClipMinSec": 4,
     "maxFlatRatio": 0.5,
-    "minMotion": 0.15
+    "minMotion": 0.15,
+    "comment": "One clip per scene (Google Flow: 8 s); the renderer takes several cuts from it. DEMO/BENEFIT/CTA must show the product (operator checks it matches the real product at video review ③)."
   },
-  "audio": { "loudnessLufs": -16, "keepClipAudio": false }
+  "audio": {
+    "loudnessLufs": -16,
+    "keepClipAudio": false
+  }
 }

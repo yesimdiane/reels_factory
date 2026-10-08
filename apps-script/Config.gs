@@ -27,6 +27,12 @@ const RF_CONFIG = {
     status: '제작 상태',
   },
 
+  // Optional PRODUCTS columns the operator may add (right of column I). Never required, never written.
+  PRODUCT_OPTIONAL_FIELDS: {
+    keyword: 'ManyChat 키워드', // e.g. 우산 — shared by this product's reels, unique across products
+    appearance: '제품 외형', // e.g. 슬림한 사각 두 조각, 무광 다크그레이 플라스틱 — used in Flow prompts
+  },
+
   REELS_HEADERS: [
     '릴스ID',
     '상품ID',
@@ -64,6 +70,8 @@ const RF_CONFIG = {
     'ManyChat 설정 확인일시',
     '인스타그램 URL',
     '오류',
+    // Written automatically on script approval (not part of the approved fingerprint).
+    'Flow 장면 프롬프트',
   ],
 
   // Append-only history of every operator decision and system transition.
@@ -125,6 +133,26 @@ const RF_CONFIG = {
     SCENE_MIN_SEC: 2,
     SCENE_MAX_SEC: 6,
     SCENE_NARRATION_MAX_CHARS: 30,
+  },
+
+  // Google Flow prompts generated (free, by code) after SCRIPT_APPROVED: one 8-second clip per scene.
+  FLOW: {
+    CLIP_SEC: 8,
+    ENVIRONMENT: 'a real, lived-in small Korean apartment, natural daylight from a window or door, realistic everyday colours',
+    CAMERA: {
+      HOOK: 'handheld medium shot at eye level, slight natural movement; ends with a quick natural whip pan',
+      PROBLEM: 'handheld medium shot that slowly moves closer to the problem detail',
+      DEMO: 'starts as a close-up of the hands using the product, then slowly pulls back to show the product in place; handheld, smooth',
+      BENEFIT: 'slow handheld walk-through: wide view of the space first, then a closer look at the tidy result',
+      CTA: 'slow push-in to a close-up of the product in place, then hold steady for the last 2 seconds',
+    },
+    INTERACTION: {
+      HOOK: 'show the everyday situation; the product may be absent or only in the background',
+      PROBLEM: 'show the problem clearly; do not show the product solving it yet',
+      DEMO: 'a person\'s hands use the product exactly as described, only in ways the verified features allow',
+      BENEFIT: 'show the result with the product in place and being used naturally',
+      CTA: 'the product is the clear subject, mounted or placed exactly as in the earlier scenes',
+    },
   },
 
   // Story structure. PROBLEM may be folded into the HOOK scene; DEMO and BENEFIT are required.

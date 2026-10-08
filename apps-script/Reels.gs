@@ -49,25 +49,39 @@ function isPermissionApproved(permissionValue) {
   return RF_CONFIG.PERMISSION_APPROVED_VALUES.indexOf(v) !== -1;
 }
 
+/** Normalised keyword entries: strings (product unknown) or { keyword, productId }. */
+function keywordOwners_(existingKeywords) {
+  const owners = {};
+  existingKeywords.forEach(function (k) {
+    const kw = normalizeText(typeof k === 'string' ? k : k.keyword).toUpperCase();
+    if (!kw) return;
+    (owners[kw] = owners[kw] || []).push(typeof k === 'string' ? '' : normalizeText(k.productId));
+  });
+  return owners;
+}
+
 /**
  * Builds REELS row objects keyed by REELS header names.
- * Throws if an ID or keyword would collide with existing data.
+ * Keyword: PRODUCTS.'ManyChat 키워드' if the operator set one (shared by that product's reels),
+ * otherwise a per-reel code (PRD001R01). Throws if an ID or keyword would collide with another product.
  */
 function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
   const ids = nextReelIds(product.id, existingIds, reels.length);
-  const keywordTaken = {};
-  existingKeywords.forEach(function (k) {
-    keywordTaken[normalizeText(k).toUpperCase()] = true;
-  });
+  const owners = keywordOwners_(existingKeywords);
+  const productKeyword = normalizeText(product.keyword);
   const approved = isPermissionApproved(product.permission);
 
   return reels.map(function (reel, i) {
     const reelId = ids[i];
-    const keyword = buildManyChatKeyword(reelId);
-    if (keywordTaken[keyword.toUpperCase()]) {
-      throw new Error('ManyChat 키워드 "' + keyword + '"가 이미 REELS에 존재합니다. 중복 키워드를 정리한 뒤 다시 실행하세요.');
+    const keyword = productKeyword || buildManyChatKeyword(reelId);
+    const key = keyword.toUpperCase();
+    const others = (owners[key] || []).filter(function (pid) {
+      return !productKeyword || pid !== product.id;
+    });
+    if (others.length) {
+      throw new Error('ManyChat 키워드 "' + keyword + '"가 이미 다른 릴스·상품에서 쓰이고 있습니다. 상품마다 다른 키워드를 쓰세요.');
     }
-    keywordTaken[keyword.toUpperCase()] = true;
+    (owners[key] = owners[key] || []).push(product.id);
 
     const notes = [];
     if (!approved) notes.push(RF_CONFIG.PERMISSION_UNVERIFIED_NOTE);

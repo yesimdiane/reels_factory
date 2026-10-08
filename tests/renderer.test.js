@@ -273,49 +273,54 @@ test('pre-flight QC: structure, keyword mapping, cut pacing, single-line caption
   assert.match(c.detail, /댓글에 '우산' 남겨주세요/);
 });
 
-test('ASSETS_REQUIRED: no footage → shot list written, job stopped, zero TTS calls', async () => {
+test('ASSETS_REQUIRED: no footage → one Flow clip per scene requested with the approved prompts, zero TTS calls', async () => {
   const { jobFile, secret } = issueJob();
   const dir = tmp();
   const provider = spyProvider();
   await assert.rejects(
     render({ jobFile, secret, template, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: path.join(dir, 'clips'), ffmpeg: FF, font: 'NanumGothic', analyze: okAnalysis }),
-    (e) => e instanceof AssetsRequiredError && e.code === 'ASSETS_REQUIRED' && e.report.required.length === 12
+    (e) => e instanceof AssetsRequiredError && e.code === 'ASSETS_REQUIRED' && e.report.required.length === 5 && e.report.required.reduce((n, r) => n + r.cuts, 0) === 12
   );
-  const shotlist = fs.readFileSync(path.join(dir, 'clips', 'PRD-001-R01', 'SHOTLIST.md'), 'utf8');
-  assert.match(shotlist, /S2-1 \| S2-1\.mp4 \| DEMO · 실제 제품 \| 저는 그냥 문에 붙였어요\. \|.*\| 클로즈업 — 손으로 제품 사용 \|/);
+  const reel = path.join(dir, 'clips', 'PRD-001-R01');
+  const shotlist = fs.readFileSync(path.join(reel, 'SHOTLIST.md'), 'utf8');
+  assert.match(shotlist, /Google Flow 클립 1개\*\* \(8초, 세로 9:16\)만 만들면 됩니다 — 총 5개/);
+  assert.match(shotlist, /\| S3\.mp4 \| DEMO · 제품 등장 \| 바닥 공간을 안 차지하니까 \|.*\| 3컷 \(/);
   assert.match(shotlist, /마켓\(쿠팡 등\) 상세페이지 영상은 사용 금지/);
-  assert.match(shotlist, /같은 file에 서로 다른 in/);
-  const tmpl = JSON.parse(fs.readFileSync(path.join(dir, 'clips', 'PRD-001-R01', 'assets.template.json'), 'utf8'));
-  assert.deepEqual(Object.keys(tmpl.shots), ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2']);
+  const flow = fs.readFileSync(path.join(reel, 'FLOW_PROMPTS.md'), 'utf8');
+  assert.equal((flow.match(/^## S\d/gm) || []).length, 5);
+  for (const k of ['PRODUCT (identical in every scene)', '190×55×50mm', 'CAMERA:', 'LIGHTING & ENVIRONMENT:', 'DURATION: 8 seconds', 'PRODUCT INTERACTION:', 'CONSISTENCY:']) assert.ok(flow.includes(k), k);
+  const tmpl = JSON.parse(fs.readFileSync(path.join(reel, 'assets.template.json'), 'utf8'));
+  assert.deepEqual(Object.keys(tmpl.scenes), ['S1', 'S2', 'S3', 'S4', 'S5']);
   assert.equal(provider.calls.length, 0);
   assert.equal(fs.existsSync(path.join(dir, 'out')), false, 'nothing rendered, no slides substituted');
+  // Writing the same shot list again does not touch the files (safe for repeated batch runs).
+  const before = fs.statSync(path.join(reel, 'SHOTLIST.md')).mtimeMs;
+  await assert.rejects(render({ jobFile, secret, template, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: path.join(dir, 'clips'), ffmpeg: FF, font: 'NanumGothic', analyze: okAnalysis }), AssetsRequiredError);
+  assert.equal(fs.statSync(path.join(reel, 'SHOTLIST.md')).mtimeMs, before);
 });
 
-test('asset provenance: no marketplace video, real product beats need real product footage, licensed needs rights', async () => {
+test('asset provenance: marketplace video rejected, licensed needs rights, product scenes must show the product, per-cut overrides allowed', async () => {
   const { sb } = storyboardOf();
   const dir = tmp();
   const reel = path.join(dir, 'PRD-001-R01');
   fs.mkdirSync(reel, { recursive: true });
-  const ids = ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2'];
-  ids.forEach((id) => fs.writeFileSync(path.join(reel, id + '.mp4'), 'x'));
-  const shots = Object.fromEntries(ids.map((id) => [id, { file: id + '.mp4', source: 'own-footage', showsProduct: true }]));
-  shots['S1-1'] = { file: 'S1-1.mp4', source: 'flow-generated', showsProduct: false }; // OK: HOOK may be generated
-  shots['S2-1'].source = 'flow-generated'; // not OK: DEMO must show the real product
-  shots['S3-1'].source = 'marketplace';
-  shots['S3-2'] = { file: 'S3-2.mp4', source: 'licensed', showsProduct: true };
-  shots['S4-1'].showsProduct = false;
-  delete shots['S5-1'];
-  fs.writeFileSync(path.join(reel, 'assets.json'), JSON.stringify({ reelId: 'PRD-001-R01', shots }));
+  for (const f of ['S1', 'S2', 'S3', 'S4', 'S3-2']) fs.writeFileSync(path.join(reel, f + '.mp4'), 'x');
+  fs.writeFileSync(path.join(reel, 'assets.json'), JSON.stringify({
+    reelId: 'PRD-001-R01',
+    scenes: { S1: { file: 'S1.mp4', source: 'flow-generated' }, S2: { file: 'S2.mp4', source: 'marketplace' }, S3: { file: 'S3.mp4', source: 'licensed' }, S4: { file: 'S4.mp4', source: 'flow-generated', showsProduct: false } },
+    shots: { 'S3-2': { file: 'S3-2.mp4', source: 'own-footage' } },
+  }));
   const { loadAssetManifest } = require('../renderer/lib/assets');
   const v = await validateAssets(loadAssetManifest(dir, 'PRD-001-R01'), sb, template, FF, okAnalysis);
   const msg = v.problems.join('\n');
   assert.equal(v.ok, false);
-  assert.doesNotMatch(msg, /S1-1/);
-  assert.match(msg, /S2-1 \[DEMO\] source "flow-generated"는 이 장면에 쓸 수 없습니다/);
-  assert.match(msg, /S3-1 \[DEMO\] source "marketplace"/);
-  assert.match(msg, /S3-2 \[DEMO\] licensed 영상은 rights/);
-  assert.match(msg, /S4-1 \[BENEFIT\] 이 장면은 실제 제품이 보여야 합니다/);
-  assert.match(msg, /S5-1 \[CTA\] 영상이 지정되지 않았습니다/);
+  assert.doesNotMatch(msg, /S1 /, 'AI-generated scene clips are allowed');
+  assert.match(msg, /S2 \[DEMO\] source "marketplace"/);
+  assert.match(msg, /S3 \[DEMO\] licensed 영상은 rights/);
+  assert.match(msg, /S4 \[BENEFIT\] 이 장면은 제품이 보여야 합니다/);
+  assert.match(msg, /S5 \[CTA\] 클립이 없습니다: S5\.mp4/);
+  assert.equal(v.shots['S3-2'].source, 'own-footage', 'per-cut override used');
+  assert.equal(v.shots['S3-1'].file, path.join(reel, 'S3.mp4'));
 });
 
 test('asset analysis rejects solid-colour, still-image, low-res and too-short clips', async () => {
@@ -323,18 +328,19 @@ test('asset analysis rejects solid-colour, still-image, low-res and too-short cl
   const dir = tmp();
   const reel = path.join(dir, 'PRD-001-R01');
   fs.mkdirSync(reel, { recursive: true });
-  const ids = ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2'];
-  ids.forEach((id) => fs.writeFileSync(path.join(reel, id + '.mp4'), 'x'));
-  fs.writeFileSync(path.join(reel, 'assets.json'), JSON.stringify({ reelId: 'PRD-001-R01', shots: Object.fromEntries(ids.map((id) => [id, { file: id + '.mp4', source: 'own-footage', showsProduct: true }])) }));
-  const fake = { 'S1-1': { flatRatio: 0.9, motion: 0 }, 'S2-1': { flatRatio: 0, motion: 0.01 }, 'S3-1': { width: 480, height: 854 }, 'S3-2': { duration: 2 } };
-  const analyze = async (_ff, file) => Object.assign({ width: 1080, height: 1920, duration: 10, frames: 30, flatRatio: 0, motion: 3 }, fake[path.basename(file, '.mp4')] || {});
+  for (const f of ['S1', 'S2', 'S3', 'S4', 'S5']) fs.writeFileSync(path.join(reel, f + '.mp4'), 'x');
+  const fake = { S1: { flatRatio: 0.9, motion: 0 }, S2: { flatRatio: 0, motion: 0.01 }, S3: { width: 480, height: 854 }, S4: { duration: 3 } };
+  const analyze = async (_ff, file) => Object.assign({ width: 1080, height: 1920, duration: 8, frames: 40, flatRatio: 0, motion: 3 }, fake[path.basename(file, '.mp4')] || {});
   const { loadAssetManifest } = require('../renderer/lib/assets');
-  const msg = (await validateAssets(loadAssetManifest(dir, 'PRD-001-R01'), sb, template, FF, analyze)).problems.join('\n');
-  assert.match(msg, /S1-1 .*단색\(솔리드 컬러\) 화면/);
-  assert.match(msg, /S2-1 .*정지 이미지/);
-  assert.match(msg, /S3-1 .*해상도가 낮습니다/);
-  assert.match(msg, /S3-2 .*길이가 부족합니다/);
-  assert.doesNotMatch(msg, /S4-1|S4-2|S5-1/);
+  const v = await validateAssets(loadAssetManifest(dir, 'PRD-001-R01'), sb, template, FF, analyze);
+  const msg = v.problems.join('\n');
+  assert.match(msg, /S1 .*단색\(솔리드 컬러\) 화면/);
+  assert.match(msg, /S2 .*정지 이미지/);
+  assert.match(msg, /S3 .*해상도가 낮습니다/);
+  assert.match(msg, /S4 .*길이가 부족합니다 \(사용 가능 3\.0초, 필요 6\.5초\)/);
+  assert.doesNotMatch(msg, /S5/);
+  assert.ok(v.autoManifest, 'no assets.json → provenance will be recorded automatically');
+  assert.equal(v.autoManifest.scenes.S5.source, 'flow-generated');
 });
 
 test('timeline: beats stretch only for the voice, hard cuts split evenly, short captions follow the voice, no disclosure in the video', () => {
@@ -361,7 +367,7 @@ test('timeline: beats stretch only for the voice, hard cuts split evenly, short 
   assert.deepEqual(tl2.disclosure.tag, [{ start: 2.5, end: 19 }]);
 });
 
-test('ASS matches the reference: regular-weight white single-line captions, thin dark edge, centred at 56%; nothing else by default', () => {
+test('ASS matches the reference: regular-weight white single-line captions at 56%, small keyword CTA line at 74.5% for the whole video', () => {
   const { sb, job } = storyboardOf();
   const tl = buildTimeline(sb, sb.beats.map(() => ({ file: 'x.wav', duration: 1.5 })), template);
   const ass = buildAss(tl, template, { font: 'NanumGothic', disclosureText: job.script['광고 표기'], keyword: '우산' });
@@ -371,22 +377,22 @@ test('ASS matches the reference: regular-weight white single-line captions, thin
   assert.equal(sub[3], '&H00FFFFFF', 'white');
   assert.equal(sub[5], '&H00000000', 'dark edge');
   assert.equal(sub[7], '0', 'regular weight, not bold');
-  assert.equal(sub[15], '1', 'outline style, no box');
   assert.equal(sub[16], '2', 'thin edge');
   assert.equal(sub[17], '1', 'soft shadow');
   const subs = ass.split('\n').filter((l) => /^Dialogue: .*,Sub,/.test(l));
   assert.equal(subs.length, 6, '5 lines → 6 single-line captions');
   assert.ok(subs.every((l) => l.includes('{\\pos(540,1075)}') && !l.includes('\\N')));
+  assert.doesNotMatch(ass, /While|English/, 'Korean only');
+  const cta = ass.split('\n').filter((l) => /^Dialogue: .*,Cta,/.test(l));
+  assert.equal(cta.length, 1, 'persistent CTA on by default');
+  assert.match(cta[0], /^Dialogue: 2,0:00:00\.00,.*\{\\pos\(540,1430\)\}댓글에 '우산' 남겨주세요$/);
+  assert.equal(ass.split('\n').find((l) => l.startsWith('Style: Cta,')).split(',')[2], '38', 'small');
+  assert.ok(1430 + 38 < geometry(template).safe.bottom, 'inside the lower safe area');
+  assert.equal(ass.split('\n').filter((l) => /^Dialogue: .*,(Disclosure|Tag),/.test(l)).length, 0, 'disclosure stays in the caption');
+  assert.doesNotMatch(ass, /쿠팡 파트너스/);
   assert.doesNotMatch(ass, /Headline|Placeholder|Keyword|Watermark|\\fad|\\move/);
-  assert.equal(ass.split('\n').filter((l) => /^Dialogue: .*,(Disclosure|Tag|Cta),/.test(l)).length, 0, 'no disclosure or CTA line by default');
-  assert.doesNotMatch(ass, /쿠팡 파트너스|광고/);
-
-  const withCta = JSON.parse(JSON.stringify(template));
-  withCta.persistentCta.enabled = true;
-  const ass2 = buildAss(tl, withCta, { font: 'X', disclosureText: '', keyword: '우산' });
-  const ctaLines = ass2.split('\n').filter((l) => /^Dialogue: .*,Cta,/.test(l));
-  assert.equal(ctaLines.length, 1);
-  assert.match(ctaLines[0], /^Dialogue: 2,0:00:00\.00,.*\{\\pos\(540,1430\)\}댓글에 '우산' 남겨주세요$/, 'whole video at 74.5% like the reference');
+  // The keyword follows each reel/product.
+  assert.match(buildAss(tl, template, { font: 'X', disclosureText: '', keyword: '타일' }), /댓글에 '타일' 남겨주세요/);
   assert.equal(esc('a{b}\\c\nd'), 'a｛b｝＼c\\Nd');
 });
 
@@ -408,11 +414,11 @@ test('real clip analysis: moving footage passes, solid colour and a still image 
   assert.ok(still.motion < template.assets.minMotion && still.flatRatio <= template.assets.maxFlatRatio, JSON.stringify(still));
 });
 
-test('full render from footage: 1080x1920, every shot from an asset, QC passes, reuse costs nothing', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {
+test('full render from one Flow clip per scene: auto provenance, spread cuts, 1080x1920, QC passes, reuse and template change cost no TTS', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {
   const { jobFile, secret } = issueJob();
   const dir = tmp();
   const clips = path.join(dir, 'clips');
-  writeFootage(clips, 'PRD-001-R01', ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2'], { 'S1-1': { source: 'flow-generated', showsProduct: false } });
+  for (const id of ['S1', 'S2', 'S3', 'S4', 'S5']) makeClip(path.join(clips, 'PRD-001-R01', id + '.mp4'), { sec: 8 });
   const provider = spyProvider();
   const opts = { jobFile, secret, template, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: clips, ffmpeg: FF, font: 'NanumGothic', preset: 'ultrafast', crf: 34 };
   const m = await render(opts);
@@ -420,22 +426,68 @@ test('full render from footage: 1080x1920, every shot from an asset, QC passes, 
   const v = m.output.streams.find((s) => s.codec_type === 'video');
   assert.equal(`${v.width}x${v.height}`, '1080x1920');
   assert.ok(m.output.duration >= 22.5 && m.output.duration <= 25.5, String(m.output.duration));
-  assert.deepEqual(Object.keys(m.footage), ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2']);
+  assert.equal(Object.keys(m.footage).length, 12, '12 cuts from 5 clips');
+  assert.deepEqual(['S3-1', 'S3-2', 'S3-3'].map((id) => m.footage[id].file), ['S3.mp4', 'S3.mp4', 'S3.mp4']);
+  const ins = ['S3-1', 'S3-2', 'S3-3'].map((id) => m.footage[id].in);
+  assert.ok(ins[0] < ins[1] && ins[1] < ins[2], 'cuts spread through the clip: ' + ins);
+  assert.equal(m.qc.postRender.checks.find((c) => c.id === 'visuals.noRepeatedFootage').ok, true);
+  assert.equal(m.aiGeneratedFootage, true);
+  assert.match(m.reviewNote, /실제 제품과 같은지 확인/);
+  const auto = JSON.parse(fs.readFileSync(path.join(clips, 'PRD-001-R01', 'assets.json'), 'utf8'));
+  assert.equal(auto.scenes.S2.source, 'flow-generated', 'provenance recorded next to the clips');
   for (const id of ['visuals.noPlaceholders', 'visuals.everyShotHasAsset', 'output.resolution', 'output.fps']) {
     assert.equal(m.qc.postRender.checks.find((c) => c.id === id).ok, true, id);
   }
-  assert.equal(provider.calls.length, 5, 'one TTS line per beat');
+  assert.equal(provider.calls.length, 5, 'one TTS line per scene');
   const again = await render(opts);
   assert.equal(again.reused, true);
   assert.equal(provider.calls.length, 5);
-
-  // A template change (here: the optional persistent CTA line) renders anew — but TTS stays cached.
-  const withCta = JSON.parse(JSON.stringify(template));
-  withCta.persistentCta.enabled = true;
-  const changed = await render(Object.assign({}, opts, { template: withCta }));
+  const noCta = JSON.parse(JSON.stringify(template));
+  noCta.persistentCta.enabled = false;
+  const changed = await render(Object.assign({}, opts, { template: noCta }));
   assert.equal(changed.reused, undefined);
   assert.notEqual(changed.output.path, m.output.path);
-  assert.equal(provider.calls.length, 5, 'no new TTS spend');
+  assert.equal(provider.calls.length, 5, 'template change: new render, no new TTS spend');
+});
+
+test('missing subtitle font stops the render before TTS (FONT_MISSING), unless fallback is allowed', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {
+  const { FontMissingError, findFont } = require('../renderer/lib/fonts');
+  assert.equal(findFont('NanumSquareRound').found, true);
+  const { jobFile, secret } = issueJob();
+  const dir = tmp();
+  const clips = path.join(dir, 'clips');
+  for (const id of ['S1', 'S2', 'S3', 'S4', 'S5']) makeClip(path.join(clips, 'PRD-001-R01', id + '.mp4'), { sec: 8 });
+  const noFont = JSON.parse(JSON.stringify(template));
+  noFont.subtitle.font = 'NotInstalledRoundFont';
+  const provider = spyProvider();
+  const opts = { jobFile, secret, template: noFont, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: clips, ffmpeg: FF, font: 'NanumGothic', preset: 'ultrafast', crf: 36 };
+  await assert.rejects(render(opts), (e) => e instanceof FontMissingError && e.code === 'FONT_MISSING');
+  assert.equal(provider.calls.length, 0);
+  const ok = await render(Object.assign({}, opts, { allowFontFallback: true }));
+  assert.equal(ok.qc.postRender.ok, true);
+});
+
+test('pending: renders every job whose clips are ready, leaves the rest at ASSETS_REQUIRED, never renders twice', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {
+  const { processPending } = require('../renderer/lib/pending');
+  const a = issueJob();
+  const dir = tmp();
+  const jobs = path.join(dir, 'jobs');
+  fs.mkdirSync(jobs);
+  fs.writeFileSync(path.join(jobs, 'PRD-001-R01_v1.render-job.json'), JSON.stringify(a.jobFile));
+  fs.writeFileSync(path.join(jobs, 'BROKEN.render-job.json'), JSON.stringify({ payload: '{}', signature: 'ab' }));
+  const clips = path.join(dir, 'clips');
+  const provider = spyProvider();
+  const make = (jobFile) => ({ jobFile, secret: a.secret, template, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: clips, ffmpeg: FF, font: 'NanumGothic', preset: 'ultrafast', crf: 36 });
+  const run = () => processPending({ cfg: { jobsDir: jobs }, args: {}, makeOptions: make, log: () => {} });
+  let r = await run();
+  assert.deepEqual(r.map((x) => [x.job, x.status]), [['BROKEN', 'GateError'], ['PRD-001-R01_v1', 'ASSETS_REQUIRED']]);
+  assert.equal(provider.calls.length, 0, 'no footage → no TTS');
+  for (const id of ['S1', 'S2', 'S3', 'S4', 'S5']) makeClip(path.join(clips, 'PRD-001-R01', id + '.mp4'), { sec: 8 });
+  r = await run();
+  assert.equal(r[1].status, 'RENDERED');
+  r = await run();
+  assert.equal(r[1].status, 'DONE (재사용)');
+  assert.equal(provider.calls.length, 5, 'TTS paid once across all runs');
 });
 
 test('static or flat footage stops the render before TTS', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {

@@ -127,7 +127,7 @@ function api_(fn) {
 }
 
 function productFromRecord_(rec) {
-  const f = RF_CONFIG.PRODUCT_FIELDS;
+  const f = Object.assign({}, RF_CONFIG.PRODUCT_FIELDS, RF_CONFIG.PRODUCT_OPTIONAL_FIELDS);
   const p = { rowNumber: rec._row };
   Object.keys(f).forEach(function (k) {
     p[k] = rec[f[k]];
@@ -144,7 +144,10 @@ function loadData_(ss) {
     return f[k];
   });
   requireHeaders_(productsSheet, productHeaders);
-  const products = readRecords_(productsSheet, productHeaders)
+  const optionalHeaders = Object.keys(RF_CONFIG.PRODUCT_OPTIONAL_FIELDS).map(function (k) {
+    return RF_CONFIG.PRODUCT_OPTIONAL_FIELDS[k];
+  });
+  const products = readRecords_(productsSheet, productHeaders.concat(optionalHeaders))
     .map(productFromRecord_)
     .filter(function (p) {
       return p.id;
@@ -206,6 +209,15 @@ function allowedActions_(status) {
   });
 }
 
+function parseFlowScenePrompts_(row) {
+  try {
+    const v = JSON.parse(cellText_(row['Flow 장면 프롬프트']) || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 function reelDetail_(ss, reelId) {
   const data = loadData_(ss);
   const found = findReel_(data, reelId);
@@ -246,6 +258,7 @@ function reelDetail_(ss, reelId) {
     keyword: cellText_(row['ManyChat 키워드']),
     disclosure: cellText_(row['광고 표기']),
     flowPrompts: cellText_(row['Flow 프롬프트']),
+    flowScenePrompts: parseFlowScenePrompts_(row),
     flowStatus: cellText_(row['Flow 생성']),
     approvedVersion: cellText_(row['승인 대본 버전']),
     approvedIntact: isApprovedScriptIntact(row),

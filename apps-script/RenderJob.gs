@@ -49,6 +49,21 @@ function buildRenderJobPayload(row, product, issuedAtIso, ttlHours) {
     approvedHash: cellText_(row['승인 대본 해시']),
     nextVideoVersion: videoVersionOf(row) + 1,
     permission: normalizeText(product.permission),
+    // What the renderer needs for the shot list; facts are already public product claims.
+    product: {
+      name: normalizeText(product.name),
+      facts: parseConfirmedFeatures(product.features),
+      appearance: normalizeText(product.appearance),
+    },
+    flowPrompts: (function () {
+      try {
+        const v = JSON.parse(cellText_(row['Flow 장면 프롬프트']) || '[]');
+        if (Array.isArray(v) && v.length) return v;
+      } catch (e) {
+        // fall through: approved before prompts existed → generate now (free)
+      }
+      return buildFlowScenePrompts(row, product);
+    })(),
     issuedAt: issued.toISOString(),
     expiresAt: expires.toISOString(),
     script: cells,

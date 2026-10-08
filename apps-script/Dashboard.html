@@ -435,10 +435,20 @@ function renderActions(main) {
     if (can('REOPEN_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '대본 승인 취소',
       onclick: function () { const n = askNote('승인 취소 사유 (선택)', false); if (n !== null) act('REOPEN_SCRIPT', { note: n }); } }));
     card.appendChild(b);
-    card.appendChild(h('details', { style: 'margin-top:12px' }, [
-      h('summary', { text: 'Google Flow 프롬프트 전체 (수동 생성용)' }),
-      copyBlock('장면별 프롬프트', d.flowPrompts, true),
-    ]));
+    // Detailed scene prompts are generated automatically on approval (free). One 8-second clip per scene.
+    const fp = d.flowScenePrompts || [];
+    card.appendChild(h('h3', { text: 'Google Flow 장면 프롬프트 (' + fp.length + '개 · 장면당 8초 클립 1개)' }));
+    if (!fp.length) {
+      card.appendChild(h('div', { class: 'banner warn', text: '대본 승인 후 자동으로 만들어집니다.' }));
+    } else {
+      card.appendChild(h('div', { class: 'muted', text: '각 프롬프트로 Flow에서 클립을 하나씩 만든 뒤, Google Drive의 ReelsFactory/clips/' + d.summary.reelId + '/ 폴더에 S1.mp4, S2.mp4 … 이름으로 올리세요. Mac 렌더러가 자동으로 편집합니다.' }));
+      fp.forEach(function (p) {
+        card.appendChild(h('details', { style: 'margin-top:8px' }, [
+          h('summary', { text: 'S' + p.scene + ' · ' + p.beat + ' → 파일 이름 S' + p.scene + '.mp4' }),
+          copyBlock('S' + p.scene + ' 프롬프트', p.prompt, true),
+        ]));
+      });
+    }
   } else if (st === 'VIDEO_REVIEW_PENDING') {
     card.appendChild(h('h3', { style: 'margin-top:0', text: '③ 영상 검토 (v' + d.summary.videoVersion + ')' }));
     card.appendChild(h('div', { class: 'btns' }, [

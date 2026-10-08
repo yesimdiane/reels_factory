@@ -7,7 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const SRC = path.join(__dirname, '..', 'apps-script');
-const FILES = ['Config.gs', 'Validation.gs', 'States.gs', 'Reels.gs', 'Prompt.gs', 'Fixtures.gs'];
+const FILES = ['Config.gs', 'Validation.gs', 'States.gs', 'Reels.gs', 'Prompt.gs', 'Fixtures.gs', 'FlowPrompts.gs'];
 
 function load() {
   const ctx = vm.createContext({ console });

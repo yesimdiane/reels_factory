@@ -1,5 +1,5 @@
 // Render orchestration, ordered so that nothing billable happens unless the render can succeed:
-//   1 approval gate → 2 storyboard → 3 pre-flight QC → 4 footage (ASSETS_REQUIRED) → 5 FFmpeg check
+//   1 approval gate → 2 storyboard → 3 pre-flight QC → 4 footage (ASSETS_REQUIRED) → 5 font + FFmpeg
 //   → 6 reuse → 7 TTS (budget-checked, cached) → 8 timeline/overlay/audio/video → 9 post-render QC.
 'use strict';
 const crypto = require('node:crypto');
@@ -10,7 +10,8 @@ const { verifyJob } = require('./job');
 const { buildStoryboard } = require('./storyboard');
 const { buildTimeline } = require('./plan');
 const { buildAss } = require('./ass');
-const { loadAssetManifest, validateAssets, writeAssetsRequired, AssetsRequiredError } = require('./assets');
+const { loadAssetManifest, validateAssets, writeAssetsRequired, spreadIn, AssetsRequiredError } = require('./assets');
+const { findFont, FontMissingError } = require('./fonts');
 const qc = require('./qc');
 const ffm = require('./ffmpeg');
 
@@ -36,26 +37,39 @@ async function render(opts) {
   const estimate = opts.tts.estimate(storyboard.beats.map((b) => b.ttsText));
 
   // 4. Footage. Missing or invalid → ASSETS_REQUIRED with a shot list. Never substitute slides.
-  const assets = await validateAssets(loadAssetManifest(opts.clipsDir, job.reelId), storyboard, template, opts.ffmpeg, opts.analyze);
+  const assets = await validateAssets(loadAssetManifest(opts.clipsDir, job.reelId), storyboard, template, opts.ffmpeg, opts.analyze, opts.defaultSource);
   if (opts.dryRun) return { dryRun: true, job, storyboard, preflight: pre, assets, estimate };
   if (!pre.ok) throw new qc.QcError(pre, '사전 점검');
   if (!assets.ok) {
     const files = writeAssetsRequired(opts.clipsDir, job, storyboard, template, assets);
     throw new AssetsRequiredError({
       reelId: job.reelId,
-      summary: `${assets.reqs.length}컷 필요 — 목록: ${files.shotlist}`,
+      summary: `장면 클립 ${assets.reqs.length}개 필요 (편집 컷 ${assets.reqs.reduce((n, r) => n + r.cuts.length, 0)}개) — 목록: ${files.shotlist}, 프롬프트: ${files.flowPrompts}`,
       problems: assets.problems,
       shotlist: files.shotlist,
       assetsTemplate: files.template,
-      required: assets.reqs.map((r) => ({ id: r.id, beat: r.beat, file: r.file, minClipSec: r.minClipSec, realProduct: r.realProduct, line: r.line })),
+      flowPrompts: files.flowPrompts,
+      required: assets.reqs.map((r) => ({ id: r.id, beat: r.beat, file: r.file, minClipSec: r.minClipSec, cuts: r.cuts.length, line: r.line })),
     });
   }
 
-  // 5. FFmpeg capabilities.
+  // 5. Subtitle font and FFmpeg capabilities (a wrong font would silently change the brand look).
+  const font = template.subtitle.font || opts.font;
+  if (!findFont(font, { fontsDir: opts.fontsDir }).found) {
+    if (!opts.allowFontFallback) throw new FontMissingError(font);
+    log(`! 글꼴 "${font}" 없음 — RF_ALLOW_FONT_FALLBACK=1 이므로 대체 글꼴로 진행합니다.`);
+  }
   const ff = await ffm.checkFfmpeg(opts.ffmpeg);
+  if (assets.autoManifest) {
+    // Provenance is recorded next to the clips (source = the operator's declared default).
+    fs.writeFileSync(path.join(assets.dir, 'assets.json'), JSON.stringify(assets.autoManifest, null, 2));
+    log('= assets.json 자동 작성 (source: ' + (opts.defaultSource || template.assets.defaultSource) + ')');
+  }
 
   // 6. Reuse: same approved script + same footage + same variant → nothing to pay or render.
-  const footageKey = crypto.createHash('sha256').update(JSON.stringify(Object.entries(assets.shots).map(([id, a]) => [id, a.in, sha256File(a.file)]))).digest('hex').slice(0, 8);
+  const fileHash = new Map();
+  const hashOf = (f) => (fileHash.has(f) ? fileHash.get(f) : (fileHash.set(f, sha256File(f)), fileHash.get(f)));
+  const footageKey = crypto.createHash('sha256').update(JSON.stringify(Object.entries(assets.shots).map(([id, a]) => [id, a.in, a.cutIndex, a.cutCount, hashOf(a.file)]))).digest('hex').slice(0, 8);
   const variant = opts.preview ? 'preview' : 'final';
   // Any template change (caption style, CTA option, pacing) must produce a new render, not reuse.
   const templateKey = crypto.createHash('sha256').update(JSON.stringify(template)).digest('hex').slice(0, 6);
@@ -72,8 +86,13 @@ async function render(opts) {
 
   // 8. Timeline → overlay → audio → video.
   const timeline = buildTimeline(storyboard, narration, template);
+  const resolved = {};
   for (const sh of timeline.shots) {
     const a = assets.shots[sh.id];
+    resolved[sh.id] = Object.assign({}, a, { in: spreadIn(a, sh.duration) });
+  }
+  for (const sh of timeline.shots) {
+    const a = resolved[sh.id];
     if (a.analysis.duration - a.in < sh.duration - 0.02) {
       throw new AssetsRequiredError({
         reelId: job.reelId,
@@ -87,13 +106,13 @@ async function render(opts) {
   fs.writeFileSync(path.join(work, 'subs.ass'), buildAss(timeline, template, { font: opts.font, disclosureText: job.script['광고 표기'], keyword: storyboard.keyword, preview: !!opts.preview }));
   await ffm.buildNarrationTrack(opts.ffmpeg, timeline, path.join(work, 'narration.wav'), work);
   const tmpOut = path.join(work, 'reel.mp4');
-  const inputs = await ffm.composeVideo(opts.ffmpeg, timeline, assets.shots, {
+  const inputs = await ffm.composeVideo(opts.ffmpeg, timeline, resolved, {
     assFile: 'subs.ass', fontsDir: opts.fontsDir, narrationFile: 'narration.wav', outFile: tmpOut, cwd: work, crf: opts.crf, preset: opts.preset,
   });
 
   // 9. Post-render QC.
   const probed = await ffm.probe(opts.ffmpeg.ffprobe, tmpOut);
-  const post = qc.postRender(probed, timeline, template, inputs, assets.shots);
+  const post = qc.postRender(probed, timeline, template, inputs, resolved);
   const fileName = `${job.reelId}_script-v${job.scriptVersion}${opts.preview ? '_PREVIEW' : ''}${post.ok ? '' : '_QC_FAILED'}.mp4`;
   const stored = await opts.storage.publish(tmpOut, key + '/' + fileName);
   const manifest = {
@@ -109,7 +128,11 @@ async function render(opts) {
     output: { path: stored.path, uri: stored.uri, sha256: sha256File(stored.path), duration: probed.duration, streams: probed.streams },
     qc: { preflight: pre, postRender: post },
     tts: Object.assign({}, estimate, opts.ttsInfo || {}, { lines: narration.map((n) => ({ text: n.text, duration: +n.duration.toFixed(3), cached: n.cached })) }),
-    footage: Object.fromEntries(Object.entries(assets.shots).map(([id, a]) => [id, { file: path.basename(a.file), in: a.in, source: a.source, showsProduct: a.showsProduct, rights: a.rights }])),
+    footage: Object.fromEntries(Object.entries(resolved).map(([id, a]) => [id, { file: path.basename(a.file), in: +a.in.toFixed(2), source: a.source, showsProduct: a.showsProduct, rights: a.rights }])),
+    aiGeneratedFootage: Object.values(resolved).some((a) => a.source === 'flow-generated'),
+    reviewNote: Object.values(resolved).some((a) => a.source === 'flow-generated')
+      ? 'AI(Google Flow) 생성 장면 포함: 영상 검토(③)에서 제품 모양·색·크기가 실제 제품과 같은지 확인하고, 게시할 때 인스타그램 "AI 정보" 라벨을 켜세요.'
+      : '',
     timeline: {
       total: +timeline.total.toFixed(3),
       beats: timeline.beats.map((b) => ({ scene: b.sceneNo, beat: b.beat, start: +b.start.toFixed(2), end: +b.end.toFixed(2), subtitle: b.subtitle.captions.map((c) => c.text), shots: b.shots.map((s) => s.id) })),

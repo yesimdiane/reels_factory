@@ -113,6 +113,11 @@ function readProduct_(sheet, rowNumber) {
   Object.keys(fields).forEach(function (k) {
     product[k] = values[colOf_(map, fields[k]) - 1];
   });
+  const optional = RF_CONFIG.PRODUCT_OPTIONAL_FIELDS;
+  Object.keys(optional).forEach(function (k) {
+    const col = colOf_(map, optional[k]);
+    product[k] = col ? values[col - 1] : '';
+  });
   product.id = normalizeText(product.id);
   return product;
 }

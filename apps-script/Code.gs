@@ -187,14 +187,39 @@ function generateScriptsForProduct_(ss, rowNumber, options) {
   const reelsSheet = ensureSheet_(ss, RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS);
   const reelsMap = getHeaderMap_(reelsSheet);
   const existingIds = readColumn_(reelsSheet, reelsMap, '릴스ID');
-  const existingKeywords = readColumn_(reelsSheet, reelsMap, 'ManyChat 키워드');
+  const existingKeywords = readRecords_(reelsSheet, ['ManyChat 키워드', '상품ID'])
+    .map(function (r) {
+      return { keyword: normalizeText(r['ManyChat 키워드']), productId: normalizeText(r['상품ID']) };
+    })
+    .filter(function (r) {
+      return r.keyword;
+    });
   const dupIds = findDuplicates(existingIds);
   if (dupIds.length) {
     throw new Error('REELS에 중복된 릴스ID가 있습니다: ' + dupIds.join(', ') + '. 정리한 뒤 다시 실행하세요.');
   }
-  const dupKeywords = findDuplicates(existingKeywords);
-  if (dupKeywords.length) {
-    throw new Error('REELS에 중복된 ManyChat 키워드가 있습니다: ' + dupKeywords.join(', ') + '. 정리한 뒤 다시 실행하세요.');
+  // A keyword may repeat within one product (same link) but must never point to two products.
+  const byKeyword = {};
+  existingKeywords.forEach(function (k) {
+    const key = k.keyword.toUpperCase();
+    (byKeyword[key] = byKeyword[key] || {})[k.productId] = true;
+  });
+  const clashes = Object.keys(byKeyword).filter(function (k) {
+    return Object.keys(byKeyword[k]).length > 1;
+  });
+  if (clashes.length) {
+    throw new Error('REELS에서 같은 ManyChat 키워드가 여러 상품에 쓰이고 있습니다: ' + clashes.join(', ') + '. 정리한 뒤 다시 실행하세요.');
+  }
+
+  // Check the product keyword before paying for Gemini: it must not belong to another product.
+  const productKeyword = normalizeText(product.keyword).toUpperCase();
+  if (productKeyword) {
+    const owner = existingKeywords.filter(function (k) {
+      return k.keyword.toUpperCase() === productKeyword && k.productId !== product.id;
+    })[0];
+    if (owner) {
+      throw new Error('ManyChat 키워드 "' + product.keyword + '"가 이미 다른 릴스·상품(' + owner.productId + ')에서 쓰이고 있습니다. 상품마다 다른 키워드를 쓰세요.');
+    }
   }
 
   const already = existingIds.filter(function (id) {

@@ -3,6 +3,7 @@
 //   node renderer/cli.js check                       # FFmpeg/font/config sanity — no API calls
 //   node renderer/cli.js estimate --job <file>       # verify approval + cost estimate — no API calls
 //   node renderer/cli.js render   --job <file> [--preview] [--force] [--tts google|local|silent]
+//   node renderer/cli.js pending [--watch <minutes>]  # render every job in RF_JOBS_DIR whose clips are ready
 //   node renderer/cli.js usage                       # TTS characters used this month
 'use strict';
 const path = require('node:path');
@@ -20,6 +21,7 @@ const { loadTemplate } = require('./lib/template');
 const { AssetsRequiredError } = require('./lib/assets');
 const { QcError } = require('./lib/qc');
 const { StoryboardError } = require('./lib/storyboard');
+const { findFont, FontMissingError, INSTALL_HELP } = require('./lib/fonts');
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -45,6 +47,41 @@ function makeProvider(name, cfg) {
   return createGoogleTts({ auth });
 }
 
+/** Render options shared by `render`, `estimate` and `pending`. */
+function buildOptions(jobFile, args, cfg, dryRun) {
+  const preview = !!args.preview;
+  // --preview = same footage, free local voice (to check timing before paying for Google TTS).
+  const providerName = args.tts || (preview ? 'local' : cfg.ttsProvider);
+  const provider = makeProvider(providerName, cfg);
+  return {
+    jobFile,
+    template: loadTemplate(args.template || process.env.RF_TEMPLATE || 'lifestyle-v1'),
+    secret: cfg.secret,
+    tts: createTtsService({
+      provider,
+      voice: providerName === 'google' ? cfg.voice : providerName,
+      speakingRate: cfg.speakingRate,
+      cacheDir: cfg.cacheDir,
+      ledgerFile: cfg.ledgerFile,
+      maxCharsPerJob: cfg.maxCharsPerJob,
+      monthlyCharLimit: cfg.monthlyCharLimit,
+    }),
+    storage: createLocalStorage({ outputDir: path.resolve(args.out || cfg.outputDir) }),
+    clipsDir: path.resolve(args.clips || cfg.clipsDir),
+    preview,
+    dryRun,
+    force: !!args.force,
+    ffmpeg: cfg.ffmpeg,
+    font: cfg.font,
+    fontsDir: cfg.fontsDir,
+    defaultSource: cfg.defaultSource,
+    allowFontFallback: cfg.allowFontFallback,
+    crf: cfg.crf,
+    preset: cfg.preset,
+    log: (m) => console.log(m),
+  };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cmd = args._[0] || 'help';
@@ -54,10 +91,13 @@ async function main() {
   if (cmd === 'check') {
     const ff = await checkFfmpeg(cfg.ffmpeg);
     log('✓ ' + ff.version);
-    log('글꼴: ' + cfg.font + (cfg.fontsDir ? ' (' + cfg.fontsDir + ')' : ''));
+    const tmpl = loadTemplate(args.template || process.env.RF_TEMPLATE || 'lifestyle-v1');
+    const fam = tmpl.subtitle.font || cfg.font;
+    const f = findFont(fam, { fontsDir: cfg.fontsDir });
+    log((f.found ? '✓' : '✗') + ' 자막 글꼴 ' + fam + (f.found ? ' (' + (f.file || f.via) + ')' : ' 없음 — ' + (INSTALL_HELP[fam] || '설치 필요')));
     log('TTS: ' + cfg.ttsProvider + ' / ' + cfg.voice + ' / 인증 ' + cfg.ttsAuth + (cfg.googleApiKey ? ' (키 설정됨)' : ''));
     log('렌더 키: ' + (cfg.secret ? '설정됨' : '없음 — Sheets 메뉴 "렌더 키 보기"'));
-    log('클립 폴더: ' + cfg.clipsDir + '\n출력 폴더: ' + cfg.outputDir + '\n캐시/사용량: ' + cfg.stateDir);
+    log('작업 폴더: ' + cfg.jobsDir + '\n클립 폴더: ' + cfg.clipsDir + '\n출력 폴더: ' + cfg.outputDir + '\n캐시/사용량: ' + cfg.stateDir);
     return;
   }
   if (cmd === 'usage') {
@@ -66,42 +106,24 @@ async function main() {
     log('월 한도(RF_TTS_MONTHLY_CHAR_LIMIT): ' + cfg.monthlyCharLimit);
     return;
   }
+  if (cmd === 'pending') {
+    const { processPending } = require('./lib/pending');
+    const once = () => processPending({ cfg, args, makeOptions: (jobFile) => buildOptions(jobFile, args, cfg, false), log });
+    await once();
+    if (args.watch) {
+      const minutes = Number(args.watch) || 10;
+      log(`… ${minutes}분마다 다시 확인합니다 (Ctrl+C로 종료).`);
+      setInterval(() => once().catch((e) => log('✗ ' + e.message)), minutes * 60 * 1000);
+    }
+    return;
+  }
   if (cmd !== 'render' && cmd !== 'estimate') {
-    log('사용법: node renderer/cli.js check | estimate --job <file> | render --job <file> [--preview] [--force] [--clips <dir>] [--template lifestyle-v1] [--tts google|local|silent] | usage');
+    log('사용법: node renderer/cli.js check | estimate --job <file> | render --job <file> [--preview] [--force] [--clips <dir>] [--template lifestyle-v1] [--tts google|local|silent] | pending [--watch <분>] | usage');
     return;
   }
   if (!args.job) throw new Error('--job <렌더 작업 파일> 이 필요합니다.');
 
-  const preview = !!args.preview;
-  // --preview = same footage, free local voice (to check timing before paying for Google TTS).
-  const providerName = args.tts || (preview ? 'local' : cfg.ttsProvider);
-  const provider = makeProvider(providerName, cfg);
-  const tts = createTtsService({
-    provider,
-    voice: providerName === 'google' ? cfg.voice : providerName,
-    speakingRate: cfg.speakingRate,
-    cacheDir: cfg.cacheDir,
-    ledgerFile: cfg.ledgerFile,
-    maxCharsPerJob: cfg.maxCharsPerJob,
-    monthlyCharLimit: cfg.monthlyCharLimit,
-  });
-  const result = await render({
-    jobFile: loadJobFile(path.resolve(args.job)),
-    template: loadTemplate(args.template || process.env.RF_TEMPLATE || 'lifestyle-v1'),
-    secret: cfg.secret,
-    tts,
-    storage: createLocalStorage({ outputDir: path.resolve(args.out || cfg.outputDir) }),
-    clipsDir: path.resolve(args.clips || cfg.clipsDir),
-    preview,
-    dryRun: cmd === 'estimate' || !!args['dry-run'],
-    force: !!args.force,
-    ffmpeg: cfg.ffmpeg,
-    font: cfg.font,
-    fontsDir: cfg.fontsDir,
-    crf: cfg.crf,
-    preset: cfg.preset,
-    log,
-  });
+  const result = await render(buildOptions(loadJobFile(path.resolve(args.job)), args, cfg, cmd === 'estimate' || !!args['dry-run']));
   if (result.dryRun) {
     const e = result.estimate;
     log('(점검만 — API 호출 없음)');
@@ -113,12 +135,16 @@ async function main() {
   log(JSON.stringify({ output: result.output.path, duration: result.output.duration, tts: { billableChars: result.tts.billableChars, estimatedUsd: result.tts.estimatedUsd }, reused: !!result.reused }, null, 2));
 }
 
-// Exit codes: 2 = approval/budget gate, 3 = ASSETS_REQUIRED, 4 = QC failed, 1 = other.
+// Exit codes: 2 = approval/budget gate, 3 = ASSETS_REQUIRED, 4 = QC failed, 5 = font missing, 1 = other.
 main().catch((e) => {
+  if (e instanceof FontMissingError) {
+    console.error('✗ FONT_MISSING (비용 발생 없음): ' + e.message);
+    process.exit(5);
+  }
   if (e instanceof AssetsRequiredError) {
     console.error('✗ ASSETS_REQUIRED (비용 발생 없음): ' + e.report.summary);
     e.report.problems.slice(0, 20).forEach((p) => console.error('  - ' + p));
-    console.error(JSON.stringify({ status: 'ASSETS_REQUIRED', reelId: e.report.reelId, shotlist: e.report.shotlist, required: e.report.required }, null, 2));
+    console.error(JSON.stringify({ status: 'ASSETS_REQUIRED', reelId: e.report.reelId, shotlist: e.report.shotlist, flowPrompts: e.report.flowPrompts, required: e.report.required }, null, 2));
     process.exit(3);
   }
   if (e instanceof QcError) {

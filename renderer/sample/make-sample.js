@@ -4,7 +4,8 @@
 //
 //   node renderer/sample/make-sample.js [--clips renderer/clips] [--out renderer/output] [--tts local|google]
 //
-// Footage is required: put the shots listed in renderer/clips/PRD-001-R01/SHOTLIST.md there.
+// Footage is required: one Google Flow clip per scene (S1.mp4 … S5.mp4) — see the generated
+// renderer/clips/PRD-001-R01/SHOTLIST.md and FLOW_PROMPTS.md.
 // Without footage the job stops with ASSETS_REQUIRED (exit 3) — it never substitutes slides.
 // --tts local (default) = free preview voice; --tts google = final voice (uses GOOGLE_TTS_API_KEY).
 'use strict';
@@ -35,14 +36,13 @@ async function main() {
 
   // 1. Sheet-side flow (same bundle you paste into Apps Script).
   const env = createEnv({ gemini: () => plain(env.gs('FIXTURE_PRD_001_GEMINI_RESPONSE')) });
-  env.sheets.PRODUCTS.rows.push(prd001Row(env.gs, { permission: '자체 제작', affiliateUrl: 'https://link.coupang.com/a/sample' }));
+  // The operator added the optional PRODUCTS column "ManyChat 키워드" = 우산 (used by all PRD-001 reels).
+  env.sheets.PRODUCTS.rows[0].push('ManyChat 키워드');
+  env.sheets.PRODUCTS.rows.push(prd001Row(env.gs, { permission: '자체 제작', affiliateUrl: 'https://link.coupang.com/a/sample' }).concat(['우산']));
   env.gs('setupSheets()');
   const call = (fn, ...a) => plain(env.gs(fn).apply(null, a));
   const must = (r) => { if (!r.ok) throw new Error(r.error); return r; };
   must(call('apiGenerateScripts', 'PRD-001'));
-  // Operator sets the post-specific ManyChat keyword to "우산" in REELS before approving.
-  const row = env.sheets.REELS.rows.findIndex((r) => r[0] === 'PRD-001-R01') + 1;
-  env.sheets.REELS.set(row, 'ManyChat 키워드', '우산');
   must(call('apiAction', 'PRD-001-R01', 'APPROVE_SCRIPT', { expectedStatus: 'SCRIPT_REVIEW_PENDING', expectedScriptVersion: 1, expectedVideoVersion: 0 }));
   must(call('apiAction', 'PRD-001-R01', 'START_VIDEO', { expectedStatus: 'SCRIPT_APPROVED', expectedScriptVersion: 1, expectedVideoVersion: 0 }));
   const jobRes = must(call('apiGetRenderJob', 'PRD-001-R01'));
@@ -69,6 +69,8 @@ async function main() {
     ffmpeg: cfg.ffmpeg,
     font: cfg.font,
     fontsDir: cfg.fontsDir,
+    defaultSource: cfg.defaultSource,
+    allowFontFallback: cfg.allowFontFallback,
     log: (m) => console.log(m),
   });
   console.log(JSON.stringify({ output: manifest.output.path, duration: manifest.output.duration, qc: manifest.qc.postRender.checks.map((c) => `${c.ok ? '✓' : '✗'} ${c.id}`) }, null, 2));

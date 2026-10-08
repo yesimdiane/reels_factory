@@ -35,6 +35,10 @@ function validateProduct(product) {
   if (!normalizeText(product.name)) {
     errors.push('"' + f.name + '" 값이 비어 있습니다.');
   }
+  const kw = normalizeText(product.keyword);
+  if (kw && !/^[^\s'"{}<>]{1,20}$/.test(kw)) {
+    errors.push('"' + RF_CONFIG.PRODUCT_OPTIONAL_FIELDS.keyword + '"는 공백·따옴표 없이 20자 이내 한 단어여야 합니다 (예: 우산).');
+  }
   if (parseConfirmedFeatures(product.features).length === 0) {
     errors.push(
       '"' + f.features + '" 값이 비어 있습니다. 검증된 기능을 한 줄에 하나씩 입력하세요.'

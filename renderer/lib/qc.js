@@ -83,8 +83,22 @@ function postRender(probe, timeline, template, inputs, shotAssets) {
     check('visuals.everyShotHasAsset', inputs.length === timeline.shots.length && timeline.shots.every((s) => shotAssets[s.id] && inputs.some((i) => i.shot === s.id)), `${inputs.length}/${timeline.shots.length}컷`),
     check('visuals.noPlaceholders', inputs.every((i) => i.type === 'asset'), inputs.map((i) => i.type).join(',')),
     check('visuals.noFlatOrStill', Object.values(shotAssets).every((s) => s.analysis.flatRatio <= template.assets.maxFlatRatio && s.analysis.motion >= template.assets.minMotion), '모든 소스 클립 단색·정지 아님'),
+    check('visuals.noRepeatedFootage', noRepeats(timeline, shotAssets), '같은 클립에서 자른 컷끼리 겹치지 않음', 'warn'),
     check('shots.finalLength', long.length === 0, long.length ? '음성 때문에 길어진 컷: ' + long.map((s) => `${s.id} ${s.duration.toFixed(1)}s`).join(', ') : '모든 컷 ' + tol + '초 이하', 'warn'),
   ]);
+}
+
+/** Cuts taken from the same clip should not show the same footage twice. */
+function noRepeats(timeline, shotAssets) {
+  const byFile = {};
+  timeline.shots.forEach((sh) => {
+    const a = shotAssets[sh.id];
+    (byFile[a.file] = byFile[a.file] || []).push([a.in, a.in + sh.duration]);
+  });
+  return Object.values(byFile).every((iv) => {
+    iv.sort((x, y) => x[0] - y[0]);
+    return iv.every((v, i) => i === 0 || v[0] >= iv[i - 1][1] - 0.35);
+  });
 }
 
 module.exports = { preflight, postRender, QcError };
