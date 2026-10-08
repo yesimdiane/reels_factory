@@ -12,8 +12,13 @@ const { createTtsService, splitNarration, BudgetError, voiceFamily } = require('
 const { createGoogleTts, apiKeyAuth, ENDPOINT } = require('../renderer/lib/tts/google');
 const { createSilentTts } = require('../renderer/lib/tts/silent');
 const { parseWav, silentWav } = require('../renderer/lib/wav');
-const { buildPlan, chunkSubtitle } = require('../renderer/lib/plan');
+const { buildTimeline } = require('../renderer/lib/plan');
 const { buildAss, esc } = require('../renderer/lib/ass');
+const { buildStoryboard, StoryboardError } = require('../renderer/lib/storyboard');
+const { validateAssets, analyzeClip, AssetsRequiredError } = require('../renderer/lib/assets');
+const { preflight, QcError } = require('../renderer/lib/qc');
+const { loadTemplate } = require('../renderer/lib/template');
+const { subtitleGeometry } = require('../renderer/lib/layout');
 const { createLocalStorage } = require('../renderer/lib/storage/local');
 const { render } = require('../renderer/lib/render');
 
@@ -21,12 +26,13 @@ const plain = (v) => JSON.parse(JSON.stringify(v));
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rf-test-'));
 
 // Real server flow → signed job for PRD-001-R01 in VIDEO_IN_PRODUCTION.
-function issueJob({ startVideo = true, permission = '자체 제작' } = {}) {
+function issueJob({ startVideo = true, permission = '자체 제작', keyword = '우산' } = {}) {
   const env = createEnv({ gemini: () => plain(env.gs('FIXTURE_PRD_001_GEMINI_RESPONSE')) });
   env.sheets.PRODUCTS.rows.push(prd001Row(env.gs, { permission, affiliateUrl: 'https://link.coupang.com/a/secret-link' }));
   env.gs('setupSheets()');
   const call = (fn, ...a) => plain(env.gs(fn).apply(null, a));
   call('apiGenerateScripts', 'PRD-001');
+  if (keyword) env.sheets.REELS.set(env.sheets.REELS.rows.findIndex((r) => r[0] === 'PRD-001-R01') + 1, 'ManyChat 키워드', keyword);
   call('apiAction', 'PRD-001-R01', 'APPROVE_SCRIPT', { expectedStatus: 'SCRIPT_REVIEW_PENDING', expectedScriptVersion: 1, expectedVideoVersion: 0 });
   if (startVideo) call('apiAction', 'PRD-001-R01', 'START_VIDEO', { expectedStatus: 'SCRIPT_APPROVED', expectedScriptVersion: 1, expectedVideoVersion: 0 });
   const res = call('apiGetRenderJob', 'PRD-001-R01');
@@ -91,25 +97,6 @@ test('verifyJob rejects missing secret, wrong secret, tampering, expiry, wrong s
   assert.throws(() => verifyJob(resign((q) => (q.script['내레이션'] += '!')), { secret }), /지문 불일치/);
   assert.throws(() => verifyJob(resign((q) => (q.permission = '미확인')), { secret }), /허가/);
   assert.throws(() => verifyJob({ hello: 1 }, { secret }), /형식/);
-});
-
-test('no TTS call happens when the gate, clips, FFmpeg or budget would stop the render', async () => {
-  const { jobFile, secret } = issueJob();
-  const dir = tmp();
-  const provider = spyProvider();
-  const base = {
-    jobFile, secret, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }),
-    clipsDir: path.join(dir, 'clips'), ffmpeg: { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' }, font: 'NanumGothic',
-  };
-  await assert.rejects(render(Object.assign({}, base, { secret: 'wrong' })), GateError);
-  await assert.rejects(render(base), /Flow 클립이 없습니다/); // final render needs real clips
-  await assert.rejects(render(Object.assign({}, base, { preview: true, ffmpeg: { ffmpeg: '/nonexistent/ffmpeg', ffprobe: '/nonexistent/ffprobe' } })), /FFmpeg/);
-  const tight = Object.assign({}, base, { preview: true, tts: service(provider, dir, { maxCharsPerJob: 10 }) });
-  if (hasFfmpeg) await assert.rejects(render(tight), BudgetError);
-  const dry = await render(Object.assign({}, base, { dryRun: true }));
-  assert.equal(dry.dryRun, true);
-  assert.ok(dry.estimate.billableChars > 50);
-  assert.equal(provider.calls.length, 0, 'nothing was synthesized');
 });
 
 // ------------------------------------------------------------------ TTS service
@@ -180,104 +167,246 @@ test('voice families map to prices; unknown voices are not guessed', () => {
   assert.equal(voiceFamily('local'), 'Unknown');
 });
 
-// ------------------------------------------------------------------ planning and overlay
+// ------------------------------------------------------------------ video-first design (lifestyle-v1)
 
-test('narration is split per sentence and subtitles never end mid-clause', () => {
-  assert.deepEqual(splitNarration('하나입니다. 둘이에요!  셋?'), ['하나입니다.', '둘이에요!', '셋?']);
-  const cues = chunkSubtitle('비 오는 날마다 현관 바닥에 우산이 굴러다닌다면, 자석형 우산꽂이를 철제 현관문에 붙여 보세요.');
-  assert.ok(cues[0].endsWith('굴러다닌다면,'));
-  for (const c of cues) for (const line of c.split('\n')) assert.ok([...line].length <= 16, line);
-});
-
-test('plan: voice always fits, scenes keep proportions, end card follows', () => {
-  const { jobFile, secret } = issueJob();
-  const job = verifyJob(jobFile, { secret });
-  const narration = [{ text: '가'.repeat(20) + '.', duration: 9 }, { text: '나'.repeat(10) + '.', duration: 6 }];
-  const plan = buildPlan(job, narration);
-  assert.ok(plan.voice[1].end <= plan.body);
-  assert.ok(plan.stretch > 1, 'scripted 12s stretched to fit 15s of voice');
-  const scripted = JSON.parse(job.script['장면(JSON)']).map((s) => s.duration_sec);
-  plan.scenes.forEach((s, i) => assert.ok(Math.abs(s.duration - scripted[i] * plan.stretch) < 1e-9));
-  assert.equal(plan.scenes.at(-1).end, plan.endCard.start);
-  assert.ok(Math.abs(plan.total - (plan.body + 2.8)) < 1e-9);
-  for (const c of plan.subtitles) assert.ok(c.start >= plan.voice[0].start - 1e-9 && c.end <= plan.voice[1].end + 1e-9);
-  assert.equal(plan.endCard.keyword, 'PRD001R01');
-  assert.equal(plan.disclosure.end, plan.total);
-
-  const short = buildPlan(job, [{ text: '짧다.', duration: 1 }]);
-  assert.equal(short.stretch, 1, 'never shrinks below the scripted length');
-});
-
-test('ASS overlay: disclosure for the whole video, escaped text, watermark only in preview', () => {
-  const { jobFile, secret } = issueJob();
-  const job = verifyJob(jobFile, { secret });
-  job.script['광고 표기'] += ' {\\pos(0,0)}';
-  const plan = buildPlan(job, [{ text: '테스트 {\\an8} 문장.', duration: 3 }]);
-  const ass = buildAss(plan, { font: 'NanumGothic', preview: false });
-  const disclosure = ass.split('\n').find((l) => l.includes(',Disclosure,'));
-  assert.match(disclosure, /^Dialogue: 5,0:00:00\.00,/);
-  assert.ok(disclosure.includes('쿠팡 파트너스'));
-  assert.ok(!/\{\\pos\(0,0\)\}|\{\\an8\}/.test(ass), 'user text cannot inject override tags');
-  assert.doesNotMatch(ass, /미리보기/);
-  assert.match(buildAss(plan, { font: 'X', preview: true }), /게시 금지/);
-  assert.equal(esc('a{b}\\c\nd'), 'a｛b｝＼c\\Nd');
-});
-
-test('WAV helpers', () => {
-  const w = silentWav(1.5, 24000);
-  const info = parseWav(w);
-  assert.equal(info.sampleRate, 24000);
-  assert.ok(Math.abs(info.duration - 1.5) < 1e-3);
-  assert.throws(() => parseWav(Buffer.from('nope')), /WAV/);
-});
-
-// ------------------------------------------------------------------ real render (FFmpeg)
-
+const template = loadTemplate('lifestyle-v1');
 let hasFfmpeg = false;
 try {
   hasFfmpeg = /\sass\s/.test(execFileSync('ffmpeg', ['-hide_banner', '-filters'], { encoding: 'utf8' }));
 } catch {
   hasFfmpeg = false;
 }
+const FF = { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' };
 
-test('renders a real MP4 (preview, silent voice, 360x640) and reuses it on the next run', { skip: !hasFfmpeg && 'FFmpeg with libass not installed' }, async () => {
+function storyboardOf(opts) {
+  const { jobFile, secret } = issueJob(opts);
+  const job = verifyJob(jobFile, { secret });
+  return { job, sb: buildStoryboard(job, template), jobFile, secret };
+}
+
+// Synthetic test footage (moving pattern) — only for tests; never shipped or used by the CLI.
+function makeClip(file, { kind = 'moving', sec = 6, w = 720, h = 1280 } = {}) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const src = kind === 'flat' ? `color=c=0x4a6fa5:s=${w}x${h}:d=${sec}:r=30` : `testsrc2=s=${w}x${h}:d=${sec}:r=30`;
+  if (kind === 'still') {
+    const png = file + '.png';
+    execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', `testsrc2=s=${w}x${h}:d=1`, '-frames:v', '1', png]);
+    execFileSync('ffmpeg', ['-v', 'error', '-y', '-loop', '1', '-t', String(sec), '-i', png, '-r', '30', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', file]);
+    return;
+  }
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', src, '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', file]);
+}
+function writeFootage(clipsDir, reelId, ids, over = {}) {
+  const dir = path.join(clipsDir, reelId);
+  const shots = {};
+  ids.forEach((id) => {
+    makeClip(path.join(dir, id + '.mp4'));
+    shots[id] = Object.assign({ file: id + '.mp4', source: 'own-footage', showsProduct: true, rights: '직접 촬영', in: 0 }, over[id] || {});
+  });
+  fs.writeFileSync(path.join(dir, 'assets.json'), JSON.stringify({ reelId, shots }, null, 2));
+}
+const okAnalysis = async () => ({ width: 1080, height: 1920, duration: 10, frames: 30, flatRatio: 0, motion: 3 });
+
+test('storyboard: PRD-001 = HOOK → DEMO → DEMO → BENEFIT → CTA, 23 s, 7 shots of 2–4 s, keyword in the CTA', () => {
+  const { sb } = storyboardOf();
+  assert.deepEqual(sb.beats.map((b) => b.beat), ['HOOK', 'DEMO', 'DEMO', 'BENEFIT', 'CTA']);
+  assert.equal(sb.scriptedTotal, 23);
+  assert.deepEqual(sb.beats.map((b) => b.subtitle), [
+    '현관 좁은 집은 우산 어디 둬요?', '저는 그냥 문에 붙였어요.', '바닥 공간을 안 차지하니까', '현관이 훨씬 깔끔해져요.', "제품 정보는 댓글에 '우산'",
+  ]);
+  const shots = sb.beats.flatMap((b) => b.shots);
+  assert.deepEqual(shots.map((s) => s.id), ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1']);
+  assert.ok(shots.every((s) => s.scriptedSec >= 2 && s.scriptedSec <= 4));
+  assert.deepEqual(sb.removedSymbols, ['☂'], 'emoji removed from burned subtitles and TTS (reported)');
+  assert.ok(!sb.beats[4].ttsText.includes('☂'));
+});
+
+test('scripts without a storyboard are refused before any cost', () => {
+  const { jobFile, secret } = issueJob();
+  const q = JSON.parse(jobFile.payload);
+  const scenes = JSON.parse(q.script['장면(JSON)']).map(({ beat, narration, ...rest }) => rest);
+  q.script['장면(JSON)'] = JSON.stringify(scenes);
+  q.approvedHash = require('../renderer/lib/script-core').scriptFingerprint(q.script);
+  const payload = JSON.stringify(q);
+  const job = verifyJob({ payload, signature: sign(payload, secret) }, { secret });
+  assert.throws(() => buildStoryboard(job, template), StoryboardError);
+});
+
+test('pre-flight QC: structure, keyword mapping, shot length, 2-line subtitles inside the Instagram safe area', () => {
+  const { sb, job } = storyboardOf();
+  const ok = preflight(sb, template, job);
+  assert.equal(ok.ok, true, JSON.stringify(ok.checks.filter((c) => !c.ok)));
+  const geo = subtitleGeometry(template);
+  assert.deepEqual(geo.safe, { left: 65, right: 1015, top: 269, bottom: 1248 });
+  assert.ok(ok.checks.filter((c) => /safeArea/.test(c.id)).length === 5);
+  assert.equal(ok.checks.find((c) => c.id === 'subtitle.symbols').level, 'warn');
+
+  const wrongKeyword = storyboardOf({ keyword: '다른키워드' });
+  wrongKeyword.sb.beats[4].subtitle = '제품 정보는 댓글에';
+  assert.equal(preflight(wrongKeyword.sb, template, wrongKeyword.job).checks.find((c) => c.id === 'cta.keyword').ok, false);
+
+  const long = storyboardOf();
+  long.sb.beats[1].subtitle = '아주 긴 자막이 세 줄을 넘어가도록 계속해서 길게 이어지는 문장입니다 정말로요';
+  const r = preflight(long.sb, template, long.job);
+  assert.equal(r.ok, false);
+  assert.equal(r.checks.find((c) => c.id === 'subtitle.S2.lines').ok, false);
+
+  const shortShot = storyboardOf();
+  shortShot.sb.beats[0].shots[0].scriptedSec = 1.2;
+  assert.equal(preflight(shortShot.sb, template, shortShot.job).checks.find((c) => c.id === 'shots.length').ok, false);
+});
+
+test('ASSETS_REQUIRED: no footage → shot list written, job stopped, zero TTS calls', async () => {
   const { jobFile, secret } = issueJob();
   const dir = tmp();
   const provider = spyProvider();
-  const opts = {
-    jobFile, secret, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }),
-    clipsDir: path.join(dir, 'clips'), preview: true, ffmpeg: { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' },
-    font: 'NanumGothic', size: { width: 360, height: 640 }, preset: 'ultrafast', crf: 30,
-  };
-  const m = await render(opts);
-  assert.ok(fs.existsSync(m.output.path));
-  assert.match(m.output.path, /_PREVIEW\.mp4$/);
-  assert.ok(Math.abs(m.output.duration - m.timeline.total) < 0.15, m.output.duration + ' vs ' + m.timeline.total);
-  const kinds = m.output.streams.map((s) => s.codec_name).sort();
-  assert.deepEqual(kinds, ['aac', 'h264']);
-  assert.equal(m.visuals.every((v) => v.source === 'placeholder'), true);
-  const calls = provider.calls.length;
-  const again = await render(opts);
-  assert.equal(again.reused, true);
-  assert.equal(provider.calls.length, calls, 'reuse costs nothing');
+  await assert.rejects(
+    render({ jobFile, secret, template, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: path.join(dir, 'clips'), ffmpeg: FF, font: 'NanumGothic', analyze: okAnalysis }),
+    (e) => e instanceof AssetsRequiredError && e.code === 'ASSETS_REQUIRED' && e.report.required.length === 7
+  );
+  const shotlist = fs.readFileSync(path.join(dir, 'clips', 'PRD-001-R01', 'SHOTLIST.md'), 'utf8');
+  assert.match(shotlist, /S2-1 \| S2-1\.mp4 \| DEMO · 실제 제품 \| 저는 그냥 문에 붙였어요\./);
+  assert.match(shotlist, /마켓\(쿠팡 등\) 상세페이지 영상은 사용 금지/);
+  const tmpl = JSON.parse(fs.readFileSync(path.join(dir, 'clips', 'PRD-001-R01', 'assets.template.json'), 'utf8'));
+  assert.deepEqual(Object.keys(tmpl.shots), ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1']);
+  assert.equal(provider.calls.length, 0);
+  assert.equal(fs.existsSync(path.join(dir, 'out')), false, 'nothing rendered, no slides substituted');
 });
 
-test('final render uses real clips per scene', { skip: !hasFfmpeg && 'FFmpeg with libass not installed' }, async () => {
+test('asset provenance: no marketplace video, real product beats need real product footage, licensed needs rights', async () => {
+  const { sb } = storyboardOf();
+  const dir = tmp();
+  const reel = path.join(dir, 'PRD-001-R01');
+  fs.mkdirSync(reel, { recursive: true });
+  const ids = ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1'];
+  ids.forEach((id) => fs.writeFileSync(path.join(reel, id + '.mp4'), 'x'));
+  const shots = Object.fromEntries(ids.map((id) => [id, { file: id + '.mp4', source: 'own-footage', showsProduct: true }]));
+  shots['S1-1'] = { file: 'S1-1.mp4', source: 'flow-generated', showsProduct: false }; // OK: HOOK may be generated
+  shots['S2-1'].source = 'flow-generated'; // not OK: DEMO must show the real product
+  shots['S3-1'].source = 'marketplace';
+  shots['S3-2'] = { file: 'S3-2.mp4', source: 'licensed', showsProduct: true };
+  shots['S4-1'].showsProduct = false;
+  delete shots['S5-1'];
+  fs.writeFileSync(path.join(reel, 'assets.json'), JSON.stringify({ reelId: 'PRD-001-R01', shots }));
+  const { loadAssetManifest } = require('../renderer/lib/assets');
+  const v = await validateAssets(loadAssetManifest(dir, 'PRD-001-R01'), sb, template, FF, okAnalysis);
+  const msg = v.problems.join('\n');
+  assert.equal(v.ok, false);
+  assert.doesNotMatch(msg, /S1-1/);
+  assert.match(msg, /S2-1 \[DEMO\] source "flow-generated"는 이 장면에 쓸 수 없습니다/);
+  assert.match(msg, /S3-1 \[DEMO\] source "marketplace"/);
+  assert.match(msg, /S3-2 \[DEMO\] licensed 영상은 rights/);
+  assert.match(msg, /S4-1 \[BENEFIT\] 이 장면은 실제 제품이 보여야 합니다/);
+  assert.match(msg, /S5-1 \[CTA\] 영상이 지정되지 않았습니다/);
+});
+
+test('asset analysis rejects solid-colour, still-image, low-res and too-short clips', async () => {
+  const { sb } = storyboardOf();
+  const dir = tmp();
+  const reel = path.join(dir, 'PRD-001-R01');
+  fs.mkdirSync(reel, { recursive: true });
+  const ids = ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1'];
+  ids.forEach((id) => fs.writeFileSync(path.join(reel, id + '.mp4'), 'x'));
+  fs.writeFileSync(path.join(reel, 'assets.json'), JSON.stringify({ reelId: 'PRD-001-R01', shots: Object.fromEntries(ids.map((id) => [id, { file: id + '.mp4', source: 'own-footage', showsProduct: true }])) }));
+  const fake = { 'S1-1': { flatRatio: 0.9, motion: 0 }, 'S2-1': { flatRatio: 0, motion: 0.01 }, 'S3-1': { width: 480, height: 854 }, 'S3-2': { duration: 2 } };
+  const analyze = async (_ff, file) => Object.assign({ width: 1080, height: 1920, duration: 10, frames: 30, flatRatio: 0, motion: 3 }, fake[path.basename(file, '.mp4')] || {});
+  const { loadAssetManifest } = require('../renderer/lib/assets');
+  const msg = (await validateAssets(loadAssetManifest(dir, 'PRD-001-R01'), sb, template, FF, analyze)).problems.join('\n');
+  assert.match(msg, /S1-1 .*단색\(솔리드 컬러\) 화면/);
+  assert.match(msg, /S2-1 .*정지 이미지/);
+  assert.match(msg, /S3-1 .*해상도가 낮습니다/);
+  assert.match(msg, /S3-2 .*길이가 부족합니다/);
+  assert.doesNotMatch(msg, /S4-1|S4-2|S5-1/);
+});
+
+test('timeline: beats stretch only for the voice, hard cuts split evenly, subtitles follow the voice, disclosure at start and end', () => {
+  const { sb } = storyboardOf();
+  const voice = [2.0, 2.2, 1.9, 1.8, 7.0].map((d) => ({ file: 'x.wav', duration: d }));
+  const tl = buildTimeline(sb, voice, template);
+  assert.deepEqual(tl.beats.slice(0, 4).map((b) => b.duration), [3, 4, 6, 6]);
+  assert.ok(Math.abs(tl.beats[4].duration - (0.15 + 7 + 0.35)) < 1e-9, 'CTA stretched for a long line');
+  assert.equal(tl.shots.length, 7);
+  assert.deepEqual(tl.beats[2].shots.map((s) => s.duration), [3, 3]);
+  tl.beats.forEach((b) => {
+    assert.ok(b.subtitle.start >= b.start && b.subtitle.end <= b.end + 1e-9);
+    assert.ok(b.subtitle.lines.length <= 2);
+  });
+  assert.deepEqual(tl.disclosure.full.map((i) => [i.start, +i.end.toFixed(2)]), [[0, 2.5], [19, +tl.total.toFixed(2)]]);
+  assert.deepEqual(tl.disclosure.tag, [{ start: 2.5, end: 19 }]);
+});
+
+test('ASS: white bold subtitles, thin black outline, lower-middle safe area, no headlines/slides/banners', () => {
+  const { sb, job } = storyboardOf();
+  const tl = buildTimeline(sb, sb.beats.map(() => ({ file: 'x.wav', duration: 1.5 })), template);
+  const ass = buildAss(tl, template, { font: 'NanumGothic', disclosureText: job.script['광고 표기'] });
+  const sub = ass.split('\n').find((l) => l.startsWith('Style: Sub,')).split(',');
+  assert.equal(sub[3], '&H00FFFFFF', 'white');
+  assert.equal(sub[5], '&H00000000', 'black outline');
+  assert.equal(sub[7], '-1', 'bold');
+  assert.equal(sub[15], '1', 'outline style, no box');
+  assert.equal(sub[16], '3', 'thin outline');
+  assert.equal(sub[17], '0', 'no shadow');
+  assert.equal(sub[18], '2', 'bottom-centre anchor');
+  assert.equal(sub[21], '672', 'block ends at the safe-area bottom (65% height)');
+  assert.doesNotMatch(ass, /Headline|Placeholder|Keyword|Cta|Watermark|\\fad|\\move/);
+  const subs = ass.split('\n').filter((l) => /^Dialogue: .*,Sub,/.test(l));
+  assert.equal(subs.length, 5);
+  assert.ok(subs.every((l) => l.split('\\N').length <= 2));
+  assert.equal(ass.split('\n').filter((l) => /,Disclosure,/.test(l)).length, 2, 'start and end only');
+  assert.equal(esc('a{b}\\c\nd'), 'a｛b｝＼c\\Nd');
+});
+
+test('compose refuses a shot without footage (no synthetic fallback exists)', async () => {
+  const ffm = require('../renderer/lib/ffmpeg');
+  const { sb } = storyboardOf();
+  const tl = buildTimeline(sb, sb.beats.map(() => ({ file: 'x.wav', duration: 1 })), template);
+  await assert.rejects(ffm.composeVideo(FF, tl, {}, { assFile: 'a.ass', narrationFile: 'n.wav', outFile: 'o.mp4', cwd: tmp() }), /영상 소스가 없는 컷: S1-1/);
+});
+
+test('real clip analysis: moving footage passes, solid colour and a still image are caught', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {
+  const dir = tmp();
+  for (const kind of ['moving', 'flat', 'still']) makeClip(path.join(dir, kind + '.mp4'), { kind, sec: 3 });
+  const moving = await analyzeClip(FF, path.join(dir, 'moving.mp4'), 0, 2);
+  const flat = await analyzeClip(FF, path.join(dir, 'flat.mp4'), 0, 2);
+  const still = await analyzeClip(FF, path.join(dir, 'still.mp4'), 0, 2);
+  assert.ok(moving.flatRatio <= template.assets.maxFlatRatio && moving.motion >= template.assets.minMotion, JSON.stringify(moving));
+  assert.ok(flat.flatRatio > template.assets.maxFlatRatio, JSON.stringify(flat));
+  assert.ok(still.motion < template.assets.minMotion && still.flatRatio <= template.assets.maxFlatRatio, JSON.stringify(still));
+});
+
+test('full render from footage: 1080x1920, every shot from an asset, QC passes, reuse costs nothing', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {
   const { jobFile, secret } = issueJob();
   const dir = tmp();
-  const clips = path.join(dir, 'clips', 'PRD-001-R01');
-  fs.mkdirSync(clips, { recursive: true });
-  for (let n = 1; n <= 3; n++) {
-    // 1-second 16:9 test clips (with audio, which must be dropped) — looped and cropped to 9:16.
-    execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', `testsrc2=s=320x180:d=1:r=30`, '-f', 'lavfi', '-i', 'sine=d=1', '-shortest', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', path.join(clips, `S${n}.mp4`)]);
+  const clips = path.join(dir, 'clips');
+  writeFootage(clips, 'PRD-001-R01', ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1'], { 'S1-1': { source: 'flow-generated', showsProduct: false } });
+  const provider = spyProvider();
+  const opts = { jobFile, secret, template, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: clips, ffmpeg: FF, font: 'NanumGothic', preset: 'ultrafast', crf: 34 };
+  const m = await render(opts);
+  assert.equal(m.qc.postRender.ok, true, JSON.stringify(m.qc.postRender.checks.filter((c) => !c.ok)));
+  const v = m.output.streams.find((s) => s.codec_type === 'video');
+  assert.equal(`${v.width}x${v.height}`, '1080x1920');
+  assert.ok(m.output.duration >= 22.5 && m.output.duration <= 25.5, String(m.output.duration));
+  assert.deepEqual(Object.keys(m.footage), ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1']);
+  for (const id of ['visuals.noPlaceholders', 'visuals.everyShotHasAsset', 'output.resolution', 'output.fps']) {
+    assert.equal(m.qc.postRender.checks.find((c) => c.id === id).ok, true, id);
   }
-  const m = await render({
-    jobFile, secret, tts: service(createSilentTts(), dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }),
-    clipsDir: path.join(dir, 'clips'), ffmpeg: { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' }, font: 'NanumGothic',
-    size: { width: 360, height: 640 }, preset: 'ultrafast', crf: 30,
-  });
-  assert.equal(m.variant, 'final');
-  assert.deepEqual(m.visuals.map((v) => v.source), ['S1.mp4', 'S2.mp4', 'S3.mp4']);
-  assert.doesNotMatch(m.output.path, /PREVIEW/);
-  assert.equal(m.output.streams.filter((s) => s.codec_type === 'audio').length, 1, 'clip audio dropped, narration kept');
+  assert.equal(provider.calls.length, 5, 'one TTS line per beat');
+  const again = await render(opts);
+  assert.equal(again.reused, true);
+  assert.equal(provider.calls.length, 5);
+});
+
+test('static or flat footage stops the render before TTS', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {
+  const { jobFile, secret } = issueJob();
+  const dir = tmp();
+  const clips = path.join(dir, 'clips');
+  const ids = ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1'];
+  writeFootage(clips, 'PRD-001-R01', ids);
+  makeClip(path.join(clips, 'PRD-001-R01', 'S4-2.mp4'), { kind: 'flat' });
+  const provider = spyProvider();
+  await assert.rejects(
+    render({ jobFile, secret, template, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: clips, ffmpeg: FF, font: 'NanumGothic' }),
+    (e) => e instanceof AssetsRequiredError && /S4-2 .*단색/.test(fs.readFileSync(e.report.shotlist, 'utf8'))
+  );
+  assert.equal(provider.calls.length, 0);
 });

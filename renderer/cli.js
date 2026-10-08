@@ -16,6 +16,10 @@ const { createSilentTts } = require('./lib/tts/silent');
 const { createLocalStorage } = require('./lib/storage/local');
 const { checkFfmpeg } = require('./lib/ffmpeg');
 const { render } = require('./lib/render');
+const { loadTemplate } = require('./lib/template');
+const { AssetsRequiredError } = require('./lib/assets');
+const { QcError } = require('./lib/qc');
+const { StoryboardError } = require('./lib/storyboard');
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -63,13 +67,13 @@ async function main() {
     return;
   }
   if (cmd !== 'render' && cmd !== 'estimate') {
-    log('사용법: node renderer/cli.js check | estimate --job <file> | render --job <file> [--preview] [--force] [--tts google|local|silent] | usage');
+    log('사용법: node renderer/cli.js check | estimate --job <file> | render --job <file> [--preview] [--force] [--clips <dir>] [--template lifestyle-v1] [--tts google|local|silent] | usage');
     return;
   }
   if (!args.job) throw new Error('--job <렌더 작업 파일> 이 필요합니다.');
 
   const preview = !!args.preview;
-  // Previews default to the free local voice; final renders use Google Cloud TTS.
+  // --preview = same footage, free local voice (to check timing before paying for Google TTS).
   const providerName = args.tts || (preview ? 'local' : cfg.ttsProvider);
   const provider = makeProvider(providerName, cfg);
   const tts = createTtsService({
@@ -83,6 +87,7 @@ async function main() {
   });
   const result = await render({
     jobFile: loadJobFile(path.resolve(args.job)),
+    template: loadTemplate(args.template || process.env.RF_TEMPLATE || 'lifestyle-v1'),
     secret: cfg.secret,
     tts,
     storage: createLocalStorage({ outputDir: path.resolve(args.out || cfg.outputDir) }),
@@ -99,17 +104,29 @@ async function main() {
   });
   if (result.dryRun) {
     const e = result.estimate;
-    log('(예상만 계산 — API 호출 없음)');
-    log(`문장 ${e.segments}개 (캐시 ${e.cachedSegments}) · 과금 글자 ${e.billableChars} · ${e.voice} · 예상 $${e.estimatedUsd.toFixed(4)}`);
-    log(`이번 달 사용 ${e.usedThisMonth} / 한도 ${e.monthlyCharLimit} 글자`);
-    result.clips.forEach((c, i) => log(`장면 ${i + 1}: ${c.clip ? '✓ ' + c.clip : '✗ 없음 → ' + c.expected}`));
+    log('(점검만 — API 호출 없음)');
+    log(`음성 ${e.segments}줄 (캐시 ${e.cachedSegments}) · 과금 글자 ${e.billableChars} · ${e.voice} · 예상 $${e.estimatedUsd.toFixed(4)} · 이번 달 ${e.usedThisMonth}/${e.monthlyCharLimit}`);
+    result.preflight.checks.forEach((c) => log(`${c.ok ? '✓' : c.level === 'warn' ? '!' : '✗'} ${c.id}: ${c.detail}`));
+    log(result.assets.ok ? `✓ 영상 소스 ${Object.keys(result.assets.shots).length}컷 확인` : '✗ 영상 소스: ' + result.assets.problems.join(' / '));
     return;
   }
   log(JSON.stringify({ output: result.output.path, duration: result.output.duration, tts: { billableChars: result.tts.billableChars, estimatedUsd: result.tts.estimatedUsd }, reused: !!result.reused }, null, 2));
 }
 
+// Exit codes: 2 = approval/budget gate, 3 = ASSETS_REQUIRED, 4 = QC failed, 1 = other.
 main().catch((e) => {
-  const kind = e instanceof GateError ? '승인 확인 실패 (비용 발생 없음)' : e instanceof BudgetError ? '예산 한도 (비용 발생 없음)' : '오류';
-  console.error('✗ ' + kind + ': ' + e.message);
-  process.exit(e instanceof GateError || e instanceof BudgetError ? 2 : 1);
+  if (e instanceof AssetsRequiredError) {
+    console.error('✗ ASSETS_REQUIRED (비용 발생 없음): ' + e.report.summary);
+    e.report.problems.slice(0, 20).forEach((p) => console.error('  - ' + p));
+    console.error(JSON.stringify({ status: 'ASSETS_REQUIRED', reelId: e.report.reelId, shotlist: e.report.shotlist, required: e.report.required }, null, 2));
+    process.exit(3);
+  }
+  if (e instanceof QcError) {
+    console.error('✗ ' + e.message);
+    process.exit(4);
+  }
+  const free = e instanceof GateError || e instanceof BudgetError || e instanceof StoryboardError;
+  const kind = e instanceof GateError ? '승인 확인 실패' : e instanceof BudgetError ? '예산 한도' : e instanceof StoryboardError ? '대본 형식' : '오류';
+  console.error('✗ ' + kind + (free ? ' (비용 발생 없음)' : '') + ': ' + e.message);
+  process.exit(free ? 2 : 1);
 });

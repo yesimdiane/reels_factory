@@ -121,7 +121,16 @@ const RF_CONFIG = {
     MIN_TOTAL_SEC: 10,
     MAX_TOTAL_SEC: 40,
     MIN_FLOW_PROMPT_CHARS: 30,
+    // Storyboard (video-first template): one narration line per scene = the subtitle.
+    SCENE_MIN_SEC: 2,
+    SCENE_MAX_SEC: 6,
+    SCENE_NARRATION_MAX_CHARS: 30,
   },
+
+  // Story structure. PROBLEM may be folded into the HOOK scene; DEMO and BENEFIT are required.
+  BEATS: ['HOOK', 'PROBLEM', 'DEMO', 'BENEFIT', 'CTA'],
+  // Written by Gemini in the CTA line; replaced with the reel's ManyChat keyword at render time.
+  KEYWORD_PLACEHOLDER: '{키워드}',
 
   // Exaggerated / unverifiable claims that must not appear in viewer-facing text.
   BANNED_PHRASES: [

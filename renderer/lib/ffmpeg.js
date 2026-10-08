@@ -26,7 +26,6 @@ async function checkFfmpeg({ ffmpeg, ffprobe }) {
   }
   const missing = [];
   if (!/\sass\s/.test(filters)) missing.push('ass 필터 (libass)');
-  if (!/\sgradients\s/.test(filters)) missing.push('gradients 필터');
   if (!/libx264/.test(encoders)) missing.push('libx264 인코더');
   if (!/\saac\s/.test(encoders)) missing.push('aac 인코더');
   if (missing.length) {
@@ -40,7 +39,7 @@ async function checkFfmpeg({ ffmpeg, ffprobe }) {
 }
 
 async function probe(ffprobe, file) {
-  const { stdout } = await run(ffprobe, ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height,r_frame_rate,sample_rate', '-of', 'json', file]);
+  const { stdout } = await run(ffprobe, ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height,r_frame_rate,sample_rate,pix_fmt', '-of', 'json', file]);
   const j = JSON.parse(stdout);
   return { duration: Number(j.format.duration), streams: j.streams };
 }
@@ -59,47 +58,40 @@ async function buildNarrationTrack({ ffmpeg }, plan, outFile, cwd) {
   await run(ffmpeg, args, { cwd });
 }
 
-// Muted placeholder colours per scene (previews only).
-const PLACEHOLDER_COLORS = [['0x2b3a55', '0x5b6f95'], ['0x3d5a4c', '0x86a789'], ['0x5a3d4c', '0xb08ba0'], ['0x4c4a3d', '0xa59f7a'], ['0x3d4c5a', '0x7aa0a5'], ['0x4a3d5a', '0x9a8bb0']];
-
 /**
- * Composes scenes (real clips, or gradient placeholders in preview), end card, ASS overlay and narration.
- * visuals[i] = { clip: path } | { placeholder: true }.
+ * Composes the reel from real footage only: one input per shot (trimmed from its `in` point),
+ * scaled/cropped to fill 9:16, hard cuts, ASS overlay, narration. There is no code path that
+ * generates synthetic visuals. Returns the list of inputs for QC.
  */
-async function composeVideo({ ffmpeg }, plan, visuals, { assFile, fontsDir, narrationFile, outFile, cwd, crf = 20, preset = 'medium' }) {
-  const { width: W, height: H, fps } = plan;
+async function composeVideo({ ffmpeg }, timeline, shotAssets, { assFile, fontsDir, narrationFile, outFile, cwd, crf = 20, preset = 'medium' }) {
+  const { width: W, height: H, fps } = timeline;
   const args = ['-hide_banner', '-y'];
-  plan.scenes.forEach((sc, i) => {
-    const d = sc.duration.toFixed(3);
-    if (visuals[i].clip) {
-      args.push('-stream_loop', '-1', '-t', d, '-i', visuals[i].clip);
-    } else {
-      const [c0, c1] = PLACEHOLDER_COLORS[i % PLACEHOLDER_COLORS.length];
-      args.push('-f', 'lavfi', '-t', d, '-i', `gradients=s=${W}x${H}:c0=${c0}:c1=${c1}:x0=0:y0=0:x1=${W}:y1=${H}:speed=0.008:rate=${fps}`);
-    }
+  const inputs = [];
+  timeline.shots.forEach((sh) => {
+    const a = shotAssets[sh.id];
+    if (!a || !a.file) throw new Error('영상 소스가 없는 컷: ' + sh.id);
+    args.push('-ss', a.in.toFixed(3), '-t', sh.duration.toFixed(3), '-i', a.file);
+    inputs.push({ type: 'asset', shot: sh.id, file: a.file });
   });
-  const endIdx = plan.scenes.length;
-  args.push('-f', 'lavfi', '-t', (plan.endCard.end - plan.endCard.start).toFixed(3), '-i', `gradients=s=${W}x${H}:c0=0x101418:c1=0x2a2f3a:x0=0:y0=0:x1=0:y1=${H}:rate=${fps}`);
-  const audioIdx = endIdx + 1;
   args.push('-i', narrationFile);
-
-  const norm = (i, d) => `[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${fps},setsar=1,format=yuv420p,trim=duration=${d},setpts=PTS-STARTPTS[v${i}]`;
-  const chains = plan.scenes.map((sc, i) => norm(i, sc.duration.toFixed(3)));
-  chains.push(norm(endIdx, (plan.endCard.end - plan.endCard.start).toFixed(3)));
-  const concatIn = chains.map((_, i) => `[v${i}]`).join('');
+  const audioIdx = inputs.length;
+  const chains = timeline.shots.map(
+    (sh, i) => `[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${fps},setsar=1,format=yuv420p,trim=duration=${sh.duration.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`
+  );
   const assArg = fontsDir ? `ass=${assFile}:fontsdir=${fontsDir.replace(/([:\\'])/g, '\\$1')}` : `ass=${assFile}`;
-  chains.push(`${concatIn}concat=n=${chains.length}:v=1:a=0[vc]`, `[vc]${assArg}[vout]`);
-
+  chains.push(timeline.shots.map((_, i) => `[v${i}]`).join('') + `concat=n=${timeline.shots.length}:v=1:a=0[vc]`, `[vc]${assArg}[vout]`);
   args.push(
     '-filter_complex', chains.join(';'),
     '-map', '[vout]', '-map', `${audioIdx}:a`,
-    '-t', plan.total.toFixed(3),
+    '-t', timeline.total.toFixed(3),
     '-c:v', 'libx264', '-preset', preset, '-crf', String(crf), '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-r', String(fps),
     '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
     '-movflags', '+faststart',
     outFile
   );
+  if (args.includes('lavfi')) throw new Error('합성 입력(lavfi)은 허용되지 않습니다.');
   await run(ffmpeg, args, { cwd });
+  return inputs;
 }
 
 module.exports = { run, checkFfmpeg, probe, buildNarrationTrack, composeVideo };

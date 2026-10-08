@@ -71,7 +71,10 @@ function viewerFacingTexts_(reel) {
     texts.push(c);
   });
   (Array.isArray(reel.scenes) ? reel.scenes : []).forEach(function (s) {
-    if (s) texts.push(s.on_screen_text);
+    if (s) {
+      texts.push(s.on_screen_text);
+      texts.push(s.narration);
+    }
   });
   return texts.filter(function (t) {
     return typeof t === 'string';
@@ -96,8 +99,14 @@ function factContext_(product) {
  * Validates one reel script (generated, regenerated or edited by a human) against the schema
  * and the product's confirmed facts. `label` prefixes each error, e.g. "릴스 2".
  */
-function validateReelContent(reel, product, label) {
+function validateReelContent(reel, product, label, options) {
   const errors = [];
+  // Storyboard rules apply to every new script, and to older scripts once they have beats.
+  const storyboard =
+    (options && options.requireStoryboard) ||
+    (reel && Array.isArray(reel.scenes) && reel.scenes.some(function (sc) {
+      return sc && (sc.beat !== undefined || sc.narration !== undefined);
+    }));
   const L = RF_CONFIG.LIMITS;
   const ctx = factContext_(product);
   const factSet = ctx.factSet;
@@ -151,6 +160,20 @@ function validateReelContent(reel, product, label) {
       if (!isNonEmptyString_(s.flow_prompt) || s.flow_prompt.length < L.MIN_FLOW_PROMPT_CHARS) {
         errors.push(sp + '"flow_prompt"가 비어 있거나 너무 짧습니다 (' + L.MIN_FLOW_PROMPT_CHARS + '자 이상).');
       }
+      if (storyboard) {
+        if (RF_CONFIG.BEATS.indexOf(s.beat) === -1) errors.push(sp + '"beat"는 ' + RF_CONFIG.BEATS.join('/') + ' 중 하나여야 합니다.');
+        if (!isNonEmptyString_(s.narration)) {
+          errors.push(sp + '"narration"(이 장면의 내레이션·자막 한 줄)이 비어 있습니다.');
+        } else if ([...normalizeText(s.narration)].length > L.SCENE_NARRATION_MAX_CHARS) {
+          errors.push(sp + 'narration은 자막 2줄 이내(' + L.SCENE_NARRATION_MAX_CHARS + '자)여야 합니다.');
+        }
+        if (typeof s.duration_sec === 'number' && (s.duration_sec < L.SCENE_MIN_SEC || s.duration_sec > L.SCENE_MAX_SEC)) {
+          errors.push(sp + '장면 길이는 ' + L.SCENE_MIN_SEC + '~' + L.SCENE_MAX_SEC + '초여야 합니다.');
+        }
+      }
+    });
+    if (storyboard) storyboardErrors_(reel.scenes).forEach(function (e) {
+      errors.push(p + e);
     });
     if (total < L.MIN_TOTAL_SEC || total > L.MAX_TOTAL_SEC) {
       errors.push(p + '총 길이는 ' + L.MIN_TOTAL_SEC + '~' + L.MAX_TOTAL_SEC + '초여야 합니다 (현재 ' + total + '초).');
@@ -199,7 +222,7 @@ function validateGeminiReels(payload, product, expectedCount) {
     errors.push('릴스 대본은 정확히 ' + count + '개여야 합니다 (받은 개수: ' + reels.length + ').');
   }
   reels.forEach(function (reel, i) {
-    validateReelContent(reel, product, '릴스 ' + (i + 1)).forEach(function (e) {
+    validateReelContent(reel, product, '릴스 ' + (i + 1), { requireStoryboard: true }).forEach(function (e) {
       errors.push(e);
     });
   });
@@ -222,6 +245,31 @@ function validateGeminiReels(payload, product, expectedCount) {
     return errors.indexOf(e) === idx;
   });
   return { errors: unique, reels: unique.length ? [] : reels };
+}
+
+/** HOOK first, CTA last, DEMO and BENEFIT present, beats in story order, keyword placeholder in the CTA. */
+function storyboardErrors_(scenes) {
+  const errors = [];
+  const beats = scenes.map(function (sc) {
+    return sc ? sc.beat : '';
+  });
+  const order = RF_CONFIG.BEATS;
+  if (beats[0] !== 'HOOK') errors.push('첫 장면은 HOOK이어야 합니다.');
+  if (beats[beats.length - 1] !== 'CTA') errors.push('마지막 장면은 CTA여야 합니다.');
+  ['DEMO', 'BENEFIT'].forEach(function (b) {
+    if (beats.indexOf(b) === -1) errors.push(b + ' 장면이 필요합니다.');
+  });
+  for (let i = 1; i < beats.length; i++) {
+    if (order.indexOf(beats[i]) < order.indexOf(beats[i - 1])) {
+      errors.push('장면 순서는 HOOK → PROBLEM → DEMO → BENEFIT → CTA여야 합니다.');
+      break;
+    }
+  }
+  const cta = scenes[scenes.length - 1];
+  if (cta && typeof cta.narration === 'string' && cta.narration.indexOf(RF_CONFIG.KEYWORD_PLACEHOLDER) === -1) {
+    errors.push('CTA 내레이션에 댓글 키워드 자리 "' + RF_CONFIG.KEYWORD_PLACEHOLDER + '"가 필요합니다.');
+  }
+  return errors;
 }
 
 /** Finds duplicate values in a list (ignoring blanks). */

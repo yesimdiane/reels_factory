@@ -123,10 +123,14 @@ test('EDIT_SCRIPT creates a new version, clears approval, and is validated like 
 test('the approved version is exactly what was edited and reviewed', () => {
   const p = ok();
   const row = freshRow(p);
-  run(row, p, 'EDIT_SCRIPT', { edit: { captions: ['새 자막 하나', '새 자막 둘'] } });
+  const scenes = JSON.parse(row['장면(JSON)']).map((sc, i) => (i === 1 ? { narration: '저는 문에 붙여 썼어요.' } : {}));
+  run(row, p, 'EDIT_SCRIPT', { edit: { scenes } });
   const approve = run(row, p, 'APPROVE_SCRIPT');
   assert.equal(row['승인 대본 버전'], 2);
-  assert.equal(JSON.parse(approve.audit['스냅샷(JSON)'])['자막'], '새 자막 하나\n새 자막 둘');
+  const snap = JSON.parse(approve.audit['스냅샷(JSON)']);
+  assert.equal(snap['자막'].split('\n')[1], '저는 문에 붙여 썼어요.', 'subtitles follow the edited scene line');
+  assert.match(snap['내레이션'], /저는 문에 붙여 썼어요\./);
+  assert.equal(JSON.parse(snap['장면(JSON)'])[1].narration, '저는 문에 붙여 썼어요.');
 });
 
 test('request changes → regenerate → review again', () => {
@@ -272,4 +276,20 @@ test('parseDriveFileId accepts share links, open?id= links and bare IDs', () => 
   assert.equal(f('https://drive.google.com/open?id=' + id), id);
   assert.equal(f(id), id);
   assert.equal(f('https://youtube.com/watch?v=abc'), '');
+});
+
+test('storyboard rules: beats in order, CTA keyword placeholder, scene length and subtitle length', () => {
+  const v = (mut) => {
+    const reel = plain(gs('FIXTURE_PRD_001_GEMINI_RESPONSE')).reels[0];
+    mut(reel);
+    return plain(gs('validateReelContent')(reel, product(), 'R', { requireStoryboard: true })).join('\n');
+  };
+  assert.equal(v(() => {}), '');
+  assert.match(v((r) => (r.scenes[0].beat = 'DEMO')), /첫 장면은 HOOK/);
+  assert.match(v((r) => (r.scenes[4].beat = 'BENEFIT')), /마지막 장면은 CTA/);
+  assert.match(v((r) => ([r.scenes[1].beat, r.scenes[3].beat] = ['BENEFIT', 'DEMO'])), /순서/);
+  assert.match(v((r) => (r.scenes[4].narration = '제품 정보는 댓글에')), /\{키워드\}/);
+  assert.match(v((r) => (r.scenes[2].duration_sec = 8)), /2~6초/);
+  assert.match(v((r) => (r.scenes[3].narration = '가'.repeat(31))), /자막 2줄 이내/);
+  assert.match(v((r) => (r.scenes[3].narration = '3초 만에 설치 끝')), /수치.*"3"/);
 });

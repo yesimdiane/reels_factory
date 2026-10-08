@@ -368,8 +368,9 @@ function renderDetail() {
   if (d.scenesInvalid) scriptCard.appendChild(h('div', { class: 'banner bad', text: '장면(JSON) 셀이 손상되었습니다. 수정 요청 후 재생성하세요.' }));
   (r.scenes || []).forEach(function (s) {
     scriptCard.appendChild(h('div', { class: 'scene' }, [
-      h('strong', { text: '장면 ' + s.scene_no + ' · ' + s.duration_sec + '초' }),
-      h('div', { text: s.visual }),
+      h('strong', { text: '장면 ' + s.scene_no + (s.beat ? ' · ' + s.beat : '') + ' · ' + s.duration_sec + '초' }),
+      s.narration ? h('div', { class: 'hook', text: '“' + s.narration + '”' }) : null,
+      h('div', { class: 'muted', text: '화면: ' + s.visual }),
       s.on_screen_text ? h('div', { class: 'muted', text: '화면 문구: ' + s.on_screen_text }) : null,
       d.approvedIntact
         ? copyBlock('Google Flow 프롬프트 (수동 생성)', s.flow_prompt, true)
@@ -419,7 +420,7 @@ function renderActions(main) {
       onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_SCRIPT', { note: n }, '이 대본을 반려할까요? 되돌릴 수 없습니다.'); } }));
     card.appendChild(b);
   } else if (['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'].indexOf(st) !== -1) {
-    card.appendChild(h('h3', { style: 'margin-top:0', text: '영상 제작 (Flow 수동 · FFmpeg 렌더는 다음 단계)' }));
+    card.appendChild(h('h3', { style: 'margin-top:0', text: '영상 제작 (실제 제품 촬영·Flow → Mac 렌더)' }));
     if (st === 'VIDEO_CHANGES_REQUESTED') card.appendChild(h('div', { class: 'banner warn', text: '영상 수정 요청: ' + (d.videoReview.note || '') }));
     if (!d.product.permissionOk) card.appendChild(h('div', { class: 'banner warn', text: '영상 사용 허가가 확인되지 않아 제작을 시작할 수 없습니다. PRODUCTS의 "영상 사용 허가 상태"를 확인하세요.' }));
     if (!d.approvedIntact && st !== 'VIDEO_IN_PRODUCTION') card.appendChild(h('div', { class: 'banner bad', text: '승인된 대본이 변경되었습니다. 승인 취소 후 다시 승인하세요.' }));
@@ -526,6 +527,8 @@ function openPack() {
 function renderEditor(main) {
   const d = S.detail;
   const r = d.reel;
+  // Storyboard scripts: each scene's line is the narration and the subtitle.
+  const storyboard = (r.scenes || []).some(function (s) { return s.beat || s.narration; });
   const f = {};
   function field(key, label, value, multiline) {
     f[key] = multiline ? h('textarea', {}) : h('input', { type: 'text' });
@@ -536,13 +539,14 @@ function renderEditor(main) {
     h('div', { class: 'banner warn', text: '수정하면 새 버전(v' + (d.summary.scriptVersion + 1) + ')이 되고 다시 승인해야 합니다. 숫자·기능은 PRODUCTS의 확인된 기능에 있는 것만 쓸 수 있습니다.' }),
     field('concept', '컨셉', r.concept),
     field('hook', '후킹 (40자 이내)', r.hook),
-    field('narration', '내레이션 (300자 이내)', r.narration, true),
-    field('captions', '자막 (한 줄에 하나, 각 40자 이내)', (r.captions || []).join('\n'), true),
+    storyboard ? null : field('narration', '내레이션 (300자 이내)', r.narration, true),
+    storyboard ? null : field('captions', '자막 (한 줄에 하나, 각 40자 이내)', (r.captions || []).join('\n'), true),
   ]);
   (r.scenes || []).forEach(function (s, i) {
-    card.appendChild(h('h3', { text: '장면 ' + s.scene_no + ' · ' + s.duration_sec + '초' }));
+    card.appendChild(h('h3', { text: '장면 ' + s.scene_no + (s.beat ? ' · ' + s.beat : '') + ' · ' + s.duration_sec + '초' }));
+    if (storyboard) card.appendChild(field('s' + i + 'line', '내레이션 = 자막 (30자 이내, CTA에는 {키워드})', s.narration));
     card.appendChild(field('s' + i + 'visual', '장면 설명', s.visual, true));
-    card.appendChild(field('s' + i + 'text', '화면 문구', s.on_screen_text));
+    if (!storyboard) card.appendChild(field('s' + i + 'text', '화면 문구', s.on_screen_text));
     card.appendChild(field('s' + i + 'flow', 'Flow 프롬프트 (영어)', s.flow_prompt, true));
   });
   card.appendChild(field('note', '수정 메모 (선택)', '', true));
@@ -550,10 +554,13 @@ function renderEditor(main) {
     h('button', { class: 'b', type: 'button', text: '취소', onclick: function () { S.mode = 'view'; renderDetail(); } }),
     h('button', { class: 'b primary', type: 'button', text: '저장 (v' + (d.summary.scriptVersion + 1) + ')', onclick: function () {
       const edit = {
-        concept: f.concept.value, hook: f.hook.value, narration: f.narration.value,
-        captions: f.captions.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean),
+        concept: f.concept.value, hook: f.hook.value,
+        narration: storyboard ? undefined : f.narration.value,
+        captions: storyboard ? undefined : f.captions.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean),
         scenes: (r.scenes || []).map(function (s, i) {
-          return { visual: f['s' + i + 'visual'].value, on_screen_text: f['s' + i + 'text'].value, flow_prompt: f['s' + i + 'flow'].value };
+          const out = { visual: f['s' + i + 'visual'].value, flow_prompt: f['s' + i + 'flow'].value };
+          if (storyboard) out.narration = f['s' + i + 'line'].value; else out.on_screen_text = f['s' + i + 'text'].value;
+          return out;
         }),
       };
       act('EDIT_SCRIPT', { edit: edit, note: f.note.value });

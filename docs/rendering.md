@@ -1,29 +1,75 @@
-# Rendering reels (FFmpeg + Google Cloud Text-to-Speech)
+# Rendering reels (video-first, FFmpeg + Google Cloud Text-to-Speech)
 
-The renderer turns an **approved** script into a 1080×1920 MP4. Each MP4 has:
+The renderer turns an **approved storyboard** and **approved footage** into a 1080×1920 lifestyle reel.
 
-- Korean narration from Google Cloud TTS;
-- subtitles synced to the voice;
-- a headline for each scene;
-- a conspicuous `[광고]` Coupang Partners disclosure for the **whole** video;
-- a CTA end card with the post's ManyChat keyword.
+- **Footage:** full-screen 9:16 footage of the real product in use, with a hard cut every 2–4 s.
+- **Voice and subtitles:** Korean narration (Google Cloud TTS), one short line per scene. Each line is shown as a **white bold subtitle with a thin black outline** in the lower-middle safe area, at most 2 lines.
+- **Disclosure:** the full Coupang Partners sentence at the **start and end**, with a small `광고` tag in between. No banners, headlines, slides or animations.
 
 It runs on your Mac today. The same code runs in a container (Cloud Run) later, with only configuration changes.
 
 ```
-Dashboard (approved, "영상 제작 중")
-   │ 렌더 작업 파일 (Mac)  ← signed by the Sheet; valid 72 h; contains no links or keys
+Approved script (storyboard: HOOK → PROBLEM → DEMO → BENEFIT → CTA, one narration line per scene)
+   │ 렌더 작업 파일 (Mac)  ← signed by the Sheet; valid 72 h; no links or keys
    ▼
-renderer/cli.js
-   1. approval gate ── signature · status · approved-script fingerprint · permission · expiry
-   2. pre-flight ───── Flow clips present? FFmpeg can burn Korean subtitles?
-   3. budget ───────── per-job and monthly character caps (paid voices only)
-   4. TTS ──────────── per sentence, cached by content: a sentence is never paid for twice
-   5. FFmpeg ───────── scenes → 9:16, ASS overlay, narration mix, loudness −16 LUFS, H.264/AAC
+renderer/cli.js render
+   1 approval gate ── signature · status · approved-script fingerprint · permission · expiry
+   2 storyboard ───── beats → shots (2–4 s each, e.g. a 6 s beat = 2 cuts); {키워드} → ManyChat keyword
+   3 pre-flight QC ── structure · CTA keyword · shot lengths · ≤2-line subtitles inside the safe area
+   4 footage ──────── clips/<릴스ID>/assets.json: every shot present, allowed source, real product where
+                      required, ≥720p, not solid-colour, not a still image  → otherwise ASSETS_REQUIRED
+   5 FFmpeg check · 6 reuse · 7 TTS (budget-checked, cached, one line per scene)
+   8 render ───────── scale/crop each shot to fill 9:16, hard cuts, subtitles, disclosure, narration −16 LUFS
+   9 post-render QC ─ 1080x1920 · H.264/yuv420p · 30 fps · AAC · duration · every shot from an asset
    ▼
-renderer/output/<릴스ID>/v<대본버전>-<지문>-final/<릴스ID>_script-v<N>.mp4  +  manifest.json
-   │ you upload to Drive → dashboard "완성 MP4 등록" → ③ video review on iPhone
+renderer/output/<릴스ID>/v<N>-<지문>-<footage>-lifestyle-v1-final/<릴스ID>_script-v<N>.mp4 + manifest.json
 ```
+
+There is **no code path that draws coloured slides or placeholder visuals**. With no approved footage, the job stops with `ASSETS_REQUIRED` (exit code 3) and writes:
+- `clips/<릴스ID>/SHOTLIST.md`: every cut to film or generate, its line, minimum length and allowed source;
+- `assets.template.json`: a starting point for the footage manifest.
+
+## What separates what
+
+| Piece | Where | Reusable across products |
+|---|---|---|
+| Visual template (canvas, safe area, subtitle style, shot length, disclosure, asset rules) | `renderer/templates/lifestyle-v1.json` | Yes. Copy it to make another look; select with `--template` or `RF_TEMPLATE`. |
+| Storyboard (beats, lines, scene timing, visual descriptions) | Approved script in REELS (`장면(JSON)`) | Generated per product by Gemini, approved by you |
+| Scene assets (footage + provenance) | `renderer/clips/<릴스ID>/assets.json` + clips | Per reel |
+| Narration | Google Cloud TTS, cached per line in `~/.reels-factory/cache` | Per line |
+| Rendering configuration (voice, caps, FFmpeg, font, paths) | `renderer/.env` / environment variables | Per machine |
+
+## Footage rules (`assets.json`)
+
+```json
+{
+  "reelId": "PRD-001-R01",
+  "shots": {
+    "S1-1": { "file": "S1-1.mp4", "source": "flow-generated", "showsProduct": false, "in": 0 },
+    "S2-1": { "file": "S2-1.mp4", "source": "own-footage", "showsProduct": true, "rights": "직접 촬영 2026-10-09", "in": 1.2 }
+  }
+}
+```
+
+- **`source`:**
+  - `own-footage` (you filmed it);
+  - `licensed` (written permission; `rights` is required);
+  - `flow-generated` (Google Flow, only after approval).
+
+  Anything else, including marketplace or Coupang listing videos, is rejected.
+- **Real-product beats:** **DEMO, BENEFIT and CTA** shots must show the **real product** (`showsProduct: true`) from `own-footage` or `licensed`. AI-generated clips may only be used for HOOK/PROBLEM context shots, so demonstrations stay truthful.
+- **Clip checks:**
+  - short side ≥ 720 px;
+  - at least the length in SHOTLIST (each shot plus 1 s headroom);
+  - automatically rejected if mostly a single colour or if it does not move (a still image saved as video).
+- **`in`:** the second in the clip where the cut starts. Clip audio is not used.
+- **Re-rendering:** after you change footage, the renderer re-renders, but the narration comes from the cache ($0).
+
+## Keyword and disclosure
+
+- **Keyword:** the CTA line is written as `… 댓글에 '{키워드}'` and replaced with the reel's **ManyChat 키워드** (e.g. `우산`). QC fails if the CTA subtitle doesn't contain this reel's keyword. Change the keyword in REELS **before** approving; it is part of the approved fingerprint.
+- **Disclosure:** the full sentence (`광고 표기`) appears during the first 2.5 s and the last scene, and a small `광고` tag in between. This follows Korean FTC (공정위) guidance for videos: start and end, visible to people who join mid-video. To remove the in-between tag, set `disclosure.persistentTag.enabled` to `false` in the template. The Instagram caption keeps `[광고]` on its first line, and you should also turn on Instagram's paid-partnership label.
+- **Emoji:** emoji in a line (e.g. ☂️) are removed from the burned subtitle and the voice, because the font and TTS don't support them. QC reports this as a warning. Put emoji in the Instagram caption instead.
 
 ## No paid assets before script approval
 
@@ -51,7 +97,7 @@ Steps 2 and 3 run **before** TTS on purpose. A render that would fail anyway, be
 - **Caps:** `RF_TTS_MAX_CHARS_PER_JOB` (default 1500) and `RF_TTS_MONTHLY_CHAR_LIMIT` (default 500,000) stop the render **before** any call. Usage is recorded in `~/.reels-factory/tts-usage.json`; `npm run render:usage` shows it.
 - **Free checks first:**
   - `npm run render:estimate -- --job <file>` verifies approval and prints the exact billable characters and estimated cost. It makes no API calls.
-  - `--preview` renders with the **free local Mac voice (Yuna)** and placeholder visuals, so you can check timing and layout at no cost. The output is watermarked "게시 금지" and named `_PREVIEW`.
+  - `--preview` renders your real footage with the **free local Mac voice (Yuna)**, so you can check timing before paying for Google TTS. The output is marked "미리보기 음성" and named `_PREVIEW`. It never adds placeholder visuals.
 
 ## Mac setup (once, about 20 minutes)
 
@@ -86,43 +132,45 @@ Steps 2 and 3 run **before** TTS on purpose. A render that would fail anyway, be
 
 ## Rendering a reel
 
-1. **iPhone (or browser):**
-   - Approve the script (②).
-   - Make sure PRODUCTS `영상 사용 허가 상태` is `허가 완료`, or `자체 제작` if you only use your own or AI-generated footage.
+1. **iPhone:**
+   - Approve the storyboard (②). Check each scene line and the CTA keyword.
+   - Make sure PRODUCTS `영상 사용 허가 상태` is `허가 완료` (permission obtained) or `자체 제작` (your own footage).
    - Tap **영상 제작 시작**.
-2. **Google Flow (manual):**
-   - Generate one clip per scene from the **Google Flow 프롬프트** in the dashboard.
-   - Save them as `renderer/clips/<릴스ID>/S1.mp4`, `S2.mp4`, …
-   - Clips can be any aspect ratio: they are center-cropped to 9:16, looped or trimmed to fit, and their audio is dropped.
-3. **Mac:**
-   - In the dashboard, tap **렌더 작업 파일 (Mac)**.
-   - Save it as `renderer/jobs/<릴스ID>_v<N>.render-job.json`.
-   - Then run:
+2. **Mac:** download the job via **렌더 작업 파일 (Mac)** into `renderer/jobs/`, then run (free):
    ```bash
-   npm run render:estimate -- --job renderer/jobs/PRD-001-R01_v1.render-job.json          # free
-   npm run render -- --job renderer/jobs/PRD-001-R01_v1.render-job.json --preview         # free, local voice
-   npm run render -- --job renderer/jobs/PRD-001-R01_v1.render-job.json                   # final, Google TTS
+   npm run render:estimate -- --job renderer/jobs/PRD-001-R01_v1.render-job.json
    ```
-4. **Review:**
-   - Upload the final MP4 (not `_PREVIEW`) to Google Drive.
-   - In the dashboard, tap **완성 MP4 등록** and paste the Drive link.
-   - Review on iPhone (③).
+   This lists the QC checks, the footage status and the TTS cost.
+3. **Footage:** if footage is missing, `npm run render -- --job …` stops with `ASSETS_REQUIRED` and writes `renderer/clips/<릴스ID>/SHOTLIST.md`.
+   - Film the real-product shots with your iPhone (9:16, 4K/1080p, 30 fps). Generate HOOK/PROBLEM context shots in Flow if you like.
+   - Name the files as in the list.
+   - Copy `assets.template.json` to `assets.json` and fill in `source` and `rights`.
+4. **Preview and final:**
+   ```bash
+   npm run render -- --job renderer/jobs/PRD-001-R01_v1.render-job.json --preview   # free local voice
+   npm run render -- --job renderer/jobs/PRD-001-R01_v1.render-job.json             # Google TTS
+   ```
+5. **Review:** upload the final MP4 (not `_PREVIEW`) to Drive, tap **완성 MP4 등록**, and review it on iPhone (③).
 
-`manifest.json` next to each MP4 records:
-- the approved fingerprint and script version;
-- TTS voice, characters and estimated cost;
-- the timeline;
-- the clip sources;
-- the FFmpeg version;
-- the SHA-256 of the output.
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | done |
+| 2 | approval, budget or script-format gate (no cost) |
+| 3 | `ASSETS_REQUIRED` (no cost) |
+| 4 | QC failed (file kept as `_QC_FAILED`) |
+| 1 | other |
 
 ## Sample (PRD-001)
 
 ```bash
-npm run render:sample
+npm run render:sample                                   # → ASSETS_REQUIRED + SHOTLIST until footage exists
+npm run render:sample -- --clips renderer/clips         # with your footage, free preview voice
+npm run render:sample -- --clips renderer/clips --tts google   # final voice (GOOGLE_TTS_API_KEY)
 ```
 
-This runs the real approval flow on an in-memory copy of the Sheet with the PRD-001 fixture script. It then renders a **preview** with the free local voice and placeholder visuals. It needs no Google account and costs $0.
+This runs the real approval flow on an in-memory copy of the Sheet with the PRD-001 storyboard and the keyword `우산`. The sample includes no footage, so it stops with `ASSETS_REQUIRED` and writes the 7-cut shot list until you add real clips.
 
 ## Moving to the cloud later
 
@@ -148,7 +196,9 @@ Planned follow-ups, kept out of this PR to keep it reviewable:
 | `승인 확인 실패 … 서명이 맞지 않습니다` | `RF_RENDER_SECRET` differs from the Sheet's key, or the job file was edited. Download a new job file. |
 | `작업 파일이 만료되었습니다` | Job files are valid for 72 h. Download a new one. |
 | `대본 내용이 승인된 버전과 다릅니다` | The script was edited after approval. Re-approve it in the dashboard. |
-| `Flow 클립이 없습니다` | Put `S1.mp4…Sn.mp4` in `renderer/clips/<릴스ID>/`, or use `--preview`. |
+| `ASSETS_REQUIRED` | Follow `renderer/clips/<릴스ID>/SHOTLIST.md`; fill `assets.json`. |
+| `QC 실패 … subtitle…lines` | A scene line is longer than 2 lines; shorten it in the dashboard editor and re-approve. |
+| `대본 형식` | The script predates storyboards; use "수정 요청" → Gemini 재생성, then approve again. |
 | `ass 필터 (libass)` missing | Install `ffmpeg-full` (see Mac setup). |
 | `Google TTS 오류 HTTP 403` | Enable the Text-to-Speech API, link billing, and check the API key restriction. |
 | Korean text shows boxes | Set `RF_FONT_NAME` to an installed Korean font, or `RF_FONTS_DIR` to a folder containing one (e.g. Noto Sans KR). |

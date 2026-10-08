@@ -155,11 +155,19 @@ function rowToReel(row) {
 
 /** Reel object → script cells (except keyword/CTA/disclosure, which are code-owned). */
 function reelToScriptCells(reel) {
+  // Storyboard scripts: the scene lines ARE the narration and the subtitles (single source).
+  const lines = Array.isArray(reel.scenes) && reel.scenes.length && reel.scenes.every(function (sc) {
+    return sc && typeof sc.narration === 'string' && sc.narration.trim();
+  })
+    ? reel.scenes.map(function (sc) {
+        return normalizeText(sc.narration);
+      })
+    : null;
   return {
     '컨셉': normalizeText(reel.concept),
     '후킹': normalizeText(reel.hook),
-    '내레이션': normalizeText(reel.narration),
-    '자막': reel.captions.map(normalizeText).join('\n'),
+    '내레이션': lines ? lines.join(' ') : normalizeText(reel.narration),
+    '자막': (lines || reel.captions.map(normalizeText)).join('\n'),
     '장면(JSON)': JSON.stringify(reel.scenes),
     'Flow 프롬프트': reel.scenes
       .map(function (s) {
@@ -186,7 +194,7 @@ function mergeScriptEdit(current, edit) {
       throw new Error('장면 개수는 수정할 수 없습니다. 장면 구성을 바꾸려면 "수정 요청"으로 재생성하세요.');
     }
     edit.scenes.forEach(function (es, i) {
-      ['visual', 'on_screen_text', 'flow_prompt'].forEach(function (k) {
+      ['visual', 'on_screen_text', 'flow_prompt', 'narration'].forEach(function (k) {
         if (typeof es[k] === 'string') merged.scenes[i][k] = es[k];
       });
     });
@@ -520,7 +528,7 @@ function buildPublishingPack(row, product) {
     reelId: row['릴스ID'],
     videoUrl: driveViewUrl(fileId),
     videoDownloadUrl: 'https://drive.google.com/uc?export=download&id=' + fileId,
-    instagramCaption: ['[광고] ' + disclosure, '', cellText_(row['후킹']), '', cellText_(row['CTA'])].join('\n'),
+    instagramCaption: ['[광고] ' + disclosure, '', cellText_(row['후킹']), '', buildCta(keyword)].join('\n'),
     manychatKeyword: keyword,
     manychatDm: '요청하신 상품 링크예요 👉 ' + normalizeText(product.affiliateUrl) + '\n\n' + disclosure,
     affiliateUrl: normalizeText(product.affiliateUrl),
