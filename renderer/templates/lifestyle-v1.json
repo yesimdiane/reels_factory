@@ -1,74 +1,65 @@
 {
   "name": "lifestyle-v1",
-  "description": "Video-first lifestyle reel: full-screen 9:16 footage, hard cuts every 2-4 s, one narration line per scene as a white bold subtitle in the lower-middle safe area.",
-  "canvas": {
-    "width": 1080,
-    "height": 1920,
-    "fps": 30
+  "version": 2,
+  "description": "Video-first lifestyle reel matched to the operator's reference Reel (seoul_jip_deco × yesimdiane): real footage, fast hard cuts (~1.8 s), one short single-line Korean caption per phrase, centred slightly below the middle, regular-weight white text with a thin dark edge.",
+  "reference": {
+    "source": "Operator reference Reel (Google Drive screen recording, 2026-10-09), measured with FFmpeg + pixel analysis; video area 1206x2028 visible of a 9:16 frame",
+    "shots": "~16 shots in ~27 s; mean ~1.7 s, range 0.9-3.5 s; hard cuts only, motion comes from handheld camera / in-camera whip pans",
+    "subtitle": "Korean caption centre ~56% of height, glyph ~47 px at 1080 wide, regular weight, white with thin dark edge, single line, centred; small English translation below at ~61% (~25 px)",
+    "persistentCta": "'댓글에 '타일' 남겨주세요' centre ~74.5%, ~41 px, visible for the whole video",
+    "footage": "creator on camera, hands handling the product, POV feet on the product, texture close-ups, wide shot of the space; natural daylight; no graphics or slides"
   },
-  "safeArea": {
-    "top": 0.14,
-    "bottom": 0.35,
-    "side": 0.06
+  "canvas": { "width": 1080, "height": 1920, "fps": 30 },
+  "safeArea": { "top": 0.12, "bottom": 0.2, "side": 0.06 },
+  "shots": { "minSec": 1.0, "targetSec": 1.8, "maxSec": 3.5, "stretchToleranceSec": 1.0, "clipHeadroomSec": 1.0 },
+  "shotlist": {
+    "framing": {
+      "HOOK": ["미디엄 — 사람이 카메라를 보며 반응", "클로즈업 — 문제 상황 디테일"],
+      "PROBLEM": ["미디엄 — 불편한 상황", "클로즈업 — 문제 디테일"],
+      "DEMO": ["클로즈업 — 손으로 제품 사용", "POV — 사용하는 시점", "미디엄 — 사람과 제품"],
+      "BENEFIT": ["와이드 — 공간 전체", "POV — 걷거나 지나가며", "디테일 — 정리된 결과"],
+      "CTA": ["제품 클로즈업", "사람이 제품을 들고 카메라를 봄"]
+    }
   },
-  "shots": {
-    "minSec": 2,
-    "maxSec": 4,
-    "stretchToleranceSec": 1.5,
-    "clipHeadroomSec": 1.0
-  },
-  "durationSec": {
-    "min": 18,
-    "max": 30
-  },
+  "durationSec": { "min": 18, "max": 30 },
   "subtitle": {
-    "size": 66,
-    "bold": true,
+    "font": "NanumSquareRound",
+    "size": 48,
+    "bold": false,
     "color": "&H00FFFFFF",
     "outlineColor": "&H00000000",
-    "outline": 3,
-    "shadow": 0,
-    "maxLines": 2,
+    "outline": 2,
+    "shadow": 1,
+    "shadowColor": "&H80000000",
+    "centerY": 0.56,
+    "maxLines": 1,
+    "maxWidthRatio": 0.62,
     "lineHeight": 1.25,
-    "holdSec": 0.25
+    "holdSec": 0.15
   },
-  "narration": {
-    "leadInSec": 0.15,
-    "tailSec": 0.35
+  "persistentCta": {
+    "enabled": false,
+    "comment": "The reference keeps '댓글에 '키워드' 남겨주세요' on screen for the whole video. Off by default because the operator asked for no promotional text on every frame; set enabled to true to match the reference exactly.",
+    "text": "댓글에 '{키워드}' 남겨주세요",
+    "centerY": 0.745,
+    "size": 41
   },
+  "narration": { "leadInSec": 0.15, "tailSec": 0.35 },
   "disclosure": {
     "inVideo": false,
     "comment": "Operator decision: the Coupang Partners disclosure goes in the Instagram caption (first line [광고] + full sentence), not in the video. Set inVideo to true to show it at the start and end of the video.",
     "startSec": 2.5,
     "onLastScene": true,
     "size": 34,
-    "persistentTag": {
-      "enabled": false,
-      "text": "광고",
-      "size": 30
-    }
+    "persistentTag": { "enabled": false, "text": "광고", "size": 30 }
   },
   "assets": {
     "minShortSide": 720,
-    "allowedSources": [
-      "own-footage",
-      "licensed",
-      "flow-generated"
-    ],
-    "realProductBeats": [
-      "DEMO",
-      "BENEFIT",
-      "CTA"
-    ],
-    "realProductSources": [
-      "own-footage",
-      "licensed"
-    ],
+    "allowedSources": ["own-footage", "licensed", "flow-generated"],
+    "realProductBeats": ["DEMO", "BENEFIT", "CTA"],
+    "realProductSources": ["own-footage", "licensed"],
     "maxFlatRatio": 0.5,
     "minMotion": 0.15
   },
-  "audio": {
-    "loudnessLufs": -16,
-    "keepClipAudio": false
-  }
+  "audio": { "loudnessLufs": -16, "keepClipAudio": false }
 }

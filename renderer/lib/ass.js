@@ -1,8 +1,9 @@
-// ASS overlay for the lifestyle template: subtitles (white bold, thin black outline, lower-middle
-// safe area, ≤2 lines). The Coupang Partners disclosure is drawn only if the template enables it
-// (default: caption only). No headlines, no slides, no animations.
+// ASS overlay for the lifestyle template, matched to the reference Reel: short single-line Korean
+// captions centred at template.subtitle.centerY (regular weight, white, thin dark edge + soft shadow).
+// Optional: a persistent comment-keyword line and the Coupang Partners disclosure (both off by default).
+// No headlines, no slides, no animations.
 'use strict';
-const { wrapLines, subtitleGeometry } = require('./layout');
+const { splitCaptions, captionMaxWidth, geometry } = require('./layout');
 
 function ts(sec) {
   const cs = Math.max(0, Math.round(sec * 100));
@@ -21,14 +22,16 @@ function esc(text) {
     .replace(/\r?\n/g, '\\N');
 }
 
-function buildAss(timeline, template, { font, disclosureText, preview = false }) {
+function buildAss(timeline, template, { font, disclosureText, keyword = '', preview = false }) {
   const W = template.canvas.width;
   const H = template.canvas.height;
-  const geo = subtitleGeometry(template);
+  const geo = geometry(template);
   const st = template.subtitle;
   const d = template.disclosure;
-  const style = (name, size, bold, outline, align, mL, mR, mV) =>
-    `Style: ${name},${font},${size},${st.color},&H000000FF,${st.outlineColor},&H00000000,${bold ? -1 : 0},0,0,0,100,100,0,0,1,${outline},${st.shadow},${align},${mL},${mR},${mV},1`;
+  const cta = template.persistentCta || { enabled: false };
+  const face = st.font || font;
+  const style = (name, size, bold, outline, shadow, align, mL, mR, mV) =>
+    `Style: ${name},${face},${size},${st.color},&H000000FF,${st.outlineColor},${st.shadowColor || '&H80000000'},${bold ? -1 : 0},0,0,0,100,100,0,0,1,${outline},${shadow},${align},${mL},${mR},${mV},1`;
   const lines = [
     '[Script Info]',
     'ScriptType: v4.00+',
@@ -40,20 +43,27 @@ function buildAss(timeline, template, { font, disclosureText, preview = false })
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    style('Sub', st.size, st.bold, st.outline, 2, geo.safe.left, W - geo.safe.right, geo.marginV),
-    style('Disclosure', d.size, true, 2, 8, geo.safe.left, W - geo.safe.right, geo.safe.top),
-    style('Tag', d.persistentTag ? d.persistentTag.size : 30, true, 2, 7, geo.safe.left, 0, geo.safe.top),
-    style('Preview', 26, true, 2, 9, 0, geo.safe.left, geo.safe.top),
+    style('Sub', st.size, st.bold, st.outline, st.shadow, 5, 0, 0, 0),
+    style('Cta', cta.size || st.size, st.bold, st.outline, st.shadow, 5, 0, 0, 0),
+    style('Disclosure', d.size, false, 2, 1, 8, geo.safe.left, W - geo.safe.right, geo.safe.top),
+    style('Tag', d.persistentTag ? d.persistentTag.size : 30, false, 2, 1, 7, geo.safe.left, 0, geo.safe.top),
+    style('Preview', 26, false, 2, 1, 9, 0, geo.safe.left, geo.safe.top),
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
   const ev = (layer, a, b, s, text) => lines.push(`Dialogue: ${layer},${ts(a)},${ts(b)},${s},,0,0,0,,${text}`);
+  const pos = `{\\pos(${geo.centerX},${geo.centerY})}`;
 
-  timeline.beats.forEach((b) => ev(2, b.subtitle.start, b.subtitle.end, 'Sub', b.subtitle.lines.map(esc).join('\\N')));
+  timeline.beats.forEach((b) => b.subtitle.captions.forEach((c) => ev(2, c.start, c.end, 'Sub', pos + esc(c.text))));
 
-  const dLines = wrapLines(disclosureText, d.size, geo.maxWidth).map(esc).join('\\N');
-  timeline.disclosure.full.forEach((iv) => ev(3, iv.start, iv.end, 'Disclosure', dLines));
+  if (cta.enabled) {
+    ev(2, 0, timeline.total, 'Cta', `{\\pos(${geo.centerX},${Math.round(H * cta.centerY)})}` + esc(String(cta.text).split('{키워드}').join(keyword)));
+  }
+  if (timeline.disclosure.full.length) {
+    const dLines = splitCaptions(disclosureText, d.size, captionMaxWidth(template) * 1.4).map(esc).join('\\N');
+    timeline.disclosure.full.forEach((iv) => ev(3, iv.start, iv.end, 'Disclosure', dLines));
+  }
   timeline.disclosure.tag.forEach((iv) => ev(3, iv.start, iv.end, 'Tag', esc(d.persistentTag.text)));
   if (preview) ev(4, 0, timeline.total, 'Preview', esc('미리보기 음성'));
   return lines.join('\n') + '\n';

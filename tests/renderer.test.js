@@ -18,7 +18,7 @@ const { buildStoryboard, StoryboardError } = require('../renderer/lib/storyboard
 const { validateAssets, analyzeClip, AssetsRequiredError } = require('../renderer/lib/assets');
 const { preflight, QcError } = require('../renderer/lib/qc');
 const { loadTemplate } = require('../renderer/lib/template');
-const { subtitleGeometry } = require('../renderer/lib/layout');
+const { geometry } = require('../renderer/lib/layout');
 const { createLocalStorage } = require('../renderer/lib/storage/local');
 const { render } = require('../renderer/lib/render');
 
@@ -207,7 +207,7 @@ function writeFootage(clipsDir, reelId, ids, over = {}) {
 }
 const okAnalysis = async () => ({ width: 1080, height: 1920, duration: 10, frames: 30, flatRatio: 0, motion: 3 });
 
-test('storyboard: PRD-001 = HOOK → DEMO → DEMO → BENEFIT → CTA, 23 s, 7 shots of 2–4 s, keyword in the CTA', () => {
+test('storyboard: PRD-001 = HOOK → DEMO → DEMO → BENEFIT → CTA, 23 s, 12 cuts at the reference pace, keyword in the CTA', () => {
   const { sb } = storyboardOf();
   assert.deepEqual(sb.beats.map((b) => b.beat), ['HOOK', 'DEMO', 'DEMO', 'BENEFIT', 'CTA']);
   assert.equal(sb.scriptedTotal, 23);
@@ -215,8 +215,12 @@ test('storyboard: PRD-001 = HOOK → DEMO → DEMO → BENEFIT → CTA, 23 s, 7 
     '현관 좁은 집은 우산 어디 둬요?', '저는 그냥 문에 붙였어요.', '바닥 공간을 안 차지하니까', '현관이 훨씬 깔끔해져요.', "제품 정보는 댓글에 '우산'",
   ]);
   const shots = sb.beats.flatMap((b) => b.shots);
-  assert.deepEqual(shots.map((s) => s.id), ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1']);
-  assert.ok(shots.every((s) => s.scriptedSec >= 2 && s.scriptedSec <= 4));
+  assert.deepEqual(shots.map((s) => s.id), ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2']);
+  assert.ok(shots.every((s) => s.scriptedSec >= template.shots.minSec && s.scriptedSec <= template.shots.maxSec));
+  const avg = sb.scriptedTotal / shots.length;
+  assert.ok(Math.abs(avg - template.shots.targetSec) < 0.3, 'average cut ' + avg + ' s ≈ reference ~1.8 s');
+  assert.equal(shots[0].framing, '미디엄 — 사람이 카메라를 보며 반응');
+  assert.equal(sb.beats[2].shots[1].framing, 'POV — 사용하는 시점');
   assert.deepEqual(sb.removedSymbols, ['☂'], 'emoji removed from burned subtitles and TTS (reported)');
   assert.ok(!sb.beats[4].ttsText.includes('☂'));
 });
@@ -232,28 +236,41 @@ test('scripts without a storyboard are refused before any cost', () => {
   assert.throws(() => buildStoryboard(job, template), StoryboardError);
 });
 
-test('pre-flight QC: structure, keyword mapping, shot length, 2-line subtitles inside the Instagram safe area', () => {
+test('pre-flight QC: structure, keyword mapping, cut pacing, single-line captions inside the Instagram safe area', () => {
   const { sb, job } = storyboardOf();
   const ok = preflight(sb, template, job);
   assert.equal(ok.ok, true, JSON.stringify(ok.checks.filter((c) => !c.ok)));
-  const geo = subtitleGeometry(template);
-  assert.deepEqual(geo.safe, { left: 65, right: 1015, top: 269, bottom: 1248 });
-  assert.ok(ok.checks.filter((c) => /safeArea/.test(c.id)).length === 5);
+  const geo = geometry(template);
+  assert.deepEqual(geo.safe, { left: 65, right: 1015, top: 230, bottom: 1536 });
+  assert.equal(geo.centerY, 1075, 'captions centred at 56% like the reference');
+  assert.equal(ok.checks.filter((c) => /safeArea/.test(c.id)).length, 5);
+  assert.match(ok.checks.find((c) => c.id === 'subtitle.S1.lines').detail, /현관 좁은 집은 \/ 우산 어디 둬요\?/);
+  assert.equal(ok.checks.find((c) => c.id === 'shots.pacing').ok, true);
   assert.equal(ok.checks.find((c) => c.id === 'subtitle.symbols').level, 'warn');
 
   const wrongKeyword = storyboardOf({ keyword: '다른키워드' });
   wrongKeyword.sb.beats[4].subtitle = '제품 정보는 댓글에';
   assert.equal(preflight(wrongKeyword.sb, template, wrongKeyword.job).checks.find((c) => c.id === 'cta.keyword').ok, false);
 
-  const long = storyboardOf();
-  long.sb.beats[1].subtitle = '아주 긴 자막이 세 줄을 넘어가도록 계속해서 길게 이어지는 문장입니다 정말로요';
-  const r = preflight(long.sb, template, long.job);
+  const longWord = storyboardOf();
+  longWord.sb.beats[1].subtitle = '가나다라마바사아자차카타파하가나다라마바사';
+  const r = preflight(longWord.sb, template, longWord.job);
   assert.equal(r.ok, false);
-  assert.equal(r.checks.find((c) => c.id === 'subtitle.S2.lines').ok, false);
+  assert.equal(r.checks.find((c) => c.id === 'subtitle.S2.lines').ok, false, 'a caption that cannot fit one line fails');
 
   const shortShot = storyboardOf();
-  shortShot.sb.beats[0].shots[0].scriptedSec = 1.2;
+  shortShot.sb.beats[0].shots[0].scriptedSec = 0.6;
   assert.equal(preflight(shortShot.sb, template, shortShot.job).checks.find((c) => c.id === 'shots.length').ok, false);
+
+  const slow = storyboardOf();
+  slow.sb.beats.forEach((b) => (b.shots = [b.shots[0]]));
+  assert.equal(preflight(slow.sb, template, slow.job).checks.find((c) => c.id === 'shots.pacing').ok, false, 'slideshow-like pacing is flagged');
+
+  const withCta = JSON.parse(JSON.stringify(template));
+  withCta.persistentCta.enabled = true;
+  const c = preflight(sb, withCta, job).checks.find((x) => x.id === 'persistentCta');
+  assert.equal(c.ok, true, c.detail);
+  assert.match(c.detail, /댓글에 '우산' 남겨주세요/);
 });
 
 test('ASSETS_REQUIRED: no footage → shot list written, job stopped, zero TTS calls', async () => {
@@ -262,13 +279,14 @@ test('ASSETS_REQUIRED: no footage → shot list written, job stopped, zero TTS c
   const provider = spyProvider();
   await assert.rejects(
     render({ jobFile, secret, template, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: path.join(dir, 'clips'), ffmpeg: FF, font: 'NanumGothic', analyze: okAnalysis }),
-    (e) => e instanceof AssetsRequiredError && e.code === 'ASSETS_REQUIRED' && e.report.required.length === 7
+    (e) => e instanceof AssetsRequiredError && e.code === 'ASSETS_REQUIRED' && e.report.required.length === 12
   );
   const shotlist = fs.readFileSync(path.join(dir, 'clips', 'PRD-001-R01', 'SHOTLIST.md'), 'utf8');
-  assert.match(shotlist, /S2-1 \| S2-1\.mp4 \| DEMO · 실제 제품 \| 저는 그냥 문에 붙였어요\./);
+  assert.match(shotlist, /S2-1 \| S2-1\.mp4 \| DEMO · 실제 제품 \| 저는 그냥 문에 붙였어요\. \|.*\| 클로즈업 — 손으로 제품 사용 \|/);
   assert.match(shotlist, /마켓\(쿠팡 등\) 상세페이지 영상은 사용 금지/);
+  assert.match(shotlist, /같은 file에 서로 다른 in/);
   const tmpl = JSON.parse(fs.readFileSync(path.join(dir, 'clips', 'PRD-001-R01', 'assets.template.json'), 'utf8'));
-  assert.deepEqual(Object.keys(tmpl.shots), ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1']);
+  assert.deepEqual(Object.keys(tmpl.shots), ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2']);
   assert.equal(provider.calls.length, 0);
   assert.equal(fs.existsSync(path.join(dir, 'out')), false, 'nothing rendered, no slides substituted');
 });
@@ -278,7 +296,7 @@ test('asset provenance: no marketplace video, real product beats need real produ
   const dir = tmp();
   const reel = path.join(dir, 'PRD-001-R01');
   fs.mkdirSync(reel, { recursive: true });
-  const ids = ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1'];
+  const ids = ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2'];
   ids.forEach((id) => fs.writeFileSync(path.join(reel, id + '.mp4'), 'x'));
   const shots = Object.fromEntries(ids.map((id) => [id, { file: id + '.mp4', source: 'own-footage', showsProduct: true }]));
   shots['S1-1'] = { file: 'S1-1.mp4', source: 'flow-generated', showsProduct: false }; // OK: HOOK may be generated
@@ -305,7 +323,7 @@ test('asset analysis rejects solid-colour, still-image, low-res and too-short cl
   const dir = tmp();
   const reel = path.join(dir, 'PRD-001-R01');
   fs.mkdirSync(reel, { recursive: true });
-  const ids = ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1'];
+  const ids = ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2'];
   ids.forEach((id) => fs.writeFileSync(path.join(reel, id + '.mp4'), 'x'));
   fs.writeFileSync(path.join(reel, 'assets.json'), JSON.stringify({ reelId: 'PRD-001-R01', shots: Object.fromEntries(ids.map((id) => [id, { file: id + '.mp4', source: 'own-footage', showsProduct: true }])) }));
   const fake = { 'S1-1': { flatRatio: 0.9, motion: 0 }, 'S2-1': { flatRatio: 0, motion: 0.01 }, 'S3-1': { width: 480, height: 854 }, 'S3-2': { duration: 2 } };
@@ -319,21 +337,22 @@ test('asset analysis rejects solid-colour, still-image, low-res and too-short cl
   assert.doesNotMatch(msg, /S4-1|S4-2|S5-1/);
 });
 
-test('timeline: beats stretch only for the voice, hard cuts split evenly, subtitles follow the voice, disclosure only in the caption by default', () => {
+test('timeline: beats stretch only for the voice, hard cuts split evenly, short captions follow the voice, no disclosure in the video', () => {
   const { sb } = storyboardOf();
   const voice = [2.0, 2.2, 1.9, 1.8, 7.0].map((d) => ({ file: 'x.wav', duration: d }));
   const tl = buildTimeline(sb, voice, template);
   assert.deepEqual(tl.beats.slice(0, 4).map((b) => b.duration), [3, 4, 6, 6]);
   assert.ok(Math.abs(tl.beats[4].duration - (0.15 + 7 + 0.35)) < 1e-9, 'CTA stretched for a long line');
-  assert.equal(tl.shots.length, 7);
-  assert.deepEqual(tl.beats[2].shots.map((s) => s.duration), [3, 3]);
+  assert.equal(tl.shots.length, 12);
+  assert.deepEqual(tl.beats[2].shots.map((s) => s.duration), [2, 2, 2]);
+  assert.deepEqual(tl.beats[0].subtitle.captions.map((c) => c.text), ['현관 좁은 집은', '우산 어디 둬요?']);
   tl.beats.forEach((b) => {
-    assert.ok(b.subtitle.start >= b.start && b.subtitle.end <= b.end + 1e-9);
-    assert.ok(b.subtitle.lines.length <= 2);
+    const caps = b.subtitle.captions;
+    assert.ok(caps[0].start >= b.start && caps[caps.length - 1].end <= b.end + 1e-9);
+    for (let i = 1; i < caps.length; i++) assert.ok(Math.abs(caps[i].start - caps[i - 1].end) < 1e-9, 'captions are back to back');
   });
   assert.deepEqual(tl.disclosure, { full: [], tag: [] }, 'default: disclosure only in the Instagram caption');
 
-  // Optional: templates can still show it at the start and end of the video.
   const inVideo = JSON.parse(JSON.stringify(template));
   inVideo.disclosure.inVideo = true;
   inVideo.disclosure.persistentTag.enabled = true;
@@ -342,25 +361,32 @@ test('timeline: beats stretch only for the voice, hard cuts split evenly, subtit
   assert.deepEqual(tl2.disclosure.tag, [{ start: 2.5, end: 19 }]);
 });
 
-test('ASS: white bold subtitles, thin black outline, lower-middle safe area, no headlines/slides/banners/disclosure text', () => {
+test('ASS matches the reference: regular-weight white single-line captions, thin dark edge, centred at 56%; nothing else by default', () => {
   const { sb, job } = storyboardOf();
   const tl = buildTimeline(sb, sb.beats.map(() => ({ file: 'x.wav', duration: 1.5 })), template);
-  const ass = buildAss(tl, template, { font: 'NanumGothic', disclosureText: job.script['광고 표기'] });
+  const ass = buildAss(tl, template, { font: 'NanumGothic', disclosureText: job.script['광고 표기'], keyword: '우산' });
   const sub = ass.split('\n').find((l) => l.startsWith('Style: Sub,')).split(',');
+  assert.equal(sub[1], 'NanumSquareRound', 'rounded Korean sans like the reference');
+  assert.equal(sub[2], '48', '≈47 px measured in the reference');
   assert.equal(sub[3], '&H00FFFFFF', 'white');
-  assert.equal(sub[5], '&H00000000', 'black outline');
-  assert.equal(sub[7], '-1', 'bold');
+  assert.equal(sub[5], '&H00000000', 'dark edge');
+  assert.equal(sub[7], '0', 'regular weight, not bold');
   assert.equal(sub[15], '1', 'outline style, no box');
-  assert.equal(sub[16], '3', 'thin outline');
-  assert.equal(sub[17], '0', 'no shadow');
-  assert.equal(sub[18], '2', 'bottom-centre anchor');
-  assert.equal(sub[21], '672', 'block ends at the safe-area bottom (65% height)');
-  assert.doesNotMatch(ass, /Headline|Placeholder|Keyword|Cta|Watermark|\\fad|\\move/);
+  assert.equal(sub[16], '2', 'thin edge');
+  assert.equal(sub[17], '1', 'soft shadow');
   const subs = ass.split('\n').filter((l) => /^Dialogue: .*,Sub,/.test(l));
-  assert.equal(subs.length, 5);
-  assert.ok(subs.every((l) => l.split('\\N').length <= 2));
-  assert.equal(ass.split('\n').filter((l) => /^Dialogue: .*,(Disclosure|Tag),/.test(l)).length, 0, 'no disclosure text in the video');
+  assert.equal(subs.length, 6, '5 lines → 6 single-line captions');
+  assert.ok(subs.every((l) => l.includes('{\\pos(540,1075)}') && !l.includes('\\N')));
+  assert.doesNotMatch(ass, /Headline|Placeholder|Keyword|Watermark|\\fad|\\move/);
+  assert.equal(ass.split('\n').filter((l) => /^Dialogue: .*,(Disclosure|Tag|Cta),/.test(l)).length, 0, 'no disclosure or CTA line by default');
   assert.doesNotMatch(ass, /쿠팡 파트너스|광고/);
+
+  const withCta = JSON.parse(JSON.stringify(template));
+  withCta.persistentCta.enabled = true;
+  const ass2 = buildAss(tl, withCta, { font: 'X', disclosureText: '', keyword: '우산' });
+  const ctaLines = ass2.split('\n').filter((l) => /^Dialogue: .*,Cta,/.test(l));
+  assert.equal(ctaLines.length, 1);
+  assert.match(ctaLines[0], /^Dialogue: 2,0:00:00\.00,.*\{\\pos\(540,1430\)\}댓글에 '우산' 남겨주세요$/, 'whole video at 74.5% like the reference');
   assert.equal(esc('a{b}\\c\nd'), 'a｛b｝＼c\\Nd');
 });
 
@@ -386,7 +412,7 @@ test('full render from footage: 1080x1920, every shot from an asset, QC passes, 
   const { jobFile, secret } = issueJob();
   const dir = tmp();
   const clips = path.join(dir, 'clips');
-  writeFootage(clips, 'PRD-001-R01', ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1'], { 'S1-1': { source: 'flow-generated', showsProduct: false } });
+  writeFootage(clips, 'PRD-001-R01', ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2'], { 'S1-1': { source: 'flow-generated', showsProduct: false } });
   const provider = spyProvider();
   const opts = { jobFile, secret, template, tts: service(provider, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: clips, ffmpeg: FF, font: 'NanumGothic', preset: 'ultrafast', crf: 34 };
   const m = await render(opts);
@@ -394,7 +420,7 @@ test('full render from footage: 1080x1920, every shot from an asset, QC passes, 
   const v = m.output.streams.find((s) => s.codec_type === 'video');
   assert.equal(`${v.width}x${v.height}`, '1080x1920');
   assert.ok(m.output.duration >= 22.5 && m.output.duration <= 25.5, String(m.output.duration));
-  assert.deepEqual(Object.keys(m.footage), ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1']);
+  assert.deepEqual(Object.keys(m.footage), ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2']);
   for (const id of ['visuals.noPlaceholders', 'visuals.everyShotHasAsset', 'output.resolution', 'output.fps']) {
     assert.equal(m.qc.postRender.checks.find((c) => c.id === id).ok, true, id);
   }
@@ -402,13 +428,21 @@ test('full render from footage: 1080x1920, every shot from an asset, QC passes, 
   const again = await render(opts);
   assert.equal(again.reused, true);
   assert.equal(provider.calls.length, 5);
+
+  // A template change (here: the optional persistent CTA line) renders anew — but TTS stays cached.
+  const withCta = JSON.parse(JSON.stringify(template));
+  withCta.persistentCta.enabled = true;
+  const changed = await render(Object.assign({}, opts, { template: withCta }));
+  assert.equal(changed.reused, undefined);
+  assert.notEqual(changed.output.path, m.output.path);
+  assert.equal(provider.calls.length, 5, 'no new TTS spend');
 });
 
 test('static or flat footage stops the render before TTS', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {
   const { jobFile, secret } = issueJob();
   const dir = tmp();
   const clips = path.join(dir, 'clips');
-  const ids = ['S1-1', 'S2-1', 'S3-1', 'S3-2', 'S4-1', 'S4-2', 'S5-1'];
+  const ids = ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2'];
   writeFootage(clips, 'PRD-001-R01', ids);
   makeClip(path.join(clips, 'PRD-001-R01', 'S4-2.mp4'), { kind: 'flat' });
   const provider = spyProvider();

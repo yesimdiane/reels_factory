@@ -57,7 +57,9 @@ async function render(opts) {
   // 6. Reuse: same approved script + same footage + same variant → nothing to pay or render.
   const footageKey = crypto.createHash('sha256').update(JSON.stringify(Object.entries(assets.shots).map(([id, a]) => [id, a.in, sha256File(a.file)]))).digest('hex').slice(0, 8);
   const variant = opts.preview ? 'preview' : 'final';
-  const key = `${job.reelId}/v${job.scriptVersion}-${job.approvedHash.slice(3, 11)}-${footageKey}-${template.name}-${variant}`;
+  // Any template change (caption style, CTA option, pacing) must produce a new render, not reuse.
+  const templateKey = crypto.createHash('sha256').update(JSON.stringify(template)).digest('hex').slice(0, 6);
+  const key = `${job.reelId}/v${job.scriptVersion}-${job.approvedHash.slice(3, 11)}-${footageKey}-${template.name}.${templateKey}-${variant}`;
   const prev = !opts.force && opts.storage.exists(key + '/manifest.json') ? JSON.parse(opts.storage.read(key + '/manifest.json')) : null;
   if (prev && prev.qc && prev.qc.postRender && prev.qc.postRender.ok) {
     log('= 이미 렌더된 결과를 재사용합니다 (비용 0): ' + prev.output.path);
@@ -82,7 +84,7 @@ async function render(opts) {
     }
   }
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'rf-render-'));
-  fs.writeFileSync(path.join(work, 'subs.ass'), buildAss(timeline, template, { font: opts.font, disclosureText: job.script['광고 표기'], preview: !!opts.preview }));
+  fs.writeFileSync(path.join(work, 'subs.ass'), buildAss(timeline, template, { font: opts.font, disclosureText: job.script['광고 표기'], keyword: storyboard.keyword, preview: !!opts.preview }));
   await ffm.buildNarrationTrack(opts.ffmpeg, timeline, path.join(work, 'narration.wav'), work);
   const tmpOut = path.join(work, 'reel.mp4');
   const inputs = await ffm.composeVideo(opts.ffmpeg, timeline, assets.shots, {
@@ -110,7 +112,7 @@ async function render(opts) {
     footage: Object.fromEntries(Object.entries(assets.shots).map(([id, a]) => [id, { file: path.basename(a.file), in: a.in, source: a.source, showsProduct: a.showsProduct, rights: a.rights }])),
     timeline: {
       total: +timeline.total.toFixed(3),
-      beats: timeline.beats.map((b) => ({ scene: b.sceneNo, beat: b.beat, start: +b.start.toFixed(2), end: +b.end.toFixed(2), subtitle: b.subtitle.lines, shots: b.shots.map((s) => s.id) })),
+      beats: timeline.beats.map((b) => ({ scene: b.sceneNo, beat: b.beat, start: +b.start.toFixed(2), end: +b.end.toFixed(2), subtitle: b.subtitle.captions.map((c) => c.text), shots: b.shots.map((s) => s.id) })),
       disclosure: timeline.disclosure,
     },
     ffmpeg: ff.version,

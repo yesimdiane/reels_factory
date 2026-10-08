@@ -1,10 +1,27 @@
 # Rendering reels (video-first, FFmpeg + Google Cloud Text-to-Speech)
 
-The renderer turns an **approved storyboard** and **approved footage** into a 1080×1920 lifestyle reel.
+The renderer turns an **approved storyboard** and **approved footage** into a 1080×1920 lifestyle reel styled after the operator's reference Reel (seoul_jip_deco × yesimdiane).
 
-- **Footage:** full-screen 9:16 footage of the real product in use, with a hard cut every 2–4 s.
-- **Voice and subtitles:** Korean narration (Google Cloud TTS), one short line per scene. Each line is shown as a **white bold subtitle with a thin black outline** in the lower-middle safe area, at most 2 lines.
-- **Disclosure:** goes in the **Instagram caption** (first line `[광고]` + the Coupang Partners sentence), not in the video. No banners, headlines, slides or animations.
+- **Footage:** real footage of people using the product (hands, POV, texture close-ups, wide shots), natural light, handheld. **Hard cuts every ~1.8 s** (1–3.5 s); there are no editing effects.
+- **Voice and subtitles:**
+  - Korean narration from Google Cloud TTS, one line per scene.
+  - Each line is shown as **short single-line captions** that change with the voice.
+  - Captions are **regular-weight white text with a thin dark edge** (NanumSquareRound, 48 px), **centered at 56% of the height**.
+- **Nothing else is drawn by default:** the Coupang Partners disclosure goes in the Instagram caption, and the reference's persistent CTA line is an option (off).
+
+### Measured from the reference (`templates/lifestyle-v1.json` → `reference`)
+
+| | Reference Reel | Template |
+|---|---|---|
+| Pacing | ~16 shots in ~27 s, mean ~1.7 s (0.9–3.5 s), hard cuts, in-camera whip pans | target 1.8 s, 1.0–3.5 s; PRD-001 = 12 cuts / 23 s |
+| Caption | one short phrase, one line, centre ~56%, glyph ~38 px tall (≈47 px font @1080), regular weight, white, thin dark edge | `size 48`, `bold false`, `outline 2`, `shadow 1`, `centerY 0.56`, `maxLines 1`, ≤62% width |
+| English line | small translation under each caption (~61%, ~25 px) | not generated (needs an English line per scene — ask if wanted) |
+| Persistent CTA | "댓글에 '타일' 남겨주세요" for the whole video, centre ~74.5%, ~41 px | `persistentCta` (off by default; `enabled: true` to match) |
+| Footage | creator on camera, hands, POV feet, texture close-ups, wide terrace shot; daylight | SHOTLIST suggests a framing per cut |
+
+Caption size was verified by rendering. Glyph height is 37.6 px in the reference and 39 px in ours; per-glyph width is 36.7 px and 36.3 px (at 1080 width).
+
+**Font:** the template uses **NanumSquareRound**, a free Naver font with an OFL-style licence. Install it on the Mac from the Naver Hangeul font site. If it is missing, libass falls back to `RF_FONT_NAME`.
 
 It runs on your Mac today. The same code runs in a container (Cloud Run) later, with only configuration changes.
 
@@ -14,12 +31,12 @@ Approved script (storyboard: HOOK → PROBLEM → DEMO → BENEFIT → CTA, one 
    ▼
 renderer/cli.js render
    1 approval gate ── signature · status · approved-script fingerprint · permission · expiry
-   2 storyboard ───── beats → shots (2–4 s each, e.g. a 6 s beat = 2 cuts); {키워드} → ManyChat keyword
-   3 pre-flight QC ── structure · CTA keyword · shot lengths · ≤2-line subtitles inside the safe area
+   2 storyboard ───── beats → cuts (~1.8 s each, e.g. a 6 s beat = 3 cuts); {키워드} → ManyChat keyword
+   3 pre-flight QC ── structure · CTA keyword · cut lengths & pacing · single-line captions inside the safe area
    4 footage ──────── clips/<릴스ID>/assets.json: every shot present, allowed source, real product where
                       required, ≥720p, not solid-colour, not a still image  → otherwise ASSETS_REQUIRED
    5 FFmpeg check · 6 reuse · 7 TTS (budget-checked, cached, one line per scene)
-   8 render ───────── scale/crop each shot to fill 9:16, hard cuts, subtitles, disclosure, narration −16 LUFS
+   8 render ───────── scale/crop each shot to fill 9:16, hard cuts, captions, narration −16 LUFS
    9 post-render QC ─ 1080x1920 · H.264/yuv420p · 30 fps · AAC · duration · every shot from an asset
    ▼
 renderer/output/<릴스ID>/v<N>-<지문>-<footage>-lifestyle-v1-final/<릴스ID>_script-v<N>.mp4 + manifest.json
@@ -199,7 +216,7 @@ Planned follow-ups, kept out of this PR to keep it reviewable:
 | `작업 파일이 만료되었습니다` | Job files are valid for 72 h. Download a new one. |
 | `대본 내용이 승인된 버전과 다릅니다` | The script was edited after approval. Re-approve it in the dashboard. |
 | `ASSETS_REQUIRED` | Follow `renderer/clips/<릴스ID>/SHOTLIST.md`; fill `assets.json`. |
-| `QC 실패 … subtitle…lines` | A scene line is longer than 2 lines; shorten it in the dashboard editor and re-approve. |
+| `QC 실패 … subtitle…lines` | A word or phrase cannot fit on one caption line; shorten the scene line in the dashboard editor and re-approve. |
 | `대본 형식` | The script predates storyboards; use "수정 요청" → Gemini 재생성, then approve again. |
 | `ass 필터 (libass)` missing | Install `ffmpeg-full` (see Mac setup). |
 | `Google TTS 오류 HTTP 403` | Enable the Text-to-Speech API, link billing, and check the API key restriction. |

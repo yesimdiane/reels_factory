@@ -1,5 +1,5 @@
 // Approved script → storyboard: beats (HOOK → … → CTA), the line spoken and shown per beat, and the
-// shots (2–4 s hard cuts) each beat needs. Pure; no I/O.
+// shots (hard cuts near the template's target length) each beat needs. Pure; no I/O.
 'use strict';
 
 const KEYWORD = '{키워드}';
@@ -31,12 +31,18 @@ function buildStoryboard(job, template) {
   const keyword = String(job.script['ManyChat 키워드'] || '').trim();
   const removedSymbols = new Set();
   const { minSec, maxSec } = template.shots;
+  const target = template.shots.targetSec || maxSec;
+  const framing = (template.shotlist && template.shotlist.framing) || {};
   const beats = scenes.map((s) => {
     const line = String(s.narration).split(KEYWORD).join(keyword);
     (line.match(PICTO) || []).forEach((m) => m !== '️' && removedSymbols.add(m));
     const sec = Number(s.duration_sec);
-    const n = Math.max(1, Math.ceil(sec / maxSec - 1e-9));
-    const shots = Array.from({ length: n }, (_, k) => ({ id: `S${s.scene_no}-${k + 1}`, scriptedSec: sec / n }));
+    // Cuts per scene: as close to the template's target cut length as possible, within min/max.
+    let n = Math.max(1, Math.round(sec / target));
+    n = Math.max(n, Math.ceil(sec / maxSec - 1e-9));
+    n = Math.max(1, Math.min(n, Math.floor(sec / minSec + 1e-9)));
+    const frames = framing[s.beat] || [];
+    const shots = Array.from({ length: n }, (_, k) => ({ id: `S${s.scene_no}-${k + 1}`, scriptedSec: sec / n, framing: frames.length ? frames[k % frames.length] : '' }));
     return {
       sceneNo: s.scene_no,
       beat: s.beat,

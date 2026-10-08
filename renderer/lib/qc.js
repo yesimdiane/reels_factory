@@ -1,7 +1,7 @@
 // Automated quality control. Pre-flight checks run before any paid call; post-render checks
 // verify the delivered file. A failed error-level check stops the job.
 'use strict';
-const { wrapLines, textWidth, subtitleGeometry } = require('./layout');
+const { splitCaptions, captionMaxWidth, textWidth, geometry } = require('./layout');
 
 class QcError extends Error {
   constructor(report, stage) {
@@ -17,10 +17,12 @@ function report(checks) {
 }
 const check = (id, ok, detail, level = 'error') => ({ id, ok: !!ok, level, detail });
 
-/** Before TTS: story structure, keyword mapping, shot lengths, subtitle layout, disclosure. */
+/** Before TTS: story structure, keyword mapping, cut pacing, caption layout and safe area, disclosure. */
 function preflight(storyboard, template, job) {
-  const geo = subtitleGeometry(template);
+  const geo = geometry(template);
   const st = template.subtitle;
+  const H = template.canvas.height;
+  const maxW = captionMaxWidth(template);
   const beats = storyboard.beats;
   const checks = [];
   checks.push(check('story.structure', beats[0].beat === 'HOOK' && beats[beats.length - 1].beat === 'CTA' && beats.some((b) => b.beat === 'DEMO') && beats.some((b) => b.beat === 'BENEFIT'),
@@ -28,17 +30,31 @@ function preflight(storyboard, template, job) {
   const cta = beats[beats.length - 1];
   checks.push(check('cta.keyword', storyboard.keyword && cta.subtitle.includes(storyboard.keyword),
     `CTA 자막 "${cta.subtitle}"에 이 릴스의 ManyChat 키워드 "${storyboard.keyword}" 포함`));
+
   const shots = beats.flatMap((b) => b.shots);
-  const badShots = shots.filter((s) => s.scriptedSec < template.shots.minSec - 1e-9 || s.scriptedSec > template.shots.maxSec + 1e-9);
-  checks.push(check('shots.length', badShots.length === 0, badShots.length ? '2~4초 밖의 컷: ' + badShots.map((s) => `${s.id} ${s.scriptedSec.toFixed(1)}s`).join(', ') : `${shots.length}컷, 모두 ${template.shots.minSec}~${template.shots.maxSec}초`));
+  const sh = template.shots;
+  const bad = shots.filter((s) => s.scriptedSec < sh.minSec - 1e-9 || s.scriptedSec > sh.maxSec + 1e-9);
+  checks.push(check('shots.length', bad.length === 0, bad.length ? `${sh.minSec}~${sh.maxSec}초 밖의 컷: ` + bad.map((s) => `${s.id} ${s.scriptedSec.toFixed(1)}s`).join(', ') : `${shots.length}컷, 모두 ${sh.minSec}~${sh.maxSec}초`));
+  const avg = storyboard.scriptedTotal / shots.length;
+  checks.push(check('shots.pacing', !sh.targetSec || avg <= sh.targetSec * 1.35, `평균 컷 ${avg.toFixed(2)}초 (기준 약 ${sh.targetSec}초)`, 'warn'));
   const tr = template.durationSec;
   checks.push(check('duration.scripted', storyboard.scriptedTotal >= tr.min && storyboard.scriptedTotal <= tr.max, `${storyboard.scriptedTotal}초 (허용 ${tr.min}~${tr.max}초)`));
+
   for (const b of beats) {
-    const lines = wrapLines(b.subtitle, st.size, geo.maxWidth);
-    const widest = Math.max(...lines.map((l) => textWidth(l, st.size)));
-    checks.push(check(`subtitle.S${b.sceneNo}.lines`, lines.length <= st.maxLines, `"${b.subtitle}" → ${lines.length}줄 (최대 ${st.maxLines})`));
-    checks.push(check(`subtitle.S${b.sceneNo}.safeArea`, widest <= geo.maxWidth + 0.5 && geo.blockTop(lines.length) >= geo.safe.top,
-      `폭 ${Math.round(widest)}/${geo.maxWidth}px, 위치 y ${Math.round(geo.blockTop(lines.length))}~${geo.safe.bottom} (안전영역 ${geo.safe.top}~${geo.safe.bottom})`));
+    const caps = splitCaptions(b.subtitle, st.size, maxW);
+    const widest = Math.max(...caps.map((c) => textWidth(c, st.size)));
+    const box = geo.captionBox(st.maxLines);
+    checks.push(check(`subtitle.S${b.sceneNo}.lines`, widest <= maxW + 0.5, `"${b.subtitle}" → 한 줄 자막 ${caps.length}개 (${caps.join(' / ')}), 최대 폭 ${Math.round(widest)}/${Math.round(maxW)}px`));
+    checks.push(check(`subtitle.S${b.sceneNo}.safeArea`, box.top >= geo.safe.top && box.bottom <= geo.safe.bottom && geo.centerX - widest / 2 >= geo.safe.left,
+      `중심 y ${geo.centerY}px (${Math.round(st.centerY * 100)}%), 상자 ${Math.round(box.top)}~${Math.round(box.bottom)} ⊂ 안전영역 ${geo.safe.top}~${geo.safe.bottom}`));
+  }
+  const pc = template.persistentCta;
+  if (pc && pc.enabled) {
+    const text = String(pc.text).split('{키워드}').join(storyboard.keyword);
+    const y = Math.round(H * pc.centerY);
+    const half = (pc.size * st.lineHeight) / 2;
+    checks.push(check('persistentCta', text.includes(storyboard.keyword) && y - half >= geo.safe.top && y + half <= geo.safe.bottom && textWidth(text, pc.size) <= maxW * 1.2,
+      `"${text}" y ${y}px (${Math.round(pc.centerY * 100)}%)`));
   }
   const d = String(job.script['광고 표기'] || '');
   const where = template.disclosure.inVideo ? '영상 시작·끝 + 인스타그램 캡션' : '인스타그램 캡션 첫 줄 (영상에는 표시하지 않음)';

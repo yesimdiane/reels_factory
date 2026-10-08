@@ -1,15 +1,29 @@
 // Timeline: beats keep their scripted length unless the narration needs more; each beat is split
 // into its shots (hard cuts); subtitles follow the voice; disclosure at start and end.
 'use strict';
-const { wrapLines, subtitleGeometry } = require('./layout');
+const { splitCaptions, captionMaxWidth, textWidth } = require('./layout');
 
 /**
  * storyboard: from buildStoryboard; narration: [{ file, duration }] one per beat (same order).
  * Returns the timeline in seconds.
  */
+/** The line as short single-line captions, sharing the voice window in proportion to their length. */
+function captionsFor(text, start, end, size, maxW) {
+  const parts = splitCaptions(text, size, maxW);
+  const total = parts.reduce((n, p) => n + textWidth(p, size), 0);
+  let t = start;
+  const captions = parts.map((p) => {
+    const d = ((end - start) * textWidth(p, size)) / total;
+    const c = { text: p, start: t, end: t + d };
+    t += d;
+    return c;
+  });
+  return { text, start, end, captions };
+}
+
 function buildTimeline(storyboard, narration, template) {
   const n = template.narration;
-  const geo = subtitleGeometry(template);
+  const maxW = captionMaxWidth(template);
   let t = 0;
   const beats = storyboard.beats.map((b, i) => {
     const voice = narration[i];
@@ -25,13 +39,8 @@ function buildTimeline(storyboard, narration, template) {
       end: start + dur,
       duration: dur,
       voice: { file: voice.file, start: vStart, end: vStart + voice.duration, duration: voice.duration },
-      subtitle: {
-        text: b.subtitle,
-        lines: wrapLines(b.subtitle, template.subtitle.size, geo.maxWidth),
-        start: vStart,
-        end: Math.min(vStart + voice.duration + template.subtitle.holdSec, start + dur),
-      },
-      shots: b.shots.map((sh, k) => ({ id: sh.id, start: start + k * per, end: start + (k + 1) * per, duration: per })),
+      subtitle: captionsFor(b.subtitle, vStart, Math.min(vStart + voice.duration + template.subtitle.holdSec, start + dur), template.subtitle.size, maxW),
+      shots: b.shots.map((sh, k) => ({ id: sh.id, framing: sh.framing, start: start + k * per, end: start + (k + 1) * per, duration: per })),
     };
   });
   const total = t;
