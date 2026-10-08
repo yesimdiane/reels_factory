@@ -30,7 +30,7 @@ Turn a verified product entry into three distinct 9:16 short-form video concepts
 - [x] Scene-level Google Flow prompts (Flow generation stays **manual**)
 - [x] Approval state machine + AUDIT log; four human checkpoints (Issue #2)
 - [x] iPhone approval dashboard (Apps Script web app) — [docs/iphone-dashboard.md](docs/iphone-dashboard.md)
-- [ ] FFmpeg render workflow on Mac (Korean TTS, captions, disclosure) — next
+- [x] FFmpeg renderer (Mac now, container later): Google Cloud TTS Korean narration, voice-synced subtitles, disclosure, CTA — [docs/rendering.md](docs/rendering.md)
 - [ ] ManyChat: stays a manual, operator-confirmed step
 
 Install: paste [`dist/ReelsFactory.gs`](dist/ReelsFactory.gs) into Extensions → Apps Script — step-by-step in [docs/setup.md](docs/setup.md).

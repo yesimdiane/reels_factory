@@ -30,7 +30,7 @@ test('public server functions that write or spend quota are guarded', () => {
   const re = /^function (\w+)\([^)]*\) \{\n([\s\S]*?)\n\}/gm;
   let m;
   while ((m = re.exec(src))) fns[m[1]] = m[2];
-  const sensitive = /UrlFetchApp|callGemini_\(|setProperty\(|updateRecord_\(|appendRecords_\(|appendAudit_\(|generateScriptsForProduct_\(|generateValidatedRecords_\(|applyTransition_\(|appendMissingHeaders_\(|ensureSheet_\(/;
+  const sensitive = /UrlFetchApp|callGemini_\(|setProperty\(|updateRecord_\(|appendRecords_\(|appendAudit_\(|generateScriptsForProduct_\(|generateValidatedRecords_\(|applyTransition_\(|appendMissingHeaders_\(|ensureSheet_\(|getRenderSecret_\(|signRenderJob_\(/;
   const exposed = Object.keys(fns).filter((n) => !n.endsWith('_') && sensitive.test(fns[n]));
   for (const n of exposed) {
     const body = fns[n];

@@ -1,0 +1,8 @@
+.git
+node_modules
+renderer/.env
+renderer/output
+renderer/clips
+renderer/jobs
+dist
+tests

@@ -19,6 +19,7 @@ function addReelsFactoryMenu() {
     .addSeparator()
     .addItem('시트 준비 (REELS / PERFORMANCE / LOG / AUDIT)', 'setupSheets')
     .addItem('iPhone 대시보드 링크 보기', 'showDashboardLink')
+    .addItem('렌더 키 보기 (Mac 렌더러 설정용)', 'showRenderSecret')
     .addItem('Gemini API 키 설정', 'promptForGeminiApiKey')
     .addSeparator()
     .addItem('테스트: PRD-001 오프라인 검증', 'runOfflineFixtureTest')

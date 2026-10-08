@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const crypto = require('node:crypto');
 
 const BUNDLE = path.join(__dirname, '..', '..', 'dist', 'ReelsFactory.gs');
 const PRODUCT_HEADERS = ['상품ID', '상품명', '카테고리', '확인된 기능', '타깃', '쿠팡파트너스 URL', '영상 소스 URL', '영상 사용 허가 상태', '제작 상태'];
@@ -108,7 +109,14 @@ function createEnv(opts = {}) {
         return { getResponseCode: () => 200, getContentText: () => text };
       },
     },
-    Utilities: { sleep() {} },
+    Utilities: {
+      sleep() {},
+      getUuid: () => crypto.randomUUID(),
+      Charset: { UTF_8: 'UTF-8' },
+      // Like Apps Script: returns signed bytes (-128..127).
+      computeHmacSha256Signature: (value, key) =>
+        Array.from(crypto.createHmac('sha256', Buffer.from(key, 'utf8')).update(value, 'utf8').digest()).map((b) => (b > 127 ? b - 256 : b)),
+    },
   });
   vm.runInContext(fs.readFileSync(BUNDLE, 'utf8'), ctx, { filename: 'ReelsFactory.gs' });
   const gs = (expr) => vm.runInContext(expr, ctx);

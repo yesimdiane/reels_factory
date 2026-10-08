@@ -371,7 +371,9 @@ function renderDetail() {
       h('strong', { text: '장면 ' + s.scene_no + ' · ' + s.duration_sec + '초' }),
       h('div', { text: s.visual }),
       s.on_screen_text ? h('div', { class: 'muted', text: '화면 문구: ' + s.on_screen_text }) : null,
-      copyBlock('Google Flow 프롬프트 (수동 생성)', s.flow_prompt, true),
+      d.approvedIntact
+        ? copyBlock('Google Flow 프롬프트 (수동 생성)', s.flow_prompt, true)
+        : h('div', {}, [h('div', { class: 'muted', text: 'Google Flow 프롬프트 — 대본 승인 후 복사·생성 (Flow 크레딧 보호)' }), h('div', { class: 'flow mono', text: s.flow_prompt })]),
     ]));
   });
   main.appendChild(h('h2', { text: '대본' }));
@@ -424,6 +426,7 @@ function renderActions(main) {
     const b = h('div', { class: 'btns' });
     if (can('START_VIDEO')) b.appendChild(h('button', { class: 'b primary', type: 'button', text: '영상 제작 시작', disabled: !d.product.permissionOk || !d.approvedIntact,
       onclick: function () { act('START_VIDEO', {}); } }));
+    if (st === 'VIDEO_IN_PRODUCTION') b.appendChild(h('button', { class: 'b', type: 'button', text: '렌더 작업 파일 (Mac)', onclick: openRenderJob }));
     if (can('REGISTER_VIDEO')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '완성 MP4 등록',
       onclick: function () { const u = askNote('Google Drive MP4 공유 링크를 붙여넣으세요', true); if (u !== null) act('REGISTER_VIDEO', { videoUrl: u }); } }));
     if (can('MARK_VIDEO_FAILED')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '제작 오류 기록',
@@ -474,6 +477,21 @@ function regenerate() {
     if (!res.ok) { toast(res.error, 8000); return; }
     S.detail = res.detail; renderDetail(); toast('새 버전 v' + res.detail.summary.scriptVersion + '이(가) 검토 대기 중입니다.');
     refreshAround();
+  });
+}
+
+// Signed render job for the Mac/cloud renderer. Issued only for approved reels in production.
+function openRenderJob() {
+  busy(true);
+  call('apiGetRenderJob', S.detail.summary.reelId).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 8000); return; }
+    const main = clear(document.getElementById('main'));
+    main.appendChild(h('button', { class: 'link', type: 'button', onclick: renderDetail, text: '‹ ' + S.detail.summary.reelId }));
+    main.appendChild(h('div', { class: 'banner warn', text: '이 파일은 72시간 동안 유효합니다. Mac에서 renderer/jobs/' + res.fileName + ' 로 저장한 뒤:\n\nnpm run render -- --job renderer/jobs/' + res.fileName + ' --dry-run\n(비용·계획 확인 후) --dry-run 없이 다시 실행' }));
+    const a = h('a', { href: 'data:application/json;charset=utf-8,' + encodeURIComponent(res.jobFile), download: res.fileName, text: '파일 다운로드 ↓' });
+    main.appendChild(h('div', { class: 'card' }, [a, copyBlock(res.fileName, res.jobFile, true)]));
+    window.scrollTo(0, 0);
   });
 }
 
