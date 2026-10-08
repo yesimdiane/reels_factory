@@ -78,13 +78,8 @@ function viewerFacingTexts_(reel) {
   });
 }
 
-/**
- * Validates the parsed Gemini payload against the schema and the product's confirmed facts.
- * Returns { errors: string[], reels: object[] }.
- */
-function validateGeminiReels(payload, product) {
-  const errors = [];
-  const L = RF_CONFIG.LIMITS;
+/** Facts and numbers a script may rely on, derived from PRODUCTS.확인된 기능 and 상품명. */
+function factContext_(product) {
   const facts = parseConfirmedFeatures(product.features);
   const factSet = {};
   facts.forEach(function (f) {
@@ -94,97 +89,119 @@ function validateGeminiReels(payload, product) {
   extractNumbers(facts.join(' ') + ' ' + product.name).forEach(function (n) {
     allowedNumbers[n] = true;
   });
+  return { facts: facts, factSet: factSet, allowedNumbers: allowedNumbers };
+}
 
+/**
+ * Validates one reel script (generated, regenerated or edited by a human) against the schema
+ * and the product's confirmed facts. `label` prefixes each error, e.g. "릴스 2".
+ */
+function validateReelContent(reel, product, label) {
+  const errors = [];
+  const L = RF_CONFIG.LIMITS;
+  const ctx = factContext_(product);
+  const factSet = ctx.factSet;
+  const allowedNumbers = ctx.allowedNumbers;
+  const p = label + ': ';
+  if (!reel || typeof reel !== 'object') {
+    errors.push(p + '객체가 아닙니다.');
+    return errors;
+  }
+  ['concept', 'hook', 'narration'].forEach(function (k) {
+    if (!isNonEmptyString_(reel[k])) errors.push(p + '"' + k + '" 값이 비어 있습니다.');
+  });
+  if (isNonEmptyString_(reel.hook) && reel.hook.length > L.HOOK_MAX_CHARS) {
+    errors.push(p + 'hook이 ' + L.HOOK_MAX_CHARS + '자를 초과합니다.');
+  }
+  if (isNonEmptyString_(reel.narration) && reel.narration.length > L.NARRATION_MAX_CHARS) {
+    errors.push(p + 'narration이 ' + L.NARRATION_MAX_CHARS + '자를 초과합니다.');
+  }
+
+  if (!Array.isArray(reel.captions) || reel.captions.length === 0) {
+    errors.push(p + '"captions" 배열이 비어 있습니다.');
+  } else {
+    reel.captions.forEach(function (c, ci) {
+      if (!isNonEmptyString_(c)) errors.push(p + 'captions[' + ci + ']가 비어 있습니다.');
+      else if (c.length > L.CAPTION_MAX_CHARS)
+        errors.push(p + 'captions[' + ci + ']가 ' + L.CAPTION_MAX_CHARS + '자를 초과합니다.');
+    });
+  }
+
+  if (!Array.isArray(reel.scenes)) {
+    errors.push(p + '"scenes" 배열이 없습니다.');
+  } else {
+    if (reel.scenes.length < L.MIN_SCENES || reel.scenes.length > L.MAX_SCENES) {
+      errors.push(p + '장면 수는 ' + L.MIN_SCENES + '~' + L.MAX_SCENES + '개여야 합니다 (받은 개수: ' + reel.scenes.length + ').');
+    }
+    let total = 0;
+    reel.scenes.forEach(function (s, si) {
+      const sp = p + '장면 ' + (si + 1) + ': ';
+      if (!s || typeof s !== 'object') {
+        errors.push(sp + '객체가 아닙니다.');
+        return;
+      }
+      if (s.scene_no !== si + 1) errors.push(sp + 'scene_no는 ' + (si + 1) + '이어야 합니다.');
+      if (typeof s.duration_sec !== 'number' || !(s.duration_sec > 0)) {
+        errors.push(sp + 'duration_sec는 양수여야 합니다.');
+      } else {
+        total += s.duration_sec;
+      }
+      if (!isNonEmptyString_(s.visual)) errors.push(sp + '"visual" 값이 비어 있습니다.');
+      if (typeof s.on_screen_text !== 'string') errors.push(sp + '"on_screen_text"는 문자열이어야 합니다.');
+      if (!isNonEmptyString_(s.flow_prompt) || s.flow_prompt.length < L.MIN_FLOW_PROMPT_CHARS) {
+        errors.push(sp + '"flow_prompt"가 비어 있거나 너무 짧습니다 (' + L.MIN_FLOW_PROMPT_CHARS + '자 이상).');
+      }
+    });
+    if (total < L.MIN_TOTAL_SEC || total > L.MAX_TOTAL_SEC) {
+      errors.push(p + '총 길이는 ' + L.MIN_TOTAL_SEC + '~' + L.MAX_TOTAL_SEC + '초여야 합니다 (현재 ' + total + '초).');
+    }
+  }
+
+  if (!Array.isArray(reel.facts_used) || reel.facts_used.length === 0) {
+    errors.push(p + '"facts_used"가 비어 있습니다. 확인된 기능 중 최소 1개를 사용해야 합니다.');
+  } else {
+    reel.facts_used.forEach(function (fact) {
+      if (!factSet[normalizeText(fact)]) {
+        errors.push(p + '확인되지 않은 기능을 사용했습니다: "' + fact + '". "확인된 기능" 문구를 그대로 사용해야 합니다.');
+      }
+    });
+  }
+
+  const viewerText = viewerFacingTexts_(reel).join('\n');
+  extractNumbers(viewerText).forEach(function (n) {
+    if (!allowedNumbers[n]) {
+      errors.push(p + '확인된 기능에 없는 수치가 포함되어 있습니다: "' + n + '".');
+    }
+  });
+  RF_CONFIG.BANNED_PHRASES.forEach(function (phrase) {
+    if (viewerText.indexOf(phrase) !== -1) {
+      errors.push(p + '과장/검증 불가 표현이 포함되어 있습니다: "' + phrase + '".');
+    }
+  });
+  if (/https?:\/\/|www\.|coupang\.com|link\.coupang/i.test(viewerText)) {
+    errors.push(p + '대본에 URL이 포함되어 있습니다. 링크는 ManyChat DM으로만 전달합니다.');
+  }
+  return errors;
+}
+
+/**
+ * Validates the parsed Gemini payload: exactly `expectedCount` reels (default 3), each passing
+ * validateReelContent, with distinct concepts and hooks. Returns { errors: string[], reels: object[] }.
+ */
+function validateGeminiReels(payload, product, expectedCount) {
+  const count = expectedCount || RF_CONFIG.REELS_PER_PRODUCT;
+  const errors = [];
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.reels)) {
     return { errors: ['응답에 "reels" 배열이 없습니다.'], reels: [] };
   }
   const reels = payload.reels;
-  if (reels.length !== RF_CONFIG.REELS_PER_PRODUCT) {
-    errors.push(
-      '릴스 대본은 정확히 ' + RF_CONFIG.REELS_PER_PRODUCT + '개여야 합니다 (받은 개수: ' + reels.length + ').'
-    );
+  if (reels.length !== count) {
+    errors.push('릴스 대본은 정확히 ' + count + '개여야 합니다 (받은 개수: ' + reels.length + ').');
   }
-
   reels.forEach(function (reel, i) {
-    const p = '릴스 ' + (i + 1) + ': ';
-    if (!reel || typeof reel !== 'object') {
-      errors.push(p + '객체가 아닙니다.');
-      return;
-    }
-    ['concept', 'hook', 'narration'].forEach(function (k) {
-      if (!isNonEmptyString_(reel[k])) errors.push(p + '"' + k + '" 값이 비어 있습니다.');
+    validateReelContent(reel, product, '릴스 ' + (i + 1)).forEach(function (e) {
+      errors.push(e);
     });
-    if (isNonEmptyString_(reel.hook) && reel.hook.length > L.HOOK_MAX_CHARS) {
-      errors.push(p + 'hook이 ' + L.HOOK_MAX_CHARS + '자를 초과합니다.');
-    }
-    if (isNonEmptyString_(reel.narration) && reel.narration.length > L.NARRATION_MAX_CHARS) {
-      errors.push(p + 'narration이 ' + L.NARRATION_MAX_CHARS + '자를 초과합니다.');
-    }
-
-    if (!Array.isArray(reel.captions) || reel.captions.length === 0) {
-      errors.push(p + '"captions" 배열이 비어 있습니다.');
-    } else {
-      reel.captions.forEach(function (c, ci) {
-        if (!isNonEmptyString_(c)) errors.push(p + 'captions[' + ci + ']가 비어 있습니다.');
-        else if (c.length > L.CAPTION_MAX_CHARS)
-          errors.push(p + 'captions[' + ci + ']가 ' + L.CAPTION_MAX_CHARS + '자를 초과합니다.');
-      });
-    }
-
-    if (!Array.isArray(reel.scenes)) {
-      errors.push(p + '"scenes" 배열이 없습니다.');
-    } else {
-      if (reel.scenes.length < L.MIN_SCENES || reel.scenes.length > L.MAX_SCENES) {
-        errors.push(p + '장면 수는 ' + L.MIN_SCENES + '~' + L.MAX_SCENES + '개여야 합니다 (받은 개수: ' + reel.scenes.length + ').');
-      }
-      let total = 0;
-      reel.scenes.forEach(function (s, si) {
-        const sp = p + '장면 ' + (si + 1) + ': ';
-        if (!s || typeof s !== 'object') {
-          errors.push(sp + '객체가 아닙니다.');
-          return;
-        }
-        if (s.scene_no !== si + 1) errors.push(sp + 'scene_no는 ' + (si + 1) + '이어야 합니다.');
-        if (typeof s.duration_sec !== 'number' || !(s.duration_sec > 0)) {
-          errors.push(sp + 'duration_sec는 양수여야 합니다.');
-        } else {
-          total += s.duration_sec;
-        }
-        if (!isNonEmptyString_(s.visual)) errors.push(sp + '"visual" 값이 비어 있습니다.');
-        if (typeof s.on_screen_text !== 'string') errors.push(sp + '"on_screen_text"는 문자열이어야 합니다.');
-        if (!isNonEmptyString_(s.flow_prompt) || s.flow_prompt.length < L.MIN_FLOW_PROMPT_CHARS) {
-          errors.push(sp + '"flow_prompt"가 비어 있거나 너무 짧습니다 (' + L.MIN_FLOW_PROMPT_CHARS + '자 이상).');
-        }
-      });
-      if (total < L.MIN_TOTAL_SEC || total > L.MAX_TOTAL_SEC) {
-        errors.push(p + '총 길이는 ' + L.MIN_TOTAL_SEC + '~' + L.MAX_TOTAL_SEC + '초여야 합니다 (현재 ' + total + '초).');
-      }
-    }
-
-    if (!Array.isArray(reel.facts_used) || reel.facts_used.length === 0) {
-      errors.push(p + '"facts_used"가 비어 있습니다. 확인된 기능 중 최소 1개를 사용해야 합니다.');
-    } else {
-      reel.facts_used.forEach(function (fact) {
-        if (!factSet[normalizeText(fact)]) {
-          errors.push(p + '확인되지 않은 기능을 사용했습니다: "' + fact + '". "확인된 기능" 문구를 그대로 사용해야 합니다.');
-        }
-      });
-    }
-
-    const viewerText = viewerFacingTexts_(reel).join('\n');
-    extractNumbers(viewerText).forEach(function (n) {
-      if (!allowedNumbers[n]) {
-        errors.push(p + '확인된 기능에 없는 수치가 포함되어 있습니다: "' + n + '".');
-      }
-    });
-    RF_CONFIG.BANNED_PHRASES.forEach(function (phrase) {
-      if (viewerText.indexOf(phrase) !== -1) {
-        errors.push(p + '과장/검증 불가 표현이 포함되어 있습니다: "' + phrase + '".');
-      }
-    });
-    if (/https?:\/\/|www\.|coupang\.com|link\.coupang/i.test(viewerText)) {
-      errors.push(p + '대본에 URL이 포함되어 있습니다. 링크는 ManyChat DM으로만 전달합니다.');
-    }
   });
 
   // The three reels must be distinct concepts.

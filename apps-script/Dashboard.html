@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<base target="_top">
+<title>릴스 팩토리</title>
+<style>
+  :root {
+    --bg: #f2f2f7; --card: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --line: #d1d1d6;
+    --accent: #0a66d6; --ok: #1a7f37; --warn: #a15c00; --bad: #c62828; --chip: #e9e9ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --muted: #a1a1a6; --line: #38383a;
+      --accent: #4c9aff; --ok: #3fb950; --warn: #e3a008; --bad: #ff6b6b; --chip: #2c2c2e; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg);
+    padding: calc(env(safe-area-inset-top) + 10px) 16px 8px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 20px; margin: 0; display: flex; align-items: center; gap: 8px; }
+  header .user { font-size: 12px; color: var(--muted); }
+  main { padding: 12px 16px calc(env(safe-area-inset-bottom) + 90px); max-width: 720px; margin: 0 auto; }
+  nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 5; display: flex; background: var(--card);
+    border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  nav button { flex: 1; border: 0; background: none; color: var(--muted); padding: 8px 2px 10px; font-size: 12px;
+    min-height: 56px; position: relative; }
+  nav button.on { color: var(--accent); font-weight: 600; }
+  nav .n { position: absolute; top: 4px; right: 18%; background: var(--bad); color: #fff; border-radius: 9px;
+    font-size: 11px; min-width: 18px; padding: 0 5px; }
+  nav .ico { display: block; font-size: 20px; line-height: 24px; }
+  .card { background: var(--card); border-radius: 14px; padding: 14px; margin: 0 0 12px; border: 1px solid var(--line); }
+  .card.tap { cursor: pointer; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .chip { display: inline-block; background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 12px; }
+  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
+  h2 { font-size: 17px; margin: 18px 0 8px; }
+  h3 { font-size: 15px; margin: 14px 0 6px; }
+  .hook { font-weight: 600; font-size: 17px; margin: 6px 0; }
+  .pre { white-space: pre-wrap; word-break: break-word; }
+  .scene { border-top: 1px solid var(--line); padding: 10px 0 2px; }
+  .flow { font-size: 15px; background: var(--chip); border-radius: 8px; padding: 8px; white-space: pre-wrap; word-break: break-word; }
+  .flow.mono { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+  .btns.one { grid-template-columns: 1fr; }
+  button.b { min-height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--card);
+    color: var(--text); font-size: 16px; font-weight: 600; padding: 8px 12px; }
+  button.b.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.b.ok { background: var(--ok); color: #fff; border-color: var(--ok); }
+  button.b.bad { color: var(--bad); }
+  button.b:disabled { opacity: .5; }
+  button.link { border: 0; background: none; color: var(--accent); font-size: 15px; padding: 8px 0; min-height: 44px; }
+  textarea, input[type=text], input[type=url] { width: 100%; font: inherit; font-size: 16px; color: var(--text);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  textarea { min-height: 88px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  .banner { border-radius: 12px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; white-space: pre-wrap; }
+  .banner.warn { background: rgba(227,160,8,.15); } .banner.bad { background: rgba(198,40,40,.13); }
+  .banner.ok { background: rgba(26,127,55,.13); }
+  .tp { display: grid; grid-template-columns: 28px 1fr; gap: 4px 8px; align-items: start; padding: 6px 0; }
+  .tp .dot { width: 24px; height: 24px; border-radius: 12px; display: grid; place-items: center; font-size: 13px;
+    background: var(--chip); }
+  .tp .dot.done { background: var(--ok); color: #fff; }
+  .video { position: relative; width: 100%; max-width: 360px; aspect-ratio: 9 / 16; margin: 8px auto;
+    background: #000; border-radius: 12px; overflow: hidden; }
+  .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .tabs2 { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+  .tabs2 button { flex: none; min-height: 36px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); padding: 4px 12px; font-size: 14px; }
+  .tabs2 button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  details summary { min-height: 44px; display: flex; align-items: center; color: var(--accent); cursor: pointer; }
+  .hist { font-size: 13px; border-top: 1px solid var(--line); padding: 6px 0; }
+  .empty { text-align: center; color: var(--muted); padding: 32px 0; }
+  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 72px); z-index: 9;
+    background: #333; color: #fff; border-radius: 12px; padding: 12px; font-size: 14px; display: none; white-space: pre-wrap; }
+  #busy { position: fixed; inset: 0; z-index: 8; background: rgba(0,0,0,.25); display: none; place-items: center; }
+  #busy div { background: var(--card); padding: 16px 20px; border-radius: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">릴스 팩토리</h1>
+  <div class="user" id="user"></div>
+</header>
+<main id="main"><div class="empty">불러오는 중…</div></main>
+<nav id="nav"></nav>
+<div id="toast"></div>
+<div id="busy"><div id="busyText">처리 중…</div></div>
+
+<script>
+'use strict';
+// ---------------------------------------------------------------- helpers
+// All data is rendered with textContent / attributes, never parsed as HTML.
+function h(tag, attrs, children) {
+  const el = document.createElement(tag);
+  Object.keys(attrs || {}).forEach(function (k) {
+    const v = attrs[k];
+    if (v == null || v === false) return;
+    if (k === 'class') el.className = v;
+    else if (k === 'text') el.textContent = v;
+    else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? '' : v);
+  });
+  (children || []).forEach(function (c) {
+    if (c == null || c === false) return;
+    el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  });
+  return el;
+}
+function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
+function fmt(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d)) return String(v);
+  const p = function (n) { return (n < 10 ? '0' : '') + n; };
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function toast(msg, ms) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toast._t); toast._t = setTimeout(function () { t.style.display = 'none'; }, ms || 3500);
+}
+function busy(on, text) {
+  document.getElementById('busyText').textContent = text || '처리 중…';
+  document.getElementById('busy').style.display = on ? 'grid' : 'none';
+}
+function call(name) {
+  const args = Array.prototype.slice.call(arguments, 1);
+  return new Promise(function (resolve) {
+    const runner = google.script.run
+      .withSuccessHandler(function (res) { resolve(res || { ok: false, error: '빈 응답' }); })
+      .withFailureHandler(function (err) { resolve({ ok: false, error: (err && err.message) || String(err) }); });
+    runner[name].apply(runner, args);
+  });
+}
+function copyText(text) {
+  function fallback() {
+    const ta = h('textarea', { readonly: true, style: 'position:fixed;top:0;left:0;opacity:0' });
+    ta.value = text; document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+    let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta); return ok;
+  }
+  const done = function (ok) { toast(ok ? '복사했습니다' : '복사하지 못했습니다. 길게 눌러 직접 복사하세요.'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallback()); });
+  } else { done(fallback()); }
+}
+function copyBlock(label, text, mono) {
+  return h('div', {}, [
+    h('div', { class: 'row', style: 'justify-content:space-between' }, [
+      h('span', { class: 'muted', text: label }),
+      h('button', { class: 'link', type: 'button', onclick: function () { copyText(text); }, text: '복사' }),
+    ]),
+    h('div', { class: 'flow' + (mono ? ' mono' : ''), text: text }),
+  ]);
+}
+
+// ---------------------------------------------------------------- state
+const TABS = [
+  { key: 'script', ico: '📝', label: '대본', statuses: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], badge: ['SCRIPT_REVIEW_PENDING'] },
+  { key: 'make', ico: '🎬', label: '제작', statuses: ['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'], badge: ['VIDEO_FAILED'] },
+  { key: 'video', ico: '▶️', label: '영상', statuses: ['VIDEO_REVIEW_PENDING'], badge: ['VIDEO_REVIEW_PENDING'] },
+  { key: 'publish', ico: '📤', label: '게시', statuses: ['VIDEO_APPROVED', 'READY_TO_PUBLISH'], badge: ['READY_TO_PUBLISH', 'VIDEO_APPROVED'] },
+  { key: 'products', ico: '🛍️', label: '상품' },
+  { key: 'done', ico: '✅', label: '기록', statuses: ['COMPLETED', 'SCRIPT_REJECTED', 'VIDEO_REJECTED', ''] },
+];
+const S = { tab: 'script', dash: null, detail: null, mode: 'view' };
+
+function tabFor(status) {
+  for (let i = 0; i < TABS.length; i++) if (TABS[i].statuses && TABS[i].statuses.indexOf(status) !== -1) return TABS[i].key;
+  return 'done';
+}
+function statusChip(status, label) {
+  const cls = /REJECTED|FAILED/.test(status) ? 'bad' : /APPROVED|READY|COMPLETED/.test(status) ? 'ok' : 'warn';
+  return h('span', { class: 'chip ' + cls, text: label || status || '상태 없음' });
+}
+
+// ---------------------------------------------------------------- loading
+function loadDashboard() {
+  return call('apiGetDashboard').then(function (res) {
+    if (!res.ok) { renderFatal(res.error); return; }
+    S.dash = res;
+    document.getElementById('user').textContent = res.user + ' · Google Sheets 기준';
+    renderNav(); if (!S.detail) renderList();
+  });
+}
+function openReel(reelId) {
+  busy(true, '불러오는 중…');
+  return call('apiGetReel', reelId).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 6000); return; }
+    S.detail = res.detail; S.mode = 'view'; renderDetail(); window.scrollTo(0, 0);
+  });
+}
+// Reloads list data (badges, sibling chips) without leaving the open reel.
+function refreshAround() {
+  return loadDashboard().then(function () { if (S.detail && S.mode === 'view') renderDetail(); });
+}
+function backToList() { S.detail = null; S.mode = 'view'; loadDashboard().then(renderList); window.scrollTo(0, 0); }
+
+function renderFatal(msg) {
+  clear(document.getElementById('main')).appendChild(h('div', { class: 'banner bad', text: msg }));
+}
+
+// ---------------------------------------------------------------- nav + lists
+function renderNav() {
+  const nav = clear(document.getElementById('nav'));
+  const reels = (S.dash && S.dash.reels) || [];
+  TABS.forEach(function (t) {
+    const n = t.badge ? reels.filter(function (r) { return t.badge.indexOf(r.status) !== -1; }).length : 0;
+    nav.appendChild(h('button', {
+      type: 'button', class: S.tab === t.key && !S.detail ? 'on' : '',
+      onclick: function () { S.tab = t.key; S.detail = null; renderNav(); renderList(); window.scrollTo(0, 0); },
+    }, [h('span', { class: 'ico', text: t.ico }), t.label, n ? h('span', { class: 'n', text: String(n) }) : null]));
+  });
+}
+
+function warningsBanner(list) {
+  return (list || []).map(function (w) { return h('div', { class: 'banner warn', text: '⚠ ' + w }); });
+}
+
+function renderList() {
+  const main = clear(document.getElementById('main'));
+  const tab = TABS.filter(function (t) { return t.key === S.tab; })[0];
+  document.getElementById('title').textContent = '릴스 팩토리 · ' + tab.label;
+  warningsBanner(S.dash.warnings).forEach(function (b) { main.appendChild(b); });
+  if (tab.key === 'products') { renderProducts(main); return; }
+  const reels = S.dash.reels.filter(function (r) { return tabFor(r.status) === tab.key; });
+  const intro = {
+    script: '② 대본을 검토하세요. 승인된 대본 버전만 영상 제작에 쓰입니다.',
+    make: 'Google Flow 클립은 수동 생성입니다. 프롬프트를 복사해 Flow에서 만든 뒤, 완성 MP4를 Drive에 올려 등록하세요.',
+    video: '③ 완성 영상을 재생해 보고 승인/수정 요청/반려하세요.',
+    publish: '④ 게시 자료를 복사해 직접 인스타그램에 올리고 ManyChat을 설정한 뒤 확인을 누르세요. 자동 게시는 하지 않습니다.',
+    done: '완료·반려된 릴스와 상태 확인이 필요한 행입니다.',
+  }[tab.key];
+  main.appendChild(h('p', { class: 'muted', text: intro }));
+  if (!reels.length) { main.appendChild(h('div', { class: 'empty', text: '항목이 없습니다' })); return; }
+  reels.forEach(function (r) {
+    main.appendChild(h('div', { class: 'card tap', role: 'button', tabindex: '0', onclick: function () { openReel(r.reelId); } }, [
+      h('div', { class: 'row', style: 'justify-content:space-between' }, [
+        h('strong', { text: r.reelId }), statusChip(r.status, r.statusLabel),
+      ]),
+      h('div', { class: 'muted', text: r.productName + ' · 대본 v' + r.scriptVersion + (r.videoVersion ? ' · 영상 v' + r.videoVersion : '') }),
+      h('div', { class: 'hook', text: r.hook }),
+      h('div', { class: 'muted', text: r.concept }),
+      r.error ? h('div', { class: 'banner bad', style: 'margin:8px 0 0', text: r.error }) : null,
+    ]));
+  });
+}
+
+function renderProducts(main) {
+  main.appendChild(h('p', { class: 'muted', text: '① 상품 등록·제휴 링크·확인된 기능·영상 허가는 Google Sheets PRODUCTS에서 입력합니다. 여기서는 준비 상태를 확인하고 대본 생성을 요청할 수 있습니다.' }));
+  if (!S.dash.products.length) { main.appendChild(h('div', { class: 'empty', text: 'PRODUCTS에 상품이 없습니다' })); return; }
+  S.dash.products.forEach(function (p) {
+    const ready = p.factsCount > 0 && !p.duplicate;
+    main.appendChild(h('div', { class: 'card' }, [
+      h('div', { class: 'row', style: 'justify-content:space-between' }, [h('strong', { text: p.id }), h('span', { class: 'muted', text: '릴스 ' + p.reelCount + '개' })]),
+      h('div', { text: p.name }),
+      h('div', { class: 'row', style: 'margin-top:6px' }, [
+        h('span', { class: 'chip ' + (p.factsCount ? 'ok' : 'bad'), text: '확인된 기능 ' + p.factsCount }),
+        h('span', { class: 'chip ' + (p.affiliateUrlOk ? 'ok' : 'warn'), text: p.affiliateUrlOk ? '제휴 링크 ✓' : '제휴 링크 필요' }),
+        h('span', { class: 'chip ' + (p.permissionOk ? 'ok' : 'warn'), text: '영상 허가: ' + p.permission }),
+        p.duplicate ? h('span', { class: 'chip bad', text: '상품ID 중복' }) : null,
+      ]),
+      h('div', { class: 'btns one' }, [h('button', {
+        class: 'b', type: 'button', disabled: !ready,
+        onclick: function () { generate(p, false); },
+        text: p.reelCount ? '대본 3개 추가 생성' : '대본 3개 생성 (Gemini)',
+      })]),
+    ]));
+  });
+}
+
+function generate(p, allowAdditional) {
+  if (!allowAdditional && !confirm(p.id + ' 대본 3개를 Gemini로 생성할까요? (API 호출 1~2회)')) return;
+  busy(true, 'Gemini로 대본 생성 중… (최대 1분)');
+  call('apiGenerateScripts', p.id, allowAdditional).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 8000); return; }
+    if (res.needsConfirm) {
+      if (confirm('이미 릴스 ' + res.needsConfirm + '개가 있습니다. 3개를 추가로 생성할까요?')) generate(p, true);
+      return;
+    }
+    toast('생성 완료: ' + res.ids.join(', '));
+    S.tab = 'script'; loadDashboard().then(function () { renderNav(); renderList(); });
+  });
+}
+
+// ---------------------------------------------------------------- detail
+function act(action, input, confirmText) {
+  const d = S.detail;
+  if (confirmText && !confirm(confirmText)) return;
+  const base = { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion, expectedVideoVersion: d.summary.videoVersion };
+  busy(true);
+  call('apiAction', d.summary.reelId, action, Object.assign(base, input || {})).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 8000); return; }
+    S.detail = res.detail; S.mode = 'view'; renderDetail();
+    toast(res.notice || '저장했습니다 (REELS·AUDIT 기록)', res.notice ? 8000 : 2500);
+    refreshAround();
+  });
+}
+function askNote(promptText, required) {
+  const v = prompt(promptText, '');
+  if (v === null) return null;
+  if (required && !v.trim()) { toast('메모(사유)를 입력해야 합니다.'); return null; }
+  return v.trim();
+}
+
+function renderDetail() {
+  const d = S.detail;
+  const main = clear(document.getElementById('main'));
+  renderNav();
+  document.getElementById('title').textContent = d.summary.reelId;
+  main.appendChild(h('button', { class: 'link', type: 'button', onclick: backToList, text: '‹ 목록' }));
+  warningsBanner(d.warnings).forEach(function (b) { main.appendChild(b); });
+
+  // Sibling versions (the 3 scripts generated for the same product).
+  const siblings = (S.dash ? S.dash.reels : []).filter(function (r) { return r.productId === d.product.id; });
+  if (siblings.length > 1) {
+    main.appendChild(h('div', { class: 'tabs2' }, siblings.map(function (r) {
+      return h('button', { type: 'button', class: r.reelId === d.summary.reelId ? 'on' : '', onclick: function () { openReel(r.reelId); }, text: r.reelId.replace(d.product.id + '-', '') + ' · ' + r.statusLabel });
+    })));
+  }
+
+  main.appendChild(h('div', { class: 'card' }, [
+    h('div', { class: 'row', style: 'justify-content:space-between' }, [h('strong', { text: d.product.name }), statusChip(d.summary.status, d.summary.statusLabel)]),
+    h('div', { class: 'muted', text: '대본 v' + d.summary.scriptVersion + (d.approvedVersion ? ' · 승인 v' + d.approvedVersion + (d.approvedIntact ? '' : ' (승인 후 변경됨!)') : '') + (d.summary.videoVersion ? ' · 영상 v' + d.summary.videoVersion : '') }),
+    d.summary.error ? h('div', { class: 'banner bad', style: 'margin:8px 0 0', text: d.summary.error }) : null,
+  ]));
+
+  if (S.mode === 'edit') { renderEditor(main); return; }
+
+  if (d.video && ['VIDEO_REVIEW_PENDING', 'VIDEO_APPROVED', 'READY_TO_PUBLISH', 'COMPLETED', 'VIDEO_CHANGES_REQUESTED', 'VIDEO_REJECTED'].indexOf(d.summary.status) !== -1) {
+    main.appendChild(h('div', { class: 'card' }, [
+      h('h3', { style: 'margin-top:0', text: '완성 영상 v' + d.summary.videoVersion }),
+      h('div', { class: 'video' }, [h('iframe', { src: d.video.previewUrl, allow: 'autoplay; fullscreen', title: '영상 미리보기' })]),
+      h('a', { href: d.video.url, target: '_blank', rel: 'noopener', text: 'Google Drive에서 열기 ↗' }),
+      h('div', { class: 'muted', text: '미리보기가 안 보이면 Drive에서 열어 재생하세요 (같은 Google 계정 로그인 필요).' }),
+    ]));
+  }
+
+  renderActions(main);
+
+  // Product facts (what the script may claim).
+  main.appendChild(h('div', { class: 'card' }, [
+    h('h3', { style: 'margin-top:0', text: '확인된 기능 (PRODUCTS)' }),
+    h('ul', { style: 'margin:0;padding-left:20px' }, d.product.facts.map(function (f) { return h('li', { text: f }); })),
+    h('div', { class: 'row', style: 'margin-top:8px' }, [
+      h('span', { class: 'chip ' + (d.product.permissionOk ? 'ok' : 'warn'), text: '영상 허가: ' + d.product.permission }),
+      h('span', { class: 'chip ' + (d.product.affiliateUrlOk ? 'ok' : 'warn'), text: d.product.affiliateUrlOk ? '제휴 링크 ✓' : '제휴 링크 필요' }),
+    ]),
+  ]));
+
+  // Full script.
+  const r = d.reel;
+  const scriptCard = h('div', { class: 'card' }, [
+    h('div', { class: 'muted', text: r.concept }),
+    h('div', { class: 'hook', text: r.hook }),
+    h('h3', { text: '내레이션' }), h('div', { class: 'pre', text: r.narration }),
+    h('h3', { text: '자막' }), h('div', { class: 'pre', text: (r.captions || []).join('\n') }),
+    h('h3', { text: '사용한 확인 기능' }), h('div', { class: 'pre muted', text: (r.facts_used || []).join('\n') }),
+    h('h3', { text: 'CTA · ManyChat 키워드' }), h('div', { class: 'pre', text: d.cta + '\n키워드: ' + d.keyword }),
+    h('h3', { text: '광고 표기' }), h('div', { class: 'pre', text: d.disclosure }),
+  ]);
+  if (d.scenesInvalid) scriptCard.appendChild(h('div', { class: 'banner bad', text: '장면(JSON) 셀이 손상되었습니다. 수정 요청 후 재생성하세요.' }));
+  (r.scenes || []).forEach(function (s) {
+    scriptCard.appendChild(h('div', { class: 'scene' }, [
+      h('strong', { text: '장면 ' + s.scene_no + ' · ' + s.duration_sec + '초' }),
+      h('div', { text: s.visual }),
+      s.on_screen_text ? h('div', { class: 'muted', text: '화면 문구: ' + s.on_screen_text }) : null,
+      copyBlock('Google Flow 프롬프트 (수동 생성)', s.flow_prompt, true),
+    ]));
+  });
+  main.appendChild(h('h2', { text: '대본' }));
+  main.appendChild(scriptCard);
+
+  // Touchpoints + history (audit).
+  main.appendChild(h('h2', { text: '운영자 확인 4단계' }));
+  main.appendChild(h('div', { class: 'card' }, d.touchpoints.map(function (t) {
+    return h('div', { class: 'tp' }, [
+      h('div', { class: 'dot' + (t.done ? ' done' : ''), text: t.done ? '✓' : String(t.n) }),
+      h('div', {}, [h('div', { text: t.label }), h('div', { class: 'muted', text: t.detail })]),
+    ]);
+  })));
+  main.appendChild(h('h2', { text: '기록 (AUDIT)' }));
+  main.appendChild(h('div', { class: 'card' }, d.history.length ? d.history.map(function (x) {
+    return h('div', { class: 'hist' }, [
+      h('div', {}, [h('strong', { text: x.label }), ' → ' + (x.to || ''), h('span', { class: 'muted', text: '  ' + fmt(x.at) })]),
+      h('div', { class: 'muted', text: [x.actor, x.scriptVersion ? '대본 v' + x.scriptVersion : '', x.videoVersion ? '영상 v' + x.videoVersion : ''].filter(Boolean).join(' · ') }),
+      x.note ? h('div', { class: 'pre', text: x.note }) : null,
+    ]);
+  }) : [h('div', { class: 'muted', text: '기록 없음' })]));
+}
+
+function renderActions(main) {
+  const d = S.detail;
+  const can = function (a) { return d.allowedActions.indexOf(a) !== -1; };
+  const card = h('div', { class: 'card' });
+  const st = d.summary.status;
+
+  if (st === 'SCRIPT_REVIEW_PENDING' || st === 'SCRIPT_CHANGES_REQUESTED') {
+    card.appendChild(h('h3', { style: 'margin-top:0', text: '② 대본 검토' }));
+    if (st === 'SCRIPT_CHANGES_REQUESTED') {
+      card.appendChild(h('div', { class: 'banner warn', text: '수정 요청: ' + (d.scriptReview.note || '') }));
+    }
+    const b = h('div', { class: 'btns' });
+    if (can('APPROVE_SCRIPT')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '승인 (v' + d.summary.scriptVersion + ')',
+      onclick: function () { act('APPROVE_SCRIPT', { note: '' }, '대본 v' + d.summary.scriptVersion + '을(를) 승인합니다. 이 버전 그대로 영상 제작에 사용됩니다.'); } }));
+    if (can('EDIT_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '직접 수정', onclick: function () { S.mode = 'edit'; renderDetail(); } }));
+    if (can('REQUEST_SCRIPT_CHANGES')) b.appendChild(h('button', { class: 'b', type: 'button', text: '수정 요청',
+      onclick: function () { const n = askNote('무엇을 바꿀까요? (재생성 시 Gemini에 전달)', true); if (n !== null) act('REQUEST_SCRIPT_CHANGES', { note: n }); } }));
+    if (d.canRegenerate) b.appendChild(h('button', { class: 'b primary', type: 'button', text: 'Gemini 재생성', onclick: regenerate }));
+    if (can('REJECT_SCRIPT')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '반려',
+      onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_SCRIPT', { note: n }, '이 대본을 반려할까요? 되돌릴 수 없습니다.'); } }));
+    card.appendChild(b);
+  } else if (['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'].indexOf(st) !== -1) {
+    card.appendChild(h('h3', { style: 'margin-top:0', text: '영상 제작 (Flow 수동 · FFmpeg 렌더는 다음 단계)' }));
+    if (st === 'VIDEO_CHANGES_REQUESTED') card.appendChild(h('div', { class: 'banner warn', text: '영상 수정 요청: ' + (d.videoReview.note || '') }));
+    if (!d.product.permissionOk) card.appendChild(h('div', { class: 'banner warn', text: '영상 사용 허가가 확인되지 않아 제작을 시작할 수 없습니다. PRODUCTS의 "영상 사용 허가 상태"를 확인하세요.' }));
+    if (!d.approvedIntact && st !== 'VIDEO_IN_PRODUCTION') card.appendChild(h('div', { class: 'banner bad', text: '승인된 대본이 변경되었습니다. 승인 취소 후 다시 승인하세요.' }));
+    const b = h('div', { class: 'btns' });
+    if (can('START_VIDEO')) b.appendChild(h('button', { class: 'b primary', type: 'button', text: '영상 제작 시작', disabled: !d.product.permissionOk || !d.approvedIntact,
+      onclick: function () { act('START_VIDEO', {}); } }));
+    if (can('REGISTER_VIDEO')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '완성 MP4 등록',
+      onclick: function () { const u = askNote('Google Drive MP4 공유 링크를 붙여넣으세요', true); if (u !== null) act('REGISTER_VIDEO', { videoUrl: u }); } }));
+    if (can('MARK_VIDEO_FAILED')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '제작 오류 기록',
+      onclick: function () { const n = askNote('오류 내용', true); if (n !== null) act('MARK_VIDEO_FAILED', { note: n }); } }));
+    if (can('REOPEN_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '대본 승인 취소',
+      onclick: function () { const n = askNote('승인 취소 사유 (선택)', false); if (n !== null) act('REOPEN_SCRIPT', { note: n }); } }));
+    card.appendChild(b);
+    card.appendChild(h('details', { style: 'margin-top:12px' }, [
+      h('summary', { text: 'Google Flow 프롬프트 전체 (수동 생성용)' }),
+      copyBlock('장면별 프롬프트', d.flowPrompts, true),
+    ]));
+  } else if (st === 'VIDEO_REVIEW_PENDING') {
+    card.appendChild(h('h3', { style: 'margin-top:0', text: '③ 영상 검토 (v' + d.summary.videoVersion + ')' }));
+    card.appendChild(h('div', { class: 'btns' }, [
+      h('button', { class: 'b ok', type: 'button', text: '영상 승인',
+        onclick: function () { act('APPROVE_VIDEO', { note: '' }, '영상 v' + d.summary.videoVersion + '을(를) 승인할까요? 자동 게시는 되지 않습니다.'); } }),
+      h('button', { class: 'b', type: 'button', text: '수정 요청',
+        onclick: function () { const n = askNote('무엇을 고칠까요?', true); if (n !== null) act('REQUEST_VIDEO_CHANGES', { note: n }); } }),
+      h('button', { class: 'b bad', type: 'button', text: '반려',
+        onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_VIDEO', { note: n }, '이 릴스를 반려할까요?'); } }),
+    ]));
+  } else if (st === 'VIDEO_APPROVED') {
+    card.appendChild(h('h3', { style: 'margin-top:0', text: '게시 준비' }));
+    card.appendChild(h('div', { class: 'muted', text: '위 오류를 PRODUCTS에서 해결한 뒤 다시 시도하세요 (예: 쿠팡 파트너스 링크 입력).' }));
+    card.appendChild(h('div', { class: 'btns one' }, [h('button', { class: 'b primary', type: 'button', text: '게시 준비 다시 시도', onclick: function () { act('MARK_READY_TO_PUBLISH', {}); } })]));
+  } else if (st === 'READY_TO_PUBLISH' || st === 'COMPLETED') {
+    card.appendChild(h('h3', { style: 'margin-top:0', text: '④ 게시 · ManyChat (수동)' }));
+    card.appendChild(h('div', { class: 'btns one' }, [h('button', { class: 'b primary', type: 'button', text: '게시 자료 열기', onclick: openPack })]));
+    const b = h('div', { class: 'btns' });
+    if (can('CONFIRM_PUBLISHED')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '인스타그램 게시 완료',
+      onclick: function () { const u = askNote('게시물 URL (선택, https://www.instagram.com/…)', false); if (u !== null) act('CONFIRM_PUBLISHED', { instagramUrl: u }); } }));
+    if (can('CONFIRM_MANYCHAT')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: 'ManyChat 설정 완료',
+      onclick: function () { act('CONFIRM_MANYCHAT', {}, '키워드 "' + d.keyword + '" 자동화를 직접 켜고, 테스트 댓글로 올바른 링크가 오는 것을 확인했나요?'); } }));
+    card.appendChild(b);
+    if (st === 'COMPLETED') card.appendChild(h('div', { class: 'banner ok', text: '게시와 ManyChat 설정이 확인되었습니다.' }));
+  } else {
+    return;
+  }
+  main.appendChild(card);
+}
+
+function regenerate() {
+  const d = S.detail;
+  if (!confirm('수정 요청 메모를 반영해 이 대본 1개를 Gemini로 다시 작성할까요? (API 호출 1~2회)')) return;
+  busy(true, 'Gemini로 재생성 중… (최대 1분)');
+  call('apiRegenerateScript', d.summary.reelId, { expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 8000); return; }
+    S.detail = res.detail; renderDetail(); toast('새 버전 v' + res.detail.summary.scriptVersion + '이(가) 검토 대기 중입니다.');
+    refreshAround();
+  });
+}
+
+function openPack() {
+  busy(true);
+  call('apiGetPublishingPack', S.detail.summary.reelId).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 6000); return; }
+    const p = res.pack;
+    const main = clear(document.getElementById('main'));
+    main.appendChild(h('button', { class: 'link', type: 'button', onclick: renderDetail, text: '‹ ' + p.reelId }));
+    main.appendChild(h('div', { class: 'banner warn', text: '자동 게시·자동 DM은 하지 않습니다. 아래 순서대로 직접 진행하세요.' }));
+    main.appendChild(h('div', { class: 'card' }, [
+      h('h3', { style: 'margin-top:0', text: '1. 영상' }),
+      h('a', { href: p.videoUrl, target: '_blank', rel: 'noopener', text: 'Drive에서 MP4 열기 ↗' }),
+      h('div', { class: 'muted', text: 'Drive 앱 → ⋯ → 사본 보내기 → 동영상 저장' }),
+    ]));
+    main.appendChild(h('div', { class: 'card' }, [h('h3', { style: 'margin-top:0', text: '2. 인스타그램 캡션' }), copyBlock('첫 줄 광고 표기 유지', p.instagramCaption)]));
+    main.appendChild(h('div', { class: 'card' }, [
+      h('h3', { style: 'margin-top:0', text: '3. ManyChat' }),
+      copyBlock('댓글 키워드', p.manychatKeyword, true),
+      copyBlock('DM 문구 (쿠팡 파트너스 링크 포함)', p.manychatDm),
+      copyBlock('쿠팡 파트너스 링크', p.affiliateUrl, true),
+    ]));
+    main.appendChild(h('div', { class: 'card' }, [h('h3', { style: 'margin-top:0', text: '체크리스트' }),
+      h('ol', { style: 'margin:0;padding-left:20px' }, p.checklist.map(function (c) { return h('li', { text: c }); }))]));
+    window.scrollTo(0, 0);
+  });
+}
+
+// ---------------------------------------------------------------- editor
+function renderEditor(main) {
+  const d = S.detail;
+  const r = d.reel;
+  const f = {};
+  function field(key, label, value, multiline) {
+    f[key] = multiline ? h('textarea', {}) : h('input', { type: 'text' });
+    f[key].value = value || '';
+    return h('div', {}, [h('label', { text: label }), f[key]]);
+  }
+  const card = h('div', { class: 'card' }, [
+    h('div', { class: 'banner warn', text: '수정하면 새 버전(v' + (d.summary.scriptVersion + 1) + ')이 되고 다시 승인해야 합니다. 숫자·기능은 PRODUCTS의 확인된 기능에 있는 것만 쓸 수 있습니다.' }),
+    field('concept', '컨셉', r.concept),
+    field('hook', '후킹 (40자 이내)', r.hook),
+    field('narration', '내레이션 (300자 이내)', r.narration, true),
+    field('captions', '자막 (한 줄에 하나, 각 40자 이내)', (r.captions || []).join('\n'), true),
+  ]);
+  (r.scenes || []).forEach(function (s, i) {
+    card.appendChild(h('h3', { text: '장면 ' + s.scene_no + ' · ' + s.duration_sec + '초' }));
+    card.appendChild(field('s' + i + 'visual', '장면 설명', s.visual, true));
+    card.appendChild(field('s' + i + 'text', '화면 문구', s.on_screen_text));
+    card.appendChild(field('s' + i + 'flow', 'Flow 프롬프트 (영어)', s.flow_prompt, true));
+  });
+  card.appendChild(field('note', '수정 메모 (선택)', '', true));
+  card.appendChild(h('div', { class: 'btns' }, [
+    h('button', { class: 'b', type: 'button', text: '취소', onclick: function () { S.mode = 'view'; renderDetail(); } }),
+    h('button', { class: 'b primary', type: 'button', text: '저장 (v' + (d.summary.scriptVersion + 1) + ')', onclick: function () {
+      const edit = {
+        concept: f.concept.value, hook: f.hook.value, narration: f.narration.value,
+        captions: f.captions.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean),
+        scenes: (r.scenes || []).map(function (s, i) {
+          return { visual: f['s' + i + 'visual'].value, on_screen_text: f['s' + i + 'text'].value, flow_prompt: f['s' + i + 'flow'].value };
+        }),
+      };
+      act('EDIT_SCRIPT', { edit: edit, note: f.note.value });
+    } }),
+  ]));
+  main.appendChild(card);
+}
+
+loadDashboard();
+</script>
+</body>
+</html>

@@ -69,37 +69,32 @@ function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
     }
     keywordTaken[keyword.toUpperCase()] = true;
 
-    const flowPrompts = reel.scenes
-      .map(function (s) {
-        return 'S' + s.scene_no + ' (' + s.duration_sec + 's): ' + normalizeText(s.flow_prompt);
-      })
-      .join('\n');
-
     const notes = [];
     if (!approved) notes.push(RF_CONFIG.PERMISSION_UNVERIFIED_NOTE);
     notes.push('게시·DM 자동화 전 사람 검토 필요.');
 
-    return {
+    const record = {
       '릴스ID': reelId,
       '상품ID': product.id,
       '버전': i + 1,
-      '컨셉': normalizeText(reel.concept),
-      '후킹': normalizeText(reel.hook),
-      '내레이션': normalizeText(reel.narration),
-      '자막': reel.captions.map(normalizeText).join('\n'),
-      '장면(JSON)': JSON.stringify(reel.scenes),
-      'Flow 프롬프트': flowPrompts,
       'Flow 생성': RF_CONFIG.FLOW_STATUS_MANUAL,
       'CTA': buildCta(keyword),
       'ManyChat 키워드': keyword,
       '광고 표기': RF_CONFIG.AFFILIATE_DISCLOSURE,
-      '사용한 확인 기능': reel.facts_used.map(normalizeText).join('\n'),
       '영상 사용 허가 상태': normalizeText(product.permission) || '미확인',
-      '제작 상태': RF_CONFIG.REEL_STATUS_SCRIPT_REVIEW,
+      '상태': RF_STATUS.SCRIPT_REVIEW_PENDING,
+      '제작 상태': RF_STATUS_LABELS.SCRIPT_REVIEW_PENDING,
+      '대본 버전': 1,
+      '영상 버전': 0,
       '검토 메모': notes.join(' '),
       '생성 모델': meta.model,
       '생성일시': meta.generatedAt,
     };
+    const cells = reelToScriptCells(reel);
+    Object.keys(cells).forEach(function (k) {
+      record[k] = cells[k];
+    });
+    return record;
   });
 }
 

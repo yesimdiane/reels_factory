@@ -45,10 +45,41 @@ One row per reel script. Three rows are appended per generation run, in a single
 | 광고 표기 | code | Fixed Coupang Partners disclosure: `이 게시물은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.` |
 | 사용한 확인 기능 | Gemini (validated) | Exact lines from PRODUCTS.확인된 기능 the reel relies on. |
 | 영상 사용 허가 상태 | PRODUCTS | Snapshot of column H at generation time (`미확인` if blank). |
-| 제작 상태 | code | Starts at `대본 검토 대기`. |
+| 제작 상태 | code | Korean label of 상태 (e.g. `대본 검토 대기`). MVP-era rows with only this column are read as `SCRIPT_REVIEW_PENDING`. |
 | 검토 메모 | code | Permission warning (if unverified) and the human-review reminder. |
 | 생성 모델 | code | Gemini model ID used. |
 | 생성일시 | code | Timestamp. |
+
+### Approval columns (appended after the MVP columns by 시트 준비)
+
+| Header | Written by | Description |
+|---|---|---|
+| 상태 | state machine | Status code. See [iphone-dashboard.md](iphone-dashboard.md#status-flow) for the flow. |
+| 대본 버전 | state machine | Starts at 1. Each edit or regeneration adds 1. |
+| 승인 대본 버전 | ② approve | The version that was approved. It is cleared when the script changes or the approval is cancelled. |
+| 승인 대본 해시 | ② approve | Fingerprint of all script cells (컨셉 … 사용한 확인 기능, Flow 프롬프트, CTA, ManyChat 키워드, 광고 표기). Video and publishing steps require it to match the current cells. |
+| 대본 검토자 / 대본 검토일시 / 대본 검토 메모 | ② | Who decided, when, and why. |
+| 영상 버전 | registering an MP4 | Adds 1 for each MP4 registered for review. |
+| 영상 파일 URL | registering an MP4 | Google Drive link to the MP4 being reviewed. |
+| 영상 검토자 / 영상 검토일시 / 영상 검토 메모 | ③ | Who decided, when, and why. |
+| 게시 확인일시 / ManyChat 설정 확인일시 | ④ | Manual confirmations. The reel becomes `COMPLETED` once both are set. |
+| 인스타그램 URL | ④ | Optional link to the published post. |
+| 오류 | system | Last blocking error, e.g. a missing Partners link or a render failure. |
+
+Script cells are written with plain-text number format, so Sheets never turns script text into numbers or dates.
+
+## AUDIT (created by the script; append-only)
+
+| Header | Description |
+|---|---|
+| 일시 | Timestamp |
+| 릴스ID / 상품ID | |
+| 작업 | One of: `PRODUCT_SUBMITTED` (①), `SCRIPTS_GENERATED`, `APPROVE_SCRIPT`, `EDIT_SCRIPT`, `REQUEST_SCRIPT_CHANGES`, `REGENERATE_SCRIPT`, `REJECT_SCRIPT`, `REOPEN_SCRIPT`, `START_VIDEO`, `REGISTER_VIDEO`, `MARK_VIDEO_FAILED`, `APPROVE_VIDEO`, `REQUEST_VIDEO_CHANGES`, `REJECT_VIDEO`, `READY_TO_PUBLISH_BLOCKED`, `MARK_READY_TO_PUBLISH`, `CONFIRM_PUBLISHED`, `CONFIRM_MANYCHAT` |
+| 이전 상태 / 새 상태 | Status codes |
+| 대본 버전 / 영상 버전 | Versions after the action |
+| 작업자 | Google account email, `Gemini (<model>)`, or `system` |
+| 메모 | Reviewer note or blocking reason |
+| 스냅샷(JSON) | For script actions, the exact script cells (the approved snapshot is kept here). For video actions, the video link. |
 
 ## PERFORMANCE (created by the script if missing; filled manually for now)
 

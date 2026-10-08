@@ -25,7 +25,7 @@ function getGeminiModel() {
  * Calls Gemini once and returns the raw JSON text from the first candidate.
  * Throws an actionable Error on HTTP / safety / truncation problems.
  */
-function callGemini(promptText) {
+function callGemini_(promptText, responseSchema) {
   const model = getGeminiModel();
   const url = RF_CONFIG.GEMINI_API_BASE + encodeURIComponent(model) + ':generateContent';
   const body = {
@@ -33,7 +33,7 @@ function callGemini(promptText) {
     // Temperature left at the model default: Gemini 3.x models are tuned for 1.0.
     generationConfig: {
       responseMimeType: 'application/json',
-      responseSchema: RF_GEMINI_RESPONSE_SCHEMA,
+      responseSchema: responseSchema || RF_GEMINI_RESPONSE_SCHEMA,
     },
   };
   const options = {

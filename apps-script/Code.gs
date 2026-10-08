@@ -17,7 +17,8 @@ function addReelsFactoryMenu() {
     .createMenu('릴스 팩토리')
     .addItem('선택한 상품으로 릴스 대본 3개 생성', 'generateReelsForSelectedProduct')
     .addSeparator()
-    .addItem('시트 준비 (REELS / PERFORMANCE / LOG)', 'setupSheets')
+    .addItem('시트 준비 (REELS / PERFORMANCE / LOG / AUDIT)', 'setupSheets')
+    .addItem('iPhone 대시보드 링크 보기', 'showDashboardLink')
     .addItem('Gemini API 키 설정', 'promptForGeminiApiKey')
     .addSeparator()
     .addItem('테스트: PRD-001 오프라인 검증', 'runOfflineFixtureTest')
@@ -50,6 +51,7 @@ function setupSheets() {
       [RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS],
       [RF_CONFIG.SHEETS.PERFORMANCE, RF_CONFIG.PERFORMANCE_HEADERS],
       [RF_CONFIG.SHEETS.LOG, RF_CONFIG.LOG_HEADERS],
+      [RF_CONFIG.SHEETS.AUDIT, RF_CONFIG.AUDIT_HEADERS],
     ];
     const toFix = [];
     managed.forEach(function (m) {
@@ -84,6 +86,7 @@ function setupSheets() {
         }
       });
     }
+    report.push(registerSelfAsReviewer_());
     ui.alert('시트 준비 결과\n\n' + report.join('\n'));
   } catch (e) {
     logEvent_('ERROR', 'setupSheets', '', e.message, e.stack);
@@ -116,7 +119,7 @@ function promptForGeminiApiKey() {
 function generateValidatedRecords_(product, existingIds, existingKeywords) {
   let lastErrors = [];
   for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
-    const raw = callGemini(buildGeminiPrompt(product, lastErrors));
+    const raw = callGemini_(buildGeminiPrompt(product, lastErrors));
     const result = prepareReelRecords(product, raw, existingIds, existingKeywords, {
       model: getGeminiModel(),
       generatedAt: new Date(),
@@ -137,6 +140,113 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
   );
 }
 
+/** Document lock (falls back to the script lock where no document lock is available). */
+function getLock_() {
+  return LockService.getDocumentLock() || LockService.getScriptLock();
+}
+
+/** Email of the Google account running this call ('' if Google does not reveal it). */
+function currentUserEmail_() {
+  try {
+    return Session.getActiveUser().getEmail() || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+/** 1-based PRODUCTS row of a product ID; throws if missing or duplicated. */
+function findProductRow_(productsSheet, productId) {
+  const map = requireHeaders_(productsSheet, [RF_CONFIG.PRODUCT_FIELDS.id]);
+  const lastRow = productsSheet.getLastRow();
+  const ids = lastRow < 2 ? [] : productsSheet.getRange(2, colOf_(map, RF_CONFIG.PRODUCT_FIELDS.id), lastRow - 1, 1).getValues();
+  const rows = [];
+  ids.forEach(function (r, i) {
+    if (normalizeText(r[0]) === productId) rows.push(i + 2);
+  });
+  if (!rows.length) throw new Error('PRODUCTS에서 상품ID "' + productId + '"를 찾을 수 없습니다.');
+  if (rows.length > 1) throw new Error('PRODUCTS에 상품ID "' + productId + '"가 여러 번 있습니다. 중복을 정리한 뒤 다시 실행하세요.');
+  return rows[0];
+}
+
+/**
+ * Shared by the Sheets menu and the dashboard. Caller must hold getLock_().
+ * Returns { needsConfirm: n } if the product already has n reels and allowAdditional is false,
+ * otherwise { ids, product } after writing 3 validated REELS rows and AUDIT entries.
+ */
+function generateScriptsForProduct_(ss, rowNumber, options) {
+  const productsSheet = getProductsSheet_(ss);
+  const product = readProduct_(productsSheet, rowNumber);
+
+  const productErrors = validateProduct(product);
+  if (productErrors.length) {
+    throw new Error('PRODUCTS ' + product.rowNumber + '행을 수정하세요:\n- ' + productErrors.join('\n- '));
+  }
+  findProductRow_(productsSheet, product.id); // duplicate 상품ID check
+
+  const reelsSheet = ensureSheet_(ss, RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS);
+  const reelsMap = getHeaderMap_(reelsSheet);
+  const existingIds = readColumn_(reelsSheet, reelsMap, '릴스ID');
+  const existingKeywords = readColumn_(reelsSheet, reelsMap, 'ManyChat 키워드');
+  const dupIds = findDuplicates(existingIds);
+  if (dupIds.length) {
+    throw new Error('REELS에 중복된 릴스ID가 있습니다: ' + dupIds.join(', ') + '. 정리한 뒤 다시 실행하세요.');
+  }
+  const dupKeywords = findDuplicates(existingKeywords);
+  if (dupKeywords.length) {
+    throw new Error('REELS에 중복된 ManyChat 키워드가 있습니다: ' + dupKeywords.join(', ') + '. 정리한 뒤 다시 실행하세요.');
+  }
+
+  const already = existingIds.filter(function (id) {
+    return id.indexOf(product.id + '-R') === 0;
+  }).length;
+  if (already > 0 && !options.allowAdditional) return { needsConfirm: already, product: product };
+
+  const result = generateValidatedRecords_(product, existingIds, existingKeywords);
+  appendRecords_(reelsSheet, result.records, RF_SCRIPT_FIELDS);
+
+  const now = new Date();
+  const actor = options.actor || '';
+  const audit = [
+    {
+      '일시': now,
+      '상품ID': product.id,
+      '작업': 'PRODUCT_SUBMITTED',
+      '작업자': actor,
+      '메모': '터치포인트 1: 상품 선택 → 대본 생성 요청',
+      '스냅샷(JSON)': JSON.stringify({
+        상품명: normalizeText(product.name),
+        확인된기능: parseConfirmedFeatures(product.features),
+        제휴링크입력: !affiliateUrlError(product.affiliateUrl),
+        영상사용허가: normalizeText(product.permission),
+      }),
+    },
+  ];
+  result.records.forEach(function (r) {
+    const snap = {};
+    RF_SCRIPT_FIELDS.forEach(function (f) {
+      snap[f] = r[f];
+    });
+    audit.push({
+      '일시': now,
+      '릴스ID': r['릴스ID'],
+      '상품ID': product.id,
+      '작업': 'SCRIPTS_GENERATED',
+      '새 상태': r['상태'],
+      '대본 버전': 1,
+      '영상 버전': 0,
+      '작업자': 'Gemini (' + r['생성 모델'] + ')',
+      '스냅샷(JSON)': JSON.stringify(snap),
+    });
+  });
+  appendAudit_(ss, audit);
+
+  const ids = result.records.map(function (r) {
+    return r['릴스ID'];
+  });
+  logEvent_('INFO', 'generateReels', product.id, '릴스 대본 생성 완료: ' + ids.join(', '), '시도 횟수: ' + result.attempts);
+  return { ids: ids, product: product };
+}
+
 /** Menu action: PRODUCTS selected row → Gemini → 3 validated REELS rows. */
 function generateReelsForSelectedProduct() {
   const ui = SpreadsheetApp.getUi();
@@ -151,7 +261,7 @@ function generateReelsForSelectedProduct() {
     return;
   }
 
-  const lock = LockService.getDocumentLock();
+  const lock = getLock_();
   if (!lock.tryLock(30000)) {
     ui.alert('다른 생성 작업이 진행 중입니다. 잠시 후 다시 시도하세요.');
     return;
@@ -159,58 +269,24 @@ function generateReelsForSelectedProduct() {
 
   let productId = '';
   try {
-    const productsSheet = getProductsSheet_(ss);
-    const product = readProduct_(productsSheet, range.getRow());
-    productId = product.id;
-
-    const productErrors = validateProduct(product);
-    if (productErrors.length) {
-      throw new Error('PRODUCTS ' + product.rowNumber + '행을 수정하세요:\n- ' + productErrors.join('\n- '));
-    }
-
-    const productsMap = getHeaderMap_(productsSheet);
-    const dupProducts = findDuplicates(readColumn_(productsSheet, productsMap, RF_CONFIG.PRODUCT_FIELDS.id));
-    if (dupProducts.indexOf(product.id) !== -1) {
-      throw new Error('PRODUCTS에 상품ID "' + product.id + '"가 여러 번 있습니다. 중복을 정리한 뒤 다시 실행하세요.');
-    }
-
-    const reelsSheet = ensureSheet_(ss, RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS);
-    const reelsMap = getHeaderMap_(reelsSheet);
-    const existingIds = readColumn_(reelsSheet, reelsMap, '릴스ID');
-    const existingKeywords = readColumn_(reelsSheet, reelsMap, 'ManyChat 키워드');
-    const dupIds = findDuplicates(existingIds);
-    if (dupIds.length) {
-      throw new Error('REELS에 중복된 릴스ID가 있습니다: ' + dupIds.join(', ') + '. 정리한 뒤 다시 실행하세요.');
-    }
-    const dupKeywords = findDuplicates(existingKeywords);
-    if (dupKeywords.length) {
-      throw new Error('REELS에 중복된 ManyChat 키워드가 있습니다: ' + dupKeywords.join(', ') + '. 정리한 뒤 다시 실행하세요.');
-    }
-
-    const already = existingIds.filter(function (id) {
-      return id.indexOf(product.id + '-R') === 0;
-    }).length;
-    if (already > 0) {
+    const opts = { actor: currentUserEmail_(), allowAdditional: false };
+    let res = generateScriptsForProduct_(ss, range.getRow(), opts);
+    productId = res.product.id;
+    if (res.needsConfirm) {
       const ok = ui.alert(
         '추가 생성 확인',
-        product.id + '에 이미 릴스 ' + already + '개가 있습니다. 새 대본 3개를 추가로 생성할까요?',
+        productId + '에 이미 릴스 ' + res.needsConfirm + '개가 있습니다. 새 대본 3개를 추가로 생성할까요?',
         ui.ButtonSet.YES_NO
       );
       if (ok !== ui.Button.YES) return;
+      opts.allowAdditional = true;
+      ss.toast('Gemini로 ' + productId + ' 대본 생성 중…', '릴스 팩토리', 60);
+      res = generateScriptsForProduct_(ss, range.getRow(), opts);
     }
 
-    ss.toast('Gemini로 ' + product.id + ' 대본 생성 중…', '릴스 팩토리', 60);
-    const result = generateValidatedRecords_(product, existingIds, existingKeywords);
-    appendRecords_(reelsSheet, result.records);
-
-    const ids = result.records.map(function (r) {
-      return r['릴스ID'];
-    });
-    logEvent_('INFO', 'generateReels', product.id, '릴스 대본 생성 완료: ' + ids.join(', '), '시도 횟수: ' + result.attempts);
-
-    let msg = 'REELS에 ' + ids.length + '개 행을 추가했습니다:\n' + ids.join('\n') +
-      '\n\n다음 단계: 대본 검토 → Flow 프롬프트로 Google Flow에서 수동 생성 → MP4를 Drive에 업로드.';
-    if (!isPermissionApproved(product.permission)) msg += '\n\n⚠ ' + RF_CONFIG.PERMISSION_UNVERIFIED_NOTE;
+    let msg = 'REELS에 ' + res.ids.length + '개 행을 추가했습니다:\n' + res.ids.join('\n') +
+      '\n\n다음 단계: iPhone 대시보드(또는 REELS 시트)에서 대본을 검토·승인하세요. 승인 전에는 영상 작업이 시작되지 않습니다.';
+    if (!isPermissionApproved(res.product.permission)) msg += '\n\n⚠ ' + RF_CONFIG.PERMISSION_UNVERIFIED_NOTE;
     ui.alert(msg);
   } catch (e) {
     logEvent_('ERROR', 'generateReels', productId, e.message, e.stack);

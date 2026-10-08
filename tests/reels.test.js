@@ -7,7 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const SRC = path.join(__dirname, '..', 'apps-script');
-const FILES = ['Config.gs', 'Validation.gs', 'Reels.gs', 'Prompt.gs', 'Fixtures.gs'];
+const FILES = ['Config.gs', 'Validation.gs', 'States.gs', 'Reels.gs', 'Prompt.gs', 'Fixtures.gs'];
 
 function load() {
   const ctx = vm.createContext({ console });
@@ -46,7 +46,9 @@ test('PRD-001 fixture response produces 3 REELS records', () => {
   );
   const headers = gs('RF_CONFIG.REELS_HEADERS');
   for (const r of res.records) {
-    assert.deepEqual(Object.keys(r).sort(), [...headers].sort());
+    for (const k of Object.keys(r)) assert.ok(headers.includes(k), 'unknown header ' + k);
+    assert.equal(r['상태'], 'SCRIPT_REVIEW_PENDING');
+    assert.equal(r['대본 버전'], 1);
     assert.equal(r['광고 표기'], gs('RF_CONFIG.AFFILIATE_DISCLOSURE'));
     assert.match(r['CTA'], new RegExp(r['ManyChat 키워드']));
     assert.match(r['Flow 생성'], /수동/);

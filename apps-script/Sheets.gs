@@ -133,7 +133,7 @@ function readColumn_(sheet, map, headerName) {
 }
 
 /** Appends records (objects keyed by header) in one write, honouring the sheet's column order. */
-function appendRecords_(sheet, records) {
+function appendRecords_(sheet, records, textHeaders) {
   if (!records.length) return;
   const map = getHeaderMap_(sheet);
   const width = sheet.getLastColumn();
@@ -146,7 +146,63 @@ function appendRecords_(sheet, records) {
     return row;
   });
   const startRow = sheet.getLastRow() + 1;
+  // Plain-text format so Sheets never turns script text into numbers/dates (keeps fingerprints stable).
+  (textHeaders || []).forEach(function (h) {
+    const col = colOf_(map, h);
+    if (col) sheet.getRange(startRow, col, rows.length, 1).setNumberFormat('@');
+  });
   sheet.getRange(startRow, 1, rows.length, width).setValues(rows);
+}
+
+/** Reads all data rows as objects keyed by the given header names, plus `_row` (1-based). */
+function readRecords_(sheet, headers) {
+  const map = getHeaderMap_(sheet);
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2 || lastCol === 0) return [];
+  return sheet
+    .getRange(2, 1, lastRow - 1, lastCol)
+    .getValues()
+    .map(function (values, i) {
+      const rec = { _row: i + 2 };
+      headers.forEach(function (h) {
+        const col = colOf_(map, h);
+        rec[h] = col ? values[col - 1] : '';
+      });
+      return rec;
+    });
+}
+
+/**
+ * Writes only the changed cells of one row (never the whole row), so formulas or notes the
+ * operator keeps in other columns are untouched.
+ */
+function updateRecord_(sheet, rowNumber, updates) {
+  const map = getHeaderMap_(sheet);
+  const missing = Object.keys(updates).filter(function (h) {
+    return !colOf_(map, h);
+  });
+  if (missing.length) {
+    throw new Error(
+      '"' + sheet.getName() + '" 시트에 헤더가 없습니다: ' + missing.join(', ') +
+        '. Google Sheets에서 "릴스 팩토리 → 시트 준비"를 실행하세요.'
+    );
+  }
+  Object.keys(updates).forEach(function (h) {
+    const cell = sheet.getRange(rowNumber, colOf_(map, h), 1, 1);
+    if (RF_SCRIPT_FIELDS.indexOf(h) !== -1) cell.setNumberFormat('@');
+    cell.setValues([[updates[h]]]);
+  });
+}
+
+/** Appends entries to the append-only AUDIT sheet. */
+function appendAudit_(ss, entries) {
+  const list = entries.filter(function (e) {
+    return e;
+  });
+  if (!list.length) return;
+  const sheet = ensureSheet_(ss, RF_CONFIG.SHEETS.AUDIT, RF_CONFIG.AUDIT_HEADERS);
+  appendRecords_(sheet, list);
 }
 
 /** Appends a row to the LOG sheet. Logging failures must never hide the original error. */
