@@ -60,7 +60,11 @@ RF_FFPROBE=/opt/homebrew/opt/ffmpeg-full/bin/ffprobe
 1. Go to <https://console.cloud.google.com/>, create a project, then open **Billing** and link a billing account.
 2. Open **APIs & Services → Library**, find **Cloud Text-to-Speech API**, and click **Enable**.
 3. Open **APIs & Services → Credentials → Create credentials → API key**, then **Edit key**. Under **API restrictions**, choose **Restrict key** and select only **Cloud Text-to-Speech API**. Save.
-4. Recommended: **Billing → Budgets & alerts**, then create a budget (e.g. ₩5,000/month) with email alerts.
+4. Recommended (10 minutes), following [cost-safety.md](cost-safety.md#recommended-google-cloud-settings-once-about-10-minutes):
+   - Lower **Cloud Text-to-Speech API → Quotas → Requests per minute** to e.g. 30.
+   - Create a budget (e.g. ₩5,000/month) with email alerts. A budget **only notifies**; it does not stop charges.
+   - `npm run render:usage` is a local safety counter, not your bill. Real spend is in **Billing → Reports**.
+5. Optional: check the Gemini model from the terminal, free: `GEMINI_API_KEY=<key> npm run gemini:check`. See [cost-safety.md](cost-safety.md#testing-the-model-against-the-real-api).
 
 ## 5. `renderer/.env`
 

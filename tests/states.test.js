@@ -293,3 +293,30 @@ test('storyboard rules: beats in order, CTA keyword placeholder, scene length an
   assert.match(v((r) => (r.scenes[3].narration = '가'.repeat(31))), /자막 2줄 이내/);
   assert.match(v((r) => (r.scenes[3].narration = '3초 만에 설치 끝')), /수치.*"3"/);
 });
+
+test('Google Flow clip coverage: valid scenes fit one 8 s clip; a longer scene is split into S3 + S3b, never an impossible plan', () => {
+  const F = plain(gs('RF_CONFIG.FLOW'));
+  assert.equal(F.CLIP_SEC, 8);
+  // The validator's scene maximum always fits one clip (minus margin).
+  assert.ok(gs('RF_CONFIG.LIMITS.SCENE_MAX_SEC') <= F.CLIP_SEC - F.CLIP_MARGIN_SEC);
+  const one = plain(gs('buildFlowScenePrompts')(freshRow(), product()));
+  assert.equal(one.length, 5);
+  assert.ok(one.every((p) => p.parts === 1 && p.coversSec <= F.CLIP_SEC - F.CLIP_MARGIN_SEC));
+  assert.deepEqual(one.map((p) => p.file), ['S1.mp4', 'S2.mp4', 'S3.mp4', 'S4.mp4', 'S5.mp4']);
+  // With shorter clips (e.g. a Flow setting change), long scenes get more clip requirements.
+  const row = freshRow();
+  gs('RF_CONFIG.FLOW.CLIP_SEC = 4');
+  try {
+    const split = plain(gs('buildFlowScenePrompts')(row, product()));
+    const s3 = split.filter((p) => p.scene === 3);
+    assert.deepEqual(s3.map((p) => p.file), ['S3.mp4', 'S3b.mp4']);
+    assert.ok(split.every((p) => p.coversSec <= 3.5), JSON.stringify(split.map((p) => [p.file, p.coversSec])));
+    assert.match(s3[1].prompt, /PART 2 of 2: continue the same action/);
+    // …and the validator now refuses scenes a single clip cannot cover.
+    const reel = plain(gs('FIXTURE_PRD_001_GEMINI_RESPONSE')).reels[0];
+    const errs = plain(gs('validateReelContent')(reel, product(), 'R', { requireStoryboard: true })).join('\n');
+    assert.match(errs, /2~3\.5초여야 합니다 \(Flow 클립 4초/);
+  } finally {
+    gs('RF_CONFIG.FLOW.CLIP_SEC = 8');
+  }
+});

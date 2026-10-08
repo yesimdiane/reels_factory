@@ -113,7 +113,13 @@ async function main() {
     if (args.watch) {
       const minutes = Number(args.watch) || 10;
       log(`… ${minutes}분마다 다시 확인합니다 (Ctrl+C로 종료).`);
-      setInterval(() => once().catch((e) => log('✗ ' + e.message)), minutes * 60 * 1000);
+      // Never start a pass while the previous one is still rendering (it could request the same narration).
+      let running = false;
+      setInterval(() => {
+        if (running) return log('… 이전 확인이 아직 진행 중이라 이번 회차는 건너뜁니다.');
+        running = true;
+        once().catch((e) => log('✗ ' + e.message)).finally(() => { running = false; });
+      }, minutes * 60 * 1000);
     }
     return;
   }

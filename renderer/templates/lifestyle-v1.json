@@ -84,7 +84,9 @@
   },
   "narration": {
     "leadInSec": 0.15,
-    "tailSec": 0.35
+    "tailSec": 0.35,
+    "minCharsPerSec": 4.5,
+    "comment": "minCharsPerSec: conservative (slow) Korean speaking rate used to predict scene length before any TTS call; cached lines use their real duration."
   },
   "disclosure": {
     "inVideo": false,
@@ -119,5 +121,10 @@
   "audio": {
     "loudnessLufs": -16,
     "keepClipAudio": false
+  },
+  "flowClip": {
+    "clipSec": 8,
+    "marginSec": 0.5,
+    "comment": "Google Flow clip length. Each clip must cover its part of a scene (≤ clipSec − marginSec); longer scenes need extra clips (S3b.mp4 …). The signed job's clipSec wins if present."
   }
 }

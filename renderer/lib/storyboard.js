@@ -65,4 +65,42 @@ function buildStoryboard(job, template) {
   };
 }
 
-module.exports = { buildStoryboard, StoryboardError, KEYWORD };
+/**
+ * Assigns cuts to Google Flow clips so every clip can cover its part of the scene — before any TTS.
+ * Scene length is predicted from the narration: real duration if the line is already cached (free),
+ * otherwise a conservative speaking rate. A scene that would outgrow one clip gets extra clips
+ * (S3b.mp4 …) instead of an impossible render plan.
+ * knownDurations[i]: cached narration seconds for beat i, or null.
+ */
+function planClips(storyboard, template, knownDurations = [], clipSecFromJob) {
+  const fc = template.flowClip || { clipSec: 8, marginSec: 0.5 };
+  const clipSec = clipSecFromJob || fc.clipSec;
+  const usable = clipSec - fc.marginSec;
+  const n = template.narration;
+  storyboard.clipSec = clipSec;
+  storyboard.beats.forEach((b, i) => {
+    const voice = knownDurations[i] != null ? knownDurations[i] : [...b.ttsText].length / n.minCharsPerSec;
+    b.predictedSec = Math.max(b.scriptedSec, n.leadInSec + voice + n.tailSec);
+    b.voiceKnown = knownDurations[i] != null;
+    const parts = Math.max(1, Math.ceil(b.predictedSec / usable - 1e-9));
+    if (b.shots.length < parts) {
+      // Every clip needs at least one cut. These cuts are sized by the voice, not the script.
+      b.shots = Array.from({ length: parts }, (_, k) => ({ id: `S${b.sceneNo}-${k + 1}`, scriptedSec: b.scriptedSec / parts, framing: (b.shots[k] || b.shots[0]).framing, voiceSized: true }));
+    }
+    b.clips = Array.from({ length: parts }, (_, p) => ({
+      id: `S${b.sceneNo}${p > 0 ? String.fromCharCode(97 + p) : ''}`,
+      part: p + 1,
+      parts,
+      cutIds: [],
+      coversSec: b.predictedSec / parts,
+    }));
+    b.shots.forEach((sh, k) => {
+      const p = Math.floor((k * parts) / b.shots.length);
+      sh.clip = b.clips[p].id;
+      b.clips[p].cutIds.push(sh.id);
+    });
+  });
+  return storyboard;
+}
+
+module.exports = { buildStoryboard, planClips, StoryboardError, KEYWORD };

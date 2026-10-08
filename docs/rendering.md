@@ -74,7 +74,8 @@ There is **no code path that draws coloured slides or placeholder visuals**. Wit
   - To replace a single cut, add a file `S3-2.mp4`.
   - Marketplace or Coupang listing videos are rejected. `licensed` requires `rights`.
 - **Product scenes and AI footage:** DEMO, BENEFIT and CTA scenes must show the product. Because the product in AI-generated scenes may differ from the real one, the render manifest flags AI footage. At **video review (③)** you confirm shape, colour and size match the real product. The publishing checklist reminds you to turn on Instagram's **AI info** label.
-- **Clip checks:** ≥720p, at least the scene length + 0.5 s (≥4 s), not a single colour, not a still image. Any problem → `ASSETS_REQUIRED`, and `SHOTLIST.md` + `FLOW_PROMPTS.md` are written next to the clips. Both are written once and not rewritten if unchanged.
+- **8 s clip coverage:** every scene must fit its clip. The renderer predicts each scene's length from its narration **before TTS** and, if a scene would outgrow one clip (7.5 s usable), asks for an extra clip `S3b.mp4`. It re-checks with the real voice after TTS; the voice is cached, so the rerun is free. Details: [cost-safety.md](cost-safety.md#2-google-flow-clips-are-8-seconds).
+- **Clip checks:** ≥720p, at least the covered length + 0.5 s (≥4 s, ≤8 s), not a single colour, not a still image. Any problem → `ASSETS_REQUIRED`, and `SHOTLIST.md` + `FLOW_PROMPTS.md` are written next to the clips. Both are written once and not rewritten if unchanged.
 
 ## Automatic assembly (`pending`)
 
@@ -115,6 +116,9 @@ Steps 2 and 3 run **before** TTS on purpose. A render that would fail anyway, be
   These figures are from third-party summaries. **Check the [official pricing page](https://cloud.google.com/text-to-speech/pricing)** before relying on them. A billing account is required even for the free tier.
 - **Cache:** re-rendering after a "영상 수정 요청" (new clips, same script) reuses the cached narration at **$0**. An identical re-render is skipped entirely (`--force` to override).
 - **Caps:** `RF_TTS_MAX_CHARS_PER_JOB` (default 1500) and `RF_TTS_MONTHLY_CHAR_LIMIT` (default 500,000) stop the render **before** any call. Usage is recorded in `~/.reels-factory/tts-usage.json`; `npm run render:usage` shows it.
+  - **This local ledger is not your Google Cloud bill.** It counts every request this Mac sent, retries included, and knows nothing about other machines or the free tier. Check **Billing → Reports** for real spend.
+- **Interrupted or retried renders:** each line is cached the moment it arrives, so a crash or network loss repays only the missing lines. Google is retried only on 429/503 (refused before synthesis), never on a 500 or a dropped connection. A per-line lock stops two runs from buying the same line.
+- **Google Cloud quotas, budget alerts and a hard stop:** see [cost-safety.md](cost-safety.md#recommended-google-cloud-settings-once-about-10-minutes).
 - **Free checks first:**
   - `npm run render:estimate -- --job <file>` verifies approval and prints the exact billable characters and estimated cost. It makes no API calls.
   - `--preview` renders your real footage with the **free local Mac voice (Yuna)**, so you can check timing before paying for Google TTS. The output is marked "미리보기 음성" and named `_PREVIEW`. It never adds placeholder visuals.
@@ -138,7 +142,7 @@ Steps 2 and 3 run **before** TTS on purpose. A render that would fail anyway, be
    - **APIs & Services → Library → "Cloud Text-to-Speech API" → Enable**.
    - **Credentials → Create credentials → API key**, then **Edit**:
      - API restrictions → *Restrict key* → only **Cloud Text-to-Speech API**.
-   - Optional but recommended: **Billing → Budgets & alerts**, e.g. a ₩5,000 monthly budget with email alerts.
+   - Recommended: lower the **Requests per minute** quota (e.g. 30) and create a **budget with alerts**. Alerts only notify; they do not stop spending. Steps: [cost-safety.md](cost-safety.md#recommended-google-cloud-settings-once-about-10-minutes).
 3. **Configure the renderer.**
    ```bash
    cp renderer/.env.example renderer/.env

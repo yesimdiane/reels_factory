@@ -21,6 +21,7 @@ function addReelsFactoryMenu() {
     .addItem('iPhone 대시보드 링크 보기', 'showDashboardLink')
     .addItem('렌더 키 보기 (Mac 렌더러 설정용)', 'showRenderSecret')
     .addItem('Gemini API 키 설정', 'promptForGeminiApiKey')
+    .addItem('Gemini 모델 확인 (무료)', 'showGeminiModelCheck')
     .addSeparator()
     .addItem('테스트: PRD-001 오프라인 검증', 'runOfflineFixtureTest')
     .addItem('테스트: PRD-001 Gemini 실제 호출 (시트에 쓰지 않음)', 'runLiveGeminiTestPRD001')
@@ -122,7 +123,7 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
   for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
     const raw = callGemini_(buildGeminiPrompt(product, lastErrors));
     const result = prepareReelRecords(product, raw, existingIds, existingKeywords, {
-      model: getGeminiModel(),
+      model: RF_GEMINI_STATE.lastModel || getGeminiModel(),
       generatedAt: new Date(),
     });
     if (!result.errors.length) return { records: result.records, attempts: attempt };

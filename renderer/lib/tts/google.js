@@ -43,33 +43,42 @@ function hintFor(status, message) {
   return '';
 }
 
-function createGoogleTts({ auth, fetchFn = fetch, sampleRate = 24000 }) {
+// Retried only when Google refused the request before synthesising it (rate limit / temporarily
+// unavailable). Other errors, including network failures after the request was sent, are NOT retried:
+// a second paid request is never made automatically for audio that may already have been produced.
+const RETRY_STATUSES = [429, 503];
+
+function createGoogleTts({ auth, fetchFn = fetch, sampleRate = 24000, maxAttempts = 3, retryDelayMs = 1000 }) {
   return {
     name: 'google',
     paid: true,
-    async synthesize({ text, voice, speakingRate }) {
+    reportsAttempts: true,
+    /** onAttempt(): called before every request that is sent, so the ledger counts each one. */
+    async synthesize({ text, voice, speakingRate, onAttempt }) {
       const body = {
         input: { text },
         voice: { languageCode: voice.slice(0, 5), name: voice },
         audioConfig: { audioEncoding: 'LINEAR16', sampleRateHertz: sampleRate, speakingRate },
       };
       let lastErr;
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const headers = Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, await auth.headers());
+        if (onAttempt) onAttempt(attempt);
         const res = await fetchFn(ENDPOINT, {
           method: 'POST',
-          headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, await auth.headers()),
+          headers,
           body: JSON.stringify(body),
         });
         const json = await res.json().catch(() => ({}));
         if (res.ok && json.audioContent) return Buffer.from(json.audioContent, 'base64'); // LINEAR16 includes a WAV header
         const message = (json.error && json.error.message) || 'HTTP ' + res.status;
         lastErr = new Error('Google TTS 오류 HTTP ' + res.status + hintFor(res.status, message) + ': ' + message);
-        if (res.status !== 429 && res.status < 500) break;
-        await new Promise((r) => setTimeout(r, 1000 * attempt));
+        if (!RETRY_STATUSES.includes(res.status) || attempt === maxAttempts) break;
+        await new Promise((r) => setTimeout(r, retryDelayMs * attempt));
       }
       throw lastErr;
     },
   };
 }
 
-module.exports = { createGoogleTts, apiKeyAuth, metadataAuth, gcloudAuth, ENDPOINT };
+module.exports = { createGoogleTts, apiKeyAuth, metadataAuth, gcloudAuth, ENDPOINT, RETRY_STATUSES };

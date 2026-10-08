@@ -23,19 +23,41 @@ class AssetsRequiredError extends Error {
   }
 }
 
-/** One requirement per scene (a single clip covers all of its cuts). */
+/**
+ * One requirement per Google Flow clip (normally one per scene; more if a scene outgrows one clip —
+ * see storyboard.planClips). Each clip covers its own cuts.
+ */
 function sceneRequirements(storyboard, template) {
-  return storyboard.beats.map((b) => ({
-    id: `S${b.sceneNo}`,
-    file: `S${b.sceneNo}.mp4`,
-    beat: b.beat,
-    line: b.subtitle,
-    visual: b.visual,
-    cuts: b.shots.map((s) => s.id),
-    framing: b.shots.map((s) => s.framing).filter(Boolean),
-    minClipSec: +Math.max(template.assets.sceneClipMinSec || 0, b.scriptedSec + 0.5).toFixed(1),
-    showsProduct: template.assets.realProductBeats.includes(b.beat),
-  }));
+  const clipSec = storyboard.clipSec || (template.flowClip && template.flowClip.clipSec) || 8;
+  return storyboard.beats.flatMap((b) =>
+    (b.clips || [{ id: `S${b.sceneNo}`, part: 1, parts: 1, cutIds: b.shots.map((s) => s.id), coversSec: b.scriptedSec }]).map((c) => ({
+      id: c.id,
+      file: c.id + '.mp4',
+      sceneNo: b.sceneNo,
+      part: c.part,
+      parts: c.parts,
+      beat: b.beat,
+      line: b.subtitle,
+      visual: b.visual,
+      cuts: c.cutIds,
+      framing: b.shots.filter((s) => c.cutIds.includes(s.id)).map((s) => s.framing).filter(Boolean),
+      coversSec: +c.coversSec.toFixed(2),
+      minClipSec: +Math.min(clipSec, Math.max(template.assets.sceneClipMinSec || 0, c.coversSec + 0.5)).toFixed(1),
+      showsProduct: template.assets.realProductBeats.includes(b.beat),
+    }))
+  );
+}
+
+/** Flow prompt for a clip: the approved one from the job, or (extra part) derived from the scene's prompt. */
+function promptFor(job, r) {
+  const list = Array.isArray(job.flowPrompts) ? job.flowPrompts : [];
+  const exact = list.find((p) => p.scene === r.sceneNo && (p.part || 1) === r.part && (p.parts || 1) === r.parts);
+  if (exact) return exact.prompt;
+  const base = list.find((p) => p.scene === r.sceneNo);
+  if (!base) return '';
+  return base.prompt.replace(/\nDURATION:[^\n]*/, '') +
+    `\nPART ${r.part} of ${r.parts}: ${r.part === 1 ? 'the beginning of this scene.' : 'continue the same action, place and lighting from where part ' + (r.part - 1) + ' ended.'}` +
+    `\nDURATION: ${base.clipSec || 8} seconds. The editor uses about ${r.coversSec} s of it as several short cuts.`;
 }
 
 function findFile(dir, base) {
@@ -135,7 +157,7 @@ async function validateAssets(manifest, storyboard, template, ffmpegCfg, analyze
         if (k === 0) check(p, info, r.minClipSec);
         shots[cutId] = { file: sceneFile, in: null, cutIndex: k, cutCount: r.cuts.length, source: meta.source, showsProduct: !!meta.showsProduct, rights: meta.rights || '', analysis: info };
       } else if (k === 0) {
-        problems.push(p + `클립이 없습니다: ${r.file} (Flow 프롬프트 S${r.id.slice(1)}로 생성 → 이 폴더에 업로드)`);
+        problems.push(p + `클립이 없습니다: ${r.file} (FLOW_PROMPTS.md의 ${r.id} 프롬프트로 생성 → 이 폴더에 업로드)`);
       }
     }
   }
@@ -156,7 +178,6 @@ function writeAssetsRequired(clipsDir, job, storyboard, template, validation) {
   const dir = path.join(clipsDir, job.reelId);
   fs.mkdirSync(dir, { recursive: true });
   const reqs = validation.reqs;
-  const prompts = Array.isArray(job.flowPrompts) ? job.flowPrompts : [];
   const tmpl = {
     reelId: job.reelId,
     scenes: Object.fromEntries(reqs.map((r) => [r.id, { file: r.file, source: template.assets.defaultSource, showsProduct: r.showsProduct, rights: '' }])),
@@ -166,21 +187,22 @@ function writeAssetsRequired(clipsDir, job, storyboard, template, validation) {
     '',
     `상품: ${job.productName} · 대본 v${job.scriptVersion} (승인됨) · 템플릿 ${template.name}`,
     '',
-    `- 장면마다 **Google Flow 클립 1개** (8초, 세로 9:16)만 만들면 됩니다 — 총 ${reqs.length}개. 렌더러가 클립마다 짧은 컷 여러 개를 잘라 편집합니다.`,
+    `- **Google Flow 클립 ${reqs.length}개** (각 ${storyboard.clipSec || 8}초, 세로 9:16)만 만들면 됩니다 — 보통 장면당 1개. 렌더러가 클립마다 짧은 컷 여러 개를 잘라 편집합니다.` +
+      (reqs.some((r) => r.parts > 1) ? ' 내레이션이 길어 한 클립으로 덮을 수 없는 장면은 클립을 나눴습니다 (예: S3.mp4 + S3b.mp4).' : ''),
     '- 프롬프트는 `FLOW_PROMPTS.md` (대시보드 "영상 제작" 탭에도 있음). 같은 제품 사진을 참고 이미지로 쓰면 장면 간 제품이 일정합니다.',
     '- 이 폴더에 아래 파일 이름으로 올리면 Mac 렌더러가 자동으로 편집합니다. assets.json은 없으면 자동 작성됩니다 (source = Flow 생성).',
     '- 마켓(쿠팡 등) 상세페이지 영상은 사용 금지. 직접 찍은 영상은 assets.json에서 source를 own-footage로 바꾸세요.',
     '',
-    '| 파일 | 장면 | 자막(내레이션) | 장면 내용 | 컷 | 최소 길이 |',
-    '|---|---|---|---|---|---|',
-    ...reqs.map((r) => `| ${r.file} | ${r.beat}${r.showsProduct ? ' · 제품 등장' : ''} | ${r.line} | ${r.visual} | ${r.cuts.length}컷 (${r.framing.join(' → ')}) | ${r.minClipSec}초 |`),
+    '| 파일 | 장면 | 자막(내레이션) | 장면 내용 | 컷 | 덮는 길이 | 최소 클립 길이 |',
+    '|---|---|---|---|---|---|---|',
+    ...reqs.map((r) => `| ${r.file} | ${r.beat}${r.parts > 1 ? ` (${r.part}/${r.parts})` : ''}${r.showsProduct ? ' · 제품 등장' : ''} | ${r.line} | ${r.visual} | ${r.cuts.length}컷 (${r.framing.join(' → ')}) | ${r.coversSec}초 | ${r.minClipSec}초 |`),
     '',
     validation.problems.length ? '## 현재 문제\n\n' + validation.problems.map((p) => '- ' + p).join('\n') : '',
   ].join('\n');
   const flow = [
     `# ${job.reelId} Google Flow 프롬프트 (승인된 대본 v${job.scriptVersion})`,
     '',
-    ...prompts.map((p) => `## S${p.scene} · ${p.beat} → 파일 이름 S${p.scene}.mp4\n\n\`\`\`\n${p.prompt}\n\`\`\`\n`),
+    ...reqs.map((r) => `## ${r.id} · ${r.beat}${r.parts > 1 ? ` · part ${r.part}/${r.parts}` : ''} → 파일 이름 ${r.file}\n\n\`\`\`\n${promptFor(job, r)}\n\`\`\`\n`),
   ].join('\n');
   const write = (name, text) => {
     const f = path.join(dir, name);
@@ -195,4 +217,4 @@ function writeAssetsRequired(clipsDir, job, storyboard, template, validation) {
   };
 }
 
-module.exports = { sceneRequirements, loadAssetManifest, analyzeClip, validateAssets, writeAssetsRequired, spreadIn, AssetsRequiredError, SOURCE_LABELS };
+module.exports = { promptFor, sceneRequirements, loadAssetManifest, analyzeClip, validateAssets, writeAssetsRequired, spreadIn, AssetsRequiredError, SOURCE_LABELS };

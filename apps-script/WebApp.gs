@@ -420,7 +420,7 @@ function apiRegenerateScript(reelId, input) {
         expectedScriptVersion: scriptVersionOf(found.row),
         reel: newReel,
         note: note,
-      }, 'Gemini (' + getGeminiModel() + ')');
+      }, 'Gemini (' + (RF_GEMINI_STATE.lastModel || getGeminiModel()) + ')');
     });
     return { detail: reelDetail_(ss, id) };
   });

@@ -33,10 +33,20 @@ function preflight(storyboard, template, job) {
 
   const shots = beats.flatMap((b) => b.shots);
   const sh = template.shots;
-  const bad = shots.filter((s) => s.scriptedSec < sh.minSec - 1e-9 || s.scriptedSec > sh.maxSec + 1e-9);
+  const bad = shots.filter((s) => !s.voiceSized).filter((s) => s.scriptedSec < sh.minSec - 1e-9 || s.scriptedSec > sh.maxSec + 1e-9);
   checks.push(check('shots.length', bad.length === 0, bad.length ? `${sh.minSec}~${sh.maxSec}초 밖의 컷: ` + bad.map((s) => `${s.id} ${s.scriptedSec.toFixed(1)}s`).join(', ') : `${shots.length}컷, 모두 ${sh.minSec}~${sh.maxSec}초`));
   const avg = storyboard.scriptedTotal / shots.length;
   checks.push(check('shots.pacing', !sh.targetSec || avg <= sh.targetSec * 1.35, `평균 컷 ${avg.toFixed(2)}초 (기준 약 ${sh.targetSec}초)`, 'warn'));
+  if (storyboard.clipSec) {
+    // Every Google Flow clip must be able to cover its share of the scene (see storyboard.planClips).
+    const usable = storyboard.clipSec - ((template.flowClip && template.flowClip.marginSec) || 0);
+    const clips = beats.flatMap((b) => (b.clips || []).map((c) => Object.assign({ beat: b }, c)));
+    const over = clips.filter((c) => c.coversSec > usable + 1e-6 || !c.cutIds.length);
+    const split = beats.filter((b) => b.clips && b.clips.length > 1);
+    checks.push(check('flow.coverage', clips.length > 0 && over.length === 0,
+      over.length ? '클립 길이를 넘는 장면: ' + over.map((c) => `${c.id} ${c.coversSec.toFixed(1)}s > ${usable}s`).join(', ')
+        : `Flow 클립 ${clips.length}개 (각 ${storyboard.clipSec}초, 사용 ≤ ${usable}초)` + (split.length ? ' · 나눈 장면: ' + split.map((b) => b.clips.map((c) => c.id).join('+')).join(', ') : '')));
+  }
   const tr = template.durationSec;
   checks.push(check('duration.scripted', storyboard.scriptedTotal >= tr.min && storyboard.scriptedTotal <= tr.max, `${storyboard.scriptedTotal}초 (허용 ${tr.min}~${tr.max}초)`));
 

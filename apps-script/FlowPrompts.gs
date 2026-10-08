@@ -27,8 +27,20 @@ function productAppearance_(product, facts) {
   return parts.join('; ');
 }
 
+/** Clips needed so every part of a scene fits one clip (minus margin). 1 for valid storyboards. */
+function flowClipParts(sceneSec) {
+  const usable = RF_CONFIG.FLOW.CLIP_SEC - RF_CONFIG.FLOW.CLIP_MARGIN_SEC;
+  return Math.max(1, Math.ceil(Number(sceneSec) / usable - 1e-9));
+}
+
+/** File name of part k (1-based) of scene n: S3.mp4, S3b.mp4, S3c.mp4 … */
+function flowClipFile(sceneNo, part) {
+  return 'S' + sceneNo + (part > 1 ? String.fromCharCode(96 + part) : '') + '.mp4';
+}
+
 /**
- * Returns [{ scene, beat, clipSec, scriptedSec, prompt }] for the reel's current script.
+ * Returns [{ scene, part, parts, file, beat, clipSec, scriptedSec, coversSec, prompt }] for the reel's
+ * current script — one entry per Flow clip (normally one per scene).
  * Uses only PRODUCTS.확인된 기능 (+ optional 제품 외형) — never invented attributes.
  */
 function buildFlowScenePrompts(row, product) {
@@ -38,20 +50,29 @@ function buildFlowScenePrompts(row, product) {
   const facts = parseConfirmedFeatures(product.features);
   const appearance = productAppearance_(product, facts);
   const n = reel.scenes.length;
-  return reel.scenes.map(function (s, i) {
+  const out = [];
+  reel.scenes.forEach(function (s, i) {
     const beat = s.beat || (i === 0 ? 'HOOK' : i === n - 1 ? 'CTA' : 'DEMO');
-    const prompt = [
-      'Google Flow · ' + cellText_(row['릴스ID']) + ' · scene ' + (i + 1) + '/' + n + ' · ' + beat + ' · ' + F.CLIP_SEC + '-second clip, vertical 9:16, photorealistic',
-      'PRODUCT (identical in every scene): ' + normalizeText(product.name) + (appearance ? ' — ' + appearance : '') + '.',
-      'Verified features only: ' + facts.join(' / ') + '. Do not add other features, logos, brand names or text on the product.',
-      'SCENE: ' + normalizeText(s.flow_prompt) + ' (' + normalizeText(s.visual) + ')',
-      'PRODUCT INTERACTION: ' + F.INTERACTION[beat] + '.',
-      'CAMERA: ' + F.CAMERA[beat] + '. One continuous take, no cuts, transitions or effects inside the clip.',
-      'LIGHTING & ENVIRONMENT: ' + F.ENVIRONMENT + '. No on-screen text, subtitles, watermarks or logos.',
-      'DURATION: ' + F.CLIP_SEC + ' seconds. The editor uses about ' + Number(s.duration_sec) + ' s of it as several short cuts, so let the framing change during the clip.',
-      'CONSISTENCY: same product colour, shape and size as the other scenes; same location, door, floor and time of day; ' +
-        'if a person appears, same clothing and hands in every scene. If Flow accepts a reference image, use a photo of the real product you are allowed to use.',
-    ].join('\n');
-    return { scene: i + 1, beat: beat, clipSec: F.CLIP_SEC, scriptedSec: Number(s.duration_sec), prompt: prompt };
+    const parts = flowClipParts(s.duration_sec);
+    for (let part = 1; part <= parts; part++) {
+      const prompt = [
+        'Google Flow · ' + cellText_(row['릴스ID']) + ' · scene ' + (i + 1) + '/' + n + ' · ' + beat + ' · ' + F.CLIP_SEC + '-second clip, vertical 9:16, photorealistic',
+        'PRODUCT (identical in every scene): ' + normalizeText(product.name) + (appearance ? ' — ' + appearance : '') + '.',
+        'Verified features only: ' + facts.join(' / ') + '. Do not add other features, logos, brand names or text on the product.',
+        'SCENE: ' + normalizeText(s.flow_prompt) + ' (' + normalizeText(s.visual) + ')',
+        'PRODUCT INTERACTION: ' + F.INTERACTION[beat] + '.',
+        'CAMERA: ' + F.CAMERA[beat] + '. One continuous take, no cuts, transitions or effects inside the clip.',
+        'LIGHTING & ENVIRONMENT: ' + F.ENVIRONMENT + '. No on-screen text, subtitles, watermarks or logos.',
+        parts > 1 ? 'PART ' + part + ' of ' + parts + ': ' + (part === 1 ? 'the beginning of this scene.' : 'continue the same action, place and lighting from where part ' + (part - 1) + ' ended.') : '',
+        'DURATION: ' + F.CLIP_SEC + ' seconds. The editor uses about ' + +(Number(s.duration_sec) / parts).toFixed(1) + ' s of it as several short cuts, so let the framing change during the clip.',
+        'CONSISTENCY: same product colour, shape and size as the other scenes; same location, door, floor and time of day; ' +
+          'if a person appears, same clothing and hands in every scene. If Flow accepts a reference image, use a photo of the real product you are allowed to use.',
+      ].filter(Boolean).join('\n');
+      out.push({
+        scene: i + 1, part: part, parts: parts, file: flowClipFile(i + 1, part), beat: beat, clipSec: F.CLIP_SEC,
+        scriptedSec: Number(s.duration_sec), coversSec: +(Number(s.duration_sec) / parts).toFixed(2), prompt: prompt,
+      });
+    }
   });
+  return out;
 }

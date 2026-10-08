@@ -171,8 +171,10 @@ function validateReelContent(reel, product, label, options) {
         } else if ([...normalizeText(s.narration)].length > L.SCENE_NARRATION_MAX_CHARS) {
           errors.push(sp + 'narration은 자막 2줄 이내(' + L.SCENE_NARRATION_MAX_CHARS + '자)여야 합니다.');
         }
-        if (typeof s.duration_sec === 'number' && (s.duration_sec < L.SCENE_MIN_SEC || s.duration_sec > L.SCENE_MAX_SEC)) {
-          errors.push(sp + '장면 길이는 ' + L.SCENE_MIN_SEC + '~' + L.SCENE_MAX_SEC + '초여야 합니다.');
+        // A scene must fit one Google Flow clip (minus margin); the storyboard limit is never looser.
+        const maxSec = Math.min(L.SCENE_MAX_SEC, RF_CONFIG.FLOW.CLIP_SEC - RF_CONFIG.FLOW.CLIP_MARGIN_SEC);
+        if (typeof s.duration_sec === 'number' && (s.duration_sec < L.SCENE_MIN_SEC || s.duration_sec > maxSec)) {
+          errors.push(sp + '장면 길이는 ' + L.SCENE_MIN_SEC + '~' + maxSec + '초여야 합니다 (Flow 클립 ' + RF_CONFIG.FLOW.CLIP_SEC + '초로 덮을 수 있는 길이).');
         }
       }
     });

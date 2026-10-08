@@ -33,6 +33,8 @@ Turn a verified product entry into three distinct 9:16 short-form video concepts
 - [x] FFmpeg renderer (Mac now, container later): Google Cloud TTS Korean narration, voice-synced subtitles, disclosure, CTA — [docs/rendering.md](docs/rendering.md)
 - [ ] ManyChat: stays a manual, operator-confirmed step
 
+Cost safety (Gemini model check, 8 s Flow clip coverage, TTS ledger vs Google billing, quotas and alerts): [docs/cost-safety.md](docs/cost-safety.md).
+
 Install: paste [`dist/ReelsFactory.gs`](dist/ReelsFactory.gs) into Extensions → Apps Script — step-by-step in [docs/setup.md](docs/setup.md). Mac renderer: [docs/mac-install.md](docs/mac-install.md).
 Developers: `npm test` (Node ≥ 20, no dependencies); `npm run build` after editing `apps-script/`.
 

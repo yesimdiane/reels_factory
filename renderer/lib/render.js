@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { verifyJob } = require('./job');
-const { buildStoryboard } = require('./storyboard');
+const { buildStoryboard, planClips } = require('./storyboard');
 const { buildTimeline } = require('./plan');
 const { buildAss } = require('./ass');
 const { loadAssetManifest, validateAssets, writeAssetsRequired, spreadIn, AssetsRequiredError } = require('./assets');
@@ -31,27 +31,33 @@ async function render(opts) {
   const job = verifyJob(opts.jobFile, { secret: opts.secret, now: opts.now });
   log(`✓ 승인 확인: ${job.reelId} 대본 v${job.scriptVersion} (지문 ${job.approvedHash})`);
 
-  // 2–3. Storyboard and pre-flight QC (text, structure, keyword, layout).
-  const storyboard = buildStoryboard(job, template);
+  // 2–3. Storyboard, Google Flow clip plan, and pre-flight QC (text, structure, keyword, layout, coverage).
+  // The clip plan predicts each scene's length from its narration (cached voice length if any — free —
+  // else a slow speaking rate) and splits a scene over extra clips (S3b.mp4) before it can outgrow one.
+  const clipSec = (Array.isArray(job.flowPrompts) && job.flowPrompts[0] && job.flowPrompts[0].clipSec) || undefined;
+  const cachedVoice = (b) => (opts.tts.cachedDuration ? opts.tts.cachedDuration(b.ttsText) : null);
+  let storyboard = buildStoryboard(job, template);
+  planClips(storyboard, template, storyboard.beats.map(cachedVoice), clipSec);
   const pre = qc.preflight(storyboard, template, job);
   const estimate = opts.tts.estimate(storyboard.beats.map((b) => b.ttsText));
 
   // 4. Footage. Missing or invalid → ASSETS_REQUIRED with a shot list. Never substitute slides.
-  const assets = await validateAssets(loadAssetManifest(opts.clipsDir, job.reelId), storyboard, template, opts.ffmpeg, opts.analyze, opts.defaultSource);
-  if (opts.dryRun) return { dryRun: true, job, storyboard, preflight: pre, assets, estimate };
-  if (!pre.ok) throw new qc.QcError(pre, '사전 점검');
-  if (!assets.ok) {
+  const assetsRequired = (assets, extra) => {
     const files = writeAssetsRequired(opts.clipsDir, job, storyboard, template, assets);
-    throw new AssetsRequiredError({
+    return new AssetsRequiredError({
       reelId: job.reelId,
-      summary: `장면 클립 ${assets.reqs.length}개 필요 (편집 컷 ${assets.reqs.reduce((n, r) => n + r.cuts.length, 0)}개) — 목록: ${files.shotlist}, 프롬프트: ${files.flowPrompts}`,
+      summary: (extra ? extra + ' ' : '') + `장면 클립 ${assets.reqs.length}개 필요 (편집 컷 ${assets.reqs.reduce((n, r) => n + r.cuts.length, 0)}개) — 목록: ${files.shotlist}, 프롬프트: ${files.flowPrompts}`,
       problems: assets.problems,
       shotlist: files.shotlist,
       assetsTemplate: files.template,
       flowPrompts: files.flowPrompts,
-      required: assets.reqs.map((r) => ({ id: r.id, beat: r.beat, file: r.file, minClipSec: r.minClipSec, cuts: r.cuts.length, line: r.line })),
+      required: assets.reqs.map((r) => ({ id: r.id, beat: r.beat, file: r.file, minClipSec: r.minClipSec, cuts: r.cuts.length, line: r.line, part: r.part, parts: r.parts })),
     });
-  }
+  };
+  let assets = await validateAssets(loadAssetManifest(opts.clipsDir, job.reelId), storyboard, template, opts.ffmpeg, opts.analyze, opts.defaultSource);
+  if (opts.dryRun) return { dryRun: true, job, storyboard, preflight: pre, assets, estimate };
+  if (!pre.ok) throw new qc.QcError(pre, '사전 점검');
+  if (!assets.ok) throw assetsRequired(assets);
 
   // 5. Subtitle font and FFmpeg capabilities (a wrong font would silently change the brand look).
   const font = template.subtitle.font || opts.font;
@@ -84,8 +90,34 @@ async function render(opts) {
   log(`… 음성: ${estimate.provider} ${estimate.voice} — 과금 글자 ${estimate.billableChars}, 예상 $${estimate.estimatedUsd.toFixed(4)}`);
   const narration = await opts.tts.synthesizeAll(storyboard.beats.map((b) => b.ttsText));
 
+  // 7b. Re-plan the Flow clips with the real voice lengths. If a scene now needs an extra clip, stop with
+  // ASSETS_REQUIRED (the narration is cached, so the next run pays nothing for it).
+  const replanned = planClips(buildStoryboard(job, template), template, narration.map((v) => v.duration), clipSec);
+  // Only ever add clips here: a plan with spare clips is still valid, and the operator may already have them.
+  if (replanned.beats.some((b, i) => b.clips.length > storyboard.beats[i].clips.length)) {
+    storyboard = replanned;
+    assets = await validateAssets(loadAssetManifest(opts.clipsDir, job.reelId), storyboard, template, opts.ffmpeg, opts.analyze, opts.defaultSource);
+    if (!assets.ok) throw assetsRequired(assets, '실제 음성이 예상보다 길어 Flow 클립을 더 나눠야 합니다 (음성은 캐시됨 — 다시 실행해도 추가 비용 없음).');
+  }
+
   // 8. Timeline → overlay → audio → video.
   const timeline = buildTimeline(storyboard, narration, template);
+  // Every Flow clip must hold all of its cuts without reusing footage.
+  for (const b of timeline.beats) {
+    const plan = storyboard.beats.find((x) => x.sceneNo === b.sceneNo);
+    for (const c of plan.clips) {
+      const need = b.shots.filter((sh) => c.cutIds.includes(sh.id)).reduce((n, sh) => n + sh.duration, 0);
+      const a = assets.shots[c.cutIds[0]];
+      if (a && a.in === null && a.analysis.duration - 0.1 < need - 0.02) {
+        throw new AssetsRequiredError({
+          reelId: job.reelId,
+          summary: `${c.id}.mp4 클립(${a.analysis.duration.toFixed(1)}초)이 이 장면의 음성 구간 ${need.toFixed(1)}초를 덮지 못합니다. 더 긴 클립으로 교체하세요 — 음성은 캐시되어 다시 실행해도 추가 비용이 없습니다.`,
+          problems: [],
+          required: [{ id: c.id, file: c.id + '.mp4', minClipSec: +(need + 0.2).toFixed(1) }],
+        });
+      }
+    }
+  }
   const resolved = {};
   for (const sh of timeline.shots) {
     const a = assets.shots[sh.id];

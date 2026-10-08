@@ -1,7 +1,14 @@
 /**
  * Gemini API client (generateContent with JSON structured output).
  * API key is read from Script Properties: GEMINI_API_KEY. Optional: GEMINI_MODEL.
+ *
+ * Model choice: GEMINI_MODEL (if set) or RF_CONFIG.DEFAULT_GEMINI_MODEL. If Google answers 404
+ * ("model not found" — nothing was generated, nothing billed), the call falls back to
+ * RF_CONFIG.GEMINI_FALLBACK_MODELS in order. Any other error is never retried on another model.
  */
+
+// Model that actually answered the last call (recorded in REELS.생성 모델 and AUDIT).
+const RF_GEMINI_STATE = { lastModel: '' };
 
 function getGeminiApiKey_() {
   const key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
@@ -21,21 +28,18 @@ function getGeminiModel() {
   );
 }
 
-/**
- * Calls Gemini once and returns the raw JSON text from the first candidate.
- * Throws an actionable Error on HTTP / safety / truncation problems.
- */
-function callGemini_(promptText, responseSchema) {
-  const model = getGeminiModel();
+/** Configured model first, then the fallbacks (no duplicates). */
+function geminiModelChain_() {
+  const chain = [getGeminiModel()];
+  RF_CONFIG.GEMINI_FALLBACK_MODELS.forEach(function (m) {
+    if (chain.indexOf(m) === -1) chain.push(m);
+  });
+  return chain;
+}
+
+/** One model, with retries for 429/5xx and network errors. Returns { code, text }. */
+function requestGemini_(model, body) {
   const url = RF_CONFIG.GEMINI_API_BASE + encodeURIComponent(model) + ':generateContent';
-  const body = {
-    contents: [{ role: 'user', parts: [{ text: promptText }] }],
-    // Temperature left at the model default: Gemini 3.x models are tuned for 1.0.
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: responseSchema || RF_GEMINI_RESPONSE_SCHEMA,
-    },
-  };
   const options = {
     method: 'post',
     contentType: 'application/json',
@@ -43,7 +47,6 @@ function callGemini_(promptText, responseSchema) {
     payload: JSON.stringify(body),
     muteHttpExceptions: true,
   };
-
   let response;
   let code;
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -64,8 +67,33 @@ function callGemini_(promptText, responseSchema) {
     if (code !== 429 && code < 500) break;
     if (attempt < 3) Utilities.sleep(2000 * attempt);
   }
+  return { code: code, text: response.getContentText() };
+}
 
-  const text = response.getContentText();
+/**
+ * Calls Gemini once and returns the raw JSON text from the first candidate.
+ * Throws an actionable Error on HTTP / safety / truncation problems.
+ */
+function callGemini_(promptText, responseSchema) {
+  const body = {
+    contents: [{ role: 'user', parts: [{ text: promptText }] }],
+    // Temperature left at the model default: Gemini 3.x models are tuned for 1.0.
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: responseSchema || RF_GEMINI_RESPONSE_SCHEMA,
+    },
+  };
+  const chain = geminiModelChain_();
+  let model;
+  let res;
+  for (let i = 0; i < chain.length; i++) {
+    model = chain[i];
+    res = requestGemini_(model, body);
+    if (res.code !== 404 || i === chain.length - 1) break;
+    logEvent_('WARN', 'geminiModel', '', '모델 "' + model + '"을 찾을 수 없어 "' + chain[i + 1] + '"로 대체합니다 (404, 과금 없음).', String(res.text).slice(0, 500));
+  }
+  const code = res.code;
+  const text = res.text;
   if (code !== 200) {
     let detail = text;
     try {
@@ -77,12 +105,13 @@ function callGemini_(promptText, responseSchema) {
     if (code === 400) hint = ' (요청 형식 또는 모델명 GEMINI_MODEL을 확인하세요)';
     if (code === 401 || code === 403) hint = ' (GEMINI_API_KEY가 유효한지 확인하세요)';
     if (code === 404) {
-      hint = ' (모델 "' + model + '"을 사용할 수 없습니다 — 종료된 모델일 수 있습니다. ' +
-        'Google AI Studio에서 현재 모델 ID를 확인해 스크립트 속성 GEMINI_MODEL에 입력하세요)';
+      hint = ' (모델 ' + chain.join(', ') + ' 모두 사용할 수 없습니다. "릴스 팩토리 → Gemini 모델 확인"으로 확인한 뒤 ' +
+        '스크립트 속성 GEMINI_MODEL에 현재 Flash 모델 ID를 입력하세요)';
     }
     if (code === 429) hint = ' (요청 한도 초과 — 잠시 후 다시 시도하세요)';
     throw new Error('Gemini API 오류 HTTP ' + code + hint + ': ' + String(detail).slice(0, 500));
   }
+  RF_GEMINI_STATE.lastModel = model;
 
   const json = JSON.parse(text);
   if (json.promptFeedback && json.promptFeedback.blockReason) {
@@ -100,4 +129,46 @@ function callGemini_(promptText, responseSchema) {
       return p.text || '';
     })
     .join('');
+}
+
+/**
+ * Free check (models.get — no tokens, no charge): is each model in the chain available for
+ * generateContent? Returns [{ model, ok, detail }].
+ */
+function checkGeminiModels_() {
+  const key = getGeminiApiKey_();
+  return geminiModelChain_().map(function (model) {
+    const res = UrlFetchApp.fetch(RF_CONFIG.GEMINI_API_BASE + encodeURIComponent(model), {
+      method: 'get',
+      headers: { 'x-goog-api-key': key },
+      muteHttpExceptions: true,
+    });
+    const code = res.getResponseCode();
+    if (code !== 200) return { model: model, ok: false, detail: 'HTTP ' + code };
+    const info = JSON.parse(res.getContentText());
+    const methods = info.supportedGenerationMethods || [];
+    const ok = methods.indexOf('generateContent') !== -1;
+    return { model: model, ok: ok, detail: (info.displayName || info.name) + (ok ? '' : ' — generateContent 미지원') };
+  });
+}
+
+/** Menu: shows which Gemini model will be used (free). */
+function showGeminiModelCheck() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const rows = checkGeminiModels_();
+    const use = rows.filter(function (r) {
+      return r.ok;
+    })[0];
+    ui.alert(
+      'Gemini 모델 확인 (무료 — 토큰 사용 없음)\n\n' +
+        rows.map(function (r) {
+          return (r.ok ? '✓ ' : '✗ ') + r.model + ' — ' + r.detail;
+        }).join('\n') +
+        '\n\n' + (use ? '사용할 모델: ' + use.model : '사용 가능한 모델이 없습니다. GEMINI_MODEL을 현재 Flash 모델 ID로 설정하세요.') +
+        '\n실제 JSON 생성까지 확인하려면 "테스트: PRD-001 Gemini 실제 호출"을 실행하세요 (1회 과금).'
+    );
+  } catch (e) {
+    ui.alert('Gemini 모델 확인 실패\n\n' + e.message);
+  }
 }

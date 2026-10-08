@@ -36,7 +36,7 @@ You only paste **one file**. Nothing in your existing PRODUCTS tab is changed.
 | **Work / school Google account** | *"This app is blocked"*, or *Allow* is greyed out | Your Workspace admin restricts Apps Script or external requests. Ask them to allow Apps Script for your account, or use a personal Gmail copy of the workbook. |
 | A tab named **REELS**, **PERFORMANCE** or **LOG** already exists with different headers | Generation stops with a missing-header error | Run **시트 준비**. It asks before adding only the missing headers to the right end of row 1. Existing cells are never changed. |
 | Old Apps Script project (pre-2020) | `SyntaxError` on save | In **Project Settings ⚙**, tick **Enable Chrome V8 runtime**. |
-| Gemini model retired | *"Gemini API 오류 HTTP 404 … 모델을 사용할 수 없습니다"* | The default is `gemini-3.5-flash`. If Google retires it, add the Script Property `GEMINI_MODEL` with a current model ID from AI Studio. No code change is needed. |
+| Gemini model retired | *"Gemini API 오류 HTTP 404 … 모델을 사용할 수 없습니다"* | The default is `gemini-3.5-flash`. On a 404 the script falls back to `gemini-flash-latest` once (a 404 is not billed) and logs a WARN. To pin another model, add the Script Property `GEMINI_MODEL`. Check with **Gemini 모델 확인 (무료)** — see [cost-safety.md](cost-safety.md#1-gemini-model). |
 
 ### Existing Apps Script code
 
@@ -111,7 +111,9 @@ Requires Node.js ≥ 20 and has no dependencies. It runs three test files:
 ### In the spreadsheet
 
 - **테스트: PRD-001 오프라인 검증** validates the bundled sample response. It makes no API call and writes nothing to the sheets.
+- **Gemini 모델 확인 (무료)** checks with `models.get` that the configured model and its fallback exist and support `generateContent`. It is not billed.
 - **테스트: PRD-001 Gemini 실제 호출 (시트에 쓰지 않음)** calls Gemini with the PRD-001 fixture and validates the real response. It writes only to LOG.
+- From a terminal: `GEMINI_API_KEY=<key> npm run gemini:check` (free) or `… -- --generate` (one paid call). See [cost-safety.md](cost-safety.md#testing-the-model-against-the-real-api).
 
 ### PRD-001 manual acceptance test
 

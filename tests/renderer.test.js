@@ -14,8 +14,8 @@ const { createSilentTts } = require('../renderer/lib/tts/silent');
 const { parseWav, silentWav } = require('../renderer/lib/wav');
 const { buildTimeline } = require('../renderer/lib/plan');
 const { buildAss, esc } = require('../renderer/lib/ass');
-const { buildStoryboard, StoryboardError } = require('../renderer/lib/storyboard');
-const { validateAssets, analyzeClip, AssetsRequiredError } = require('../renderer/lib/assets');
+const { buildStoryboard, planClips, StoryboardError } = require('../renderer/lib/storyboard');
+const { validateAssets, analyzeClip, AssetsRequiredError, sceneRequirements, writeAssetsRequired } = require('../renderer/lib/assets');
 const { preflight, QcError } = require('../renderer/lib/qc');
 const { loadTemplate } = require('../renderer/lib/template');
 const { geometry } = require('../renderer/lib/layout');
@@ -160,6 +160,80 @@ test('Google TTS request: ko-KR voice, LINEAR16, API key in header (not URL), re
   await assert.rejects(bad.synthesize({ text: 'a', voice: 'ko-KR-Wavenet-A', speakingRate: 1 }), /Text-to-Speech API 사용 설정/);
 });
 
+test('TTS interruption: a run that fails mid-way pays again only for the lines it never received', async () => {
+  const dir = tmp();
+  const provider = spyProvider();
+  let failOn = 2;
+  const flaky = Object.assign({}, provider, {
+    async synthesize(req) {
+      if (provider.calls.length + 1 === failOn) {
+        provider.calls.push(req.text);
+        throw new Error('network down');
+      }
+      return provider.synthesize(req);
+    },
+  });
+  const segs = ['첫 줄입니다.', '둘째 줄입니다.', '셋째 줄입니다.'];
+  await assert.rejects(service(flaky, dir).synthesizeAll(segs), /network down/);
+  assert.deepEqual(provider.calls, ['첫 줄입니다.', '둘째 줄입니다.']);
+  failOn = 0;
+  const out = await service(flaky, dir).synthesizeAll(segs);
+  assert.deepEqual(provider.calls.slice(2), ['둘째 줄입니다.', '셋째 줄입니다.'], 'line 1 came from the cache');
+  assert.deepEqual(out.map((o) => o.cached), [true, false, false]);
+  // The ledger counted every request sent, including the failed one (it can over-count, never under-count).
+  const month = Object.values(JSON.parse(fs.readFileSync(path.join(dir, 'usage.json'), 'utf8')))[0];
+  assert.equal(month.requests, 4);
+  assert.equal(month.chars, [...'첫 줄입니다.둘째 줄입니다.둘째 줄입니다.셋째 줄입니다.'].length);
+});
+
+test('TTS concurrency: two renders asking for the same lines at once pay for each line once', async () => {
+  const dir = tmp();
+  const provider = spyProvider();
+  const slow = Object.assign({}, provider, {
+    async synthesize(req) {
+      await new Promise((r) => setTimeout(r, 150));
+      return provider.synthesize(req);
+    },
+  });
+  const segs = ['같은 줄 하나.', '같은 줄 둘.'];
+  const [a, b] = await Promise.all([service(slow, dir).synthesizeAll(segs), service(slow, dir).synthesizeAll(segs)]);
+  assert.equal(provider.calls.length, 2, provider.calls.join(' | '));
+  assert.deepEqual(a.map((o) => o.file), b.map((o) => o.file));
+  const month = Object.values(JSON.parse(fs.readFileSync(path.join(dir, 'usage.json'), 'utf8')))[0];
+  assert.equal(month.requests, 2);
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'cache')).filter((f) => f.endsWith('.lock')), [], 'locks released');
+});
+
+test('Google TTS retries only refused requests (429/503); 500 and network errors are never re-sent; each attempt is counted', async () => {
+  const wav = silentWav(0.5).toString('base64');
+  const run = async (responses) => {
+    const sent = [];
+    let attempts = 0;
+    const g = createGoogleTts({
+      auth: apiKeyAuth('k'), retryDelayMs: 1,
+      fetchFn: async () => {
+        const r = responses[sent.length];
+        sent.push(r);
+        if (r === 'net') throw new Error('socket hang up');
+        return r === 200 ? { ok: true, status: 200, json: async () => ({ audioContent: wav }) } : { ok: false, status: r, json: async () => ({ error: { message: 'x' } }) };
+      },
+    });
+    const res = await g.synthesize({ text: '가', voice: 'ko-KR-Wavenet-A', speakingRate: 1, onAttempt: () => attempts++ }).then(() => 'ok', (e) => e.message);
+    return { res, sent: sent.length, attempts };
+  };
+  assert.deepEqual(await run([429, 503, 200]), { res: 'ok', sent: 3, attempts: 3 });
+  assert.equal((await run([500, 200])).sent, 1, '500: maybe processed — not re-sent');
+  assert.equal((await run(['net', 200])).sent, 1, 'network error after sending — not re-sent');
+  assert.equal((await run([429, 429, 429, 200])).sent, 3, 'at most 3 attempts');
+  // Through the service, each attempt is written to the ledger before the answer arrives.
+  const dir = tmp();
+  let n = 0;
+  const g = createGoogleTts({ auth: apiKeyAuth('k'), retryDelayMs: 1, fetchFn: async () => (++n === 1 ? { ok: false, status: 503, json: async () => ({}) } : { ok: true, status: 200, json: async () => ({ audioContent: wav }) }) });
+  await service(g, dir).synthesizeAll(['다섯 글자다']);
+  const month = Object.values(JSON.parse(fs.readFileSync(path.join(dir, 'usage.json'), 'utf8')))[0];
+  assert.deepEqual(month, { chars: 12, requests: 2 });
+});
+
 test('voice families map to prices; unknown voices are not guessed', () => {
   assert.equal(voiceFamily('ko-KR-Wavenet-A'), 'Wavenet');
   assert.equal(voiceFamily('ko-KR-Neural2-B'), 'Neural2');
@@ -283,7 +357,7 @@ test('ASSETS_REQUIRED: no footage → one Flow clip per scene requested with the
   );
   const reel = path.join(dir, 'clips', 'PRD-001-R01');
   const shotlist = fs.readFileSync(path.join(reel, 'SHOTLIST.md'), 'utf8');
-  assert.match(shotlist, /Google Flow 클립 1개\*\* \(8초, 세로 9:16\)만 만들면 됩니다 — 총 5개/);
+  assert.match(shotlist, /Google Flow 클립 5개\*\* \(각 8초, 세로 9:16\)만 만들면 됩니다/);
   assert.match(shotlist, /\| S3\.mp4 \| DEMO · 제품 등장 \| 바닥 공간을 안 차지하니까 \|.*\| 3컷 \(/);
   assert.match(shotlist, /마켓\(쿠팡 등\) 상세페이지 영상은 사용 금지/);
   const flow = fs.readFileSync(path.join(reel, 'FLOW_PROMPTS.md'), 'utf8');
@@ -341,6 +415,59 @@ test('asset analysis rejects solid-colour, still-image, low-res and too-short cl
   assert.doesNotMatch(msg, /S5/);
   assert.ok(v.autoManifest, 'no assets.json → provenance will be recorded automatically');
   assert.equal(v.autoManifest.scenes.S5.source, 'flow-generated');
+});
+
+test('Flow clip plan: every scene fits its 8 s clip; a scene whose voice would outgrow one clip gets S3b — before any TTS', () => {
+  const { sb, job } = storyboardOf();
+  planClips(sb, template);
+  assert.equal(sb.clipSec, 8);
+  assert.deepEqual(sceneRequirements(sb, template).map((r) => r.file), ['S1.mp4', 'S2.mp4', 'S3.mp4', 'S4.mp4', 'S5.mp4']);
+  const cov = preflight(sb, template, job).checks.find((c) => c.id === 'flow.coverage');
+  assert.equal(cov.ok, true, cov.detail);
+  // A 9-second voice for scene 3 (e.g. known from the cache) cannot fit one 8 s clip (7.5 s usable).
+  const { sb: long } = storyboardOf();
+  planClips(long, template, [null, null, 9, null, null]);
+  const reqs = sceneRequirements(long, template);
+  assert.deepEqual(reqs.map((r) => r.id), ['S1', 'S2', 'S3', 'S3b', 'S4', 'S5']);
+  const s3 = reqs.filter((r) => r.sceneNo === 3);
+  assert.ok(s3.every((r) => r.coversSec <= 7.5 && r.minClipSec <= 8 && r.cuts.length >= 1), JSON.stringify(s3));
+  assert.deepEqual(s3.flatMap((r) => r.cuts).sort(), long.beats[2].shots.map((s) => s.id).sort(), 'every cut belongs to exactly one clip');
+  assert.equal(preflight(long, template, job).checks.find((c) => c.id === 'flow.coverage').ok, true);
+  const dir = tmp();
+  const files = writeAssetsRequired(dir, job, long, template, { reqs, problems: [] });
+  const flow = fs.readFileSync(files.flowPrompts, 'utf8');
+  assert.match(flow, /## S3b/);
+  assert.match(flow, /PART 2 of 2: continue the same action/);
+  assert.match(fs.readFileSync(files.shotlist, 'utf8'), /S3\.mp4 \+ S3b\.mp4/);
+  // A very short scene with a long voice still gets one cut per clip.
+  const { sb: tiny } = storyboardOf();
+  planClips(tiny, template, [20, null, null, null, null]);
+  assert.equal(tiny.beats[0].clips.length, 3);
+  assert.ok(tiny.beats[0].clips.every((c) => c.cutIds.length >= 1));
+});
+
+test('Flow coverage after TTS: a voice longer than predicted stops at ASSETS_REQUIRED for S3b; the rerun pays no TTS', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {
+  const { jobFile, secret } = issueJob();
+  const dir = tmp();
+  const clips = path.join(dir, 'clips');
+  const reel = path.join(clips, 'PRD-001-R01');
+  fs.mkdirSync(reel, { recursive: true });
+  for (const id of ['S1', 'S2', 'S3', 'S4', 'S5']) fs.writeFileSync(path.join(reel, id + '.mp4'), 'x');
+  const provider = spyProvider();
+  const slowVoice = Object.assign({}, provider, {
+    async synthesize(req) {
+      provider.calls.push(req.text);
+      return silentWav(req.text.startsWith('바닥 공간') ? 9 : 1.5);
+    },
+  });
+  const opts = { jobFile, secret, template, tts: service(slowVoice, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: clips, ffmpeg: FF, font: 'NanumGothic', analyze: async () => ({ width: 1080, height: 1920, duration: 8, frames: 30, flatRatio: 0, motion: 3 }) };
+  await assert.rejects(render(opts), (e) => e instanceof AssetsRequiredError && /Flow 클립을 더 나눠야/.test(e.report.summary) && e.report.required.some((r) => r.file === 'S3b.mp4'));
+  assert.equal(provider.calls.length, 5);
+  assert.match(fs.readFileSync(path.join(reel, 'FLOW_PROMPTS.md'), 'utf8'), /## S3b/);
+  assert.equal(fs.existsSync(path.join(dir, 'out')), false, 'nothing rendered');
+  // Rerun: the cached voice length is used up front → same answer, no TTS request.
+  await assert.rejects(render(opts), (e) => e instanceof AssetsRequiredError && e.report.required.some((r) => r.file === 'S3b.mp4'));
+  assert.equal(provider.calls.length, 5);
 });
 
 test('timeline: beats stretch only for the voice, hard cuts split evenly, short captions follow the voice, no disclosure in the video', () => {

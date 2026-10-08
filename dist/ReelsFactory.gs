@@ -107,8 +107,11 @@ const RF_CONFIG = {
   REELS_PER_PRODUCT: 3,
 
   GEMINI_API_BASE: 'https://generativelanguage.googleapis.com/v1beta/models/',
-  // gemini-2.5-flash is scheduled for shutdown on 2026-10-16; override with Script Property GEMINI_MODEL.
+  // gemini-3.5-flash: GA Flash model with structured output (ai.google.dev/gemini-api/docs/models).
+  // gemini-2.5-flash is scheduled for shutdown on 2026-10-16. Override with Script Property GEMINI_MODEL.
   DEFAULT_GEMINI_MODEL: 'gemini-3.5-flash',
+  // Used only if the configured model returns 404 (not found → nothing generated or billed).
+  GEMINI_FALLBACK_MODELS: ['gemini-flash-latest'],
   MAX_GEMINI_ATTEMPTS: 2,
 
   // Coupang Partners required disclosure wording. Inserted by code, never by the model.
@@ -146,6 +149,8 @@ const RF_CONFIG = {
   // Google Flow prompts generated (free, by code) after SCRIPT_APPROVED: one 8-second clip per scene.
   FLOW: {
     CLIP_SEC: 8,
+    // Unused head/tail of each clip. A scene longer than CLIP_SEC − CLIP_MARGIN_SEC needs more clips.
+    CLIP_MARGIN_SEC: 0.5,
     ENVIRONMENT: 'a real, lived-in small Korean apartment, natural daylight from a window or door, realistic everyday colours',
     CAMERA: {
       HOOK: 'handheld medium shot at eye level, slight natural movement; ends with a quick natural whip pan',
@@ -361,8 +366,10 @@ function validateReelContent(reel, product, label, options) {
         } else if ([...normalizeText(s.narration)].length > L.SCENE_NARRATION_MAX_CHARS) {
           errors.push(sp + 'narration은 자막 2줄 이내(' + L.SCENE_NARRATION_MAX_CHARS + '자)여야 합니다.');
         }
-        if (typeof s.duration_sec === 'number' && (s.duration_sec < L.SCENE_MIN_SEC || s.duration_sec > L.SCENE_MAX_SEC)) {
-          errors.push(sp + '장면 길이는 ' + L.SCENE_MIN_SEC + '~' + L.SCENE_MAX_SEC + '초여야 합니다.');
+        // A scene must fit one Google Flow clip (minus margin); the storyboard limit is never looser.
+        const maxSec = Math.min(L.SCENE_MAX_SEC, RF_CONFIG.FLOW.CLIP_SEC - RF_CONFIG.FLOW.CLIP_MARGIN_SEC);
+        if (typeof s.duration_sec === 'number' && (s.duration_sec < L.SCENE_MIN_SEC || s.duration_sec > maxSec)) {
+          errors.push(sp + '장면 길이는 ' + L.SCENE_MIN_SEC + '~' + maxSec + '초여야 합니다 (Flow 클립 ' + RF_CONFIG.FLOW.CLIP_SEC + '초로 덮을 수 있는 길이).');
         }
       }
     });
@@ -1305,7 +1312,14 @@ function buildGeminiPrompt(product, previousErrors) {
 /**
  * Gemini API client (generateContent with JSON structured output).
  * API key is read from Script Properties: GEMINI_API_KEY. Optional: GEMINI_MODEL.
+ *
+ * Model choice: GEMINI_MODEL (if set) or RF_CONFIG.DEFAULT_GEMINI_MODEL. If Google answers 404
+ * ("model not found" — nothing was generated, nothing billed), the call falls back to
+ * RF_CONFIG.GEMINI_FALLBACK_MODELS in order. Any other error is never retried on another model.
  */
+
+// Model that actually answered the last call (recorded in REELS.생성 모델 and AUDIT).
+const RF_GEMINI_STATE = { lastModel: '' };
 
 function getGeminiApiKey_() {
   const key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
@@ -1325,21 +1339,18 @@ function getGeminiModel() {
   );
 }
 
-/**
- * Calls Gemini once and returns the raw JSON text from the first candidate.
- * Throws an actionable Error on HTTP / safety / truncation problems.
- */
-function callGemini_(promptText, responseSchema) {
-  const model = getGeminiModel();
+/** Configured model first, then the fallbacks (no duplicates). */
+function geminiModelChain_() {
+  const chain = [getGeminiModel()];
+  RF_CONFIG.GEMINI_FALLBACK_MODELS.forEach(function (m) {
+    if (chain.indexOf(m) === -1) chain.push(m);
+  });
+  return chain;
+}
+
+/** One model, with retries for 429/5xx and network errors. Returns { code, text }. */
+function requestGemini_(model, body) {
   const url = RF_CONFIG.GEMINI_API_BASE + encodeURIComponent(model) + ':generateContent';
-  const body = {
-    contents: [{ role: 'user', parts: [{ text: promptText }] }],
-    // Temperature left at the model default: Gemini 3.x models are tuned for 1.0.
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: responseSchema || RF_GEMINI_RESPONSE_SCHEMA,
-    },
-  };
   const options = {
     method: 'post',
     contentType: 'application/json',
@@ -1347,7 +1358,6 @@ function callGemini_(promptText, responseSchema) {
     payload: JSON.stringify(body),
     muteHttpExceptions: true,
   };
-
   let response;
   let code;
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -1368,8 +1378,33 @@ function callGemini_(promptText, responseSchema) {
     if (code !== 429 && code < 500) break;
     if (attempt < 3) Utilities.sleep(2000 * attempt);
   }
+  return { code: code, text: response.getContentText() };
+}
 
-  const text = response.getContentText();
+/**
+ * Calls Gemini once and returns the raw JSON text from the first candidate.
+ * Throws an actionable Error on HTTP / safety / truncation problems.
+ */
+function callGemini_(promptText, responseSchema) {
+  const body = {
+    contents: [{ role: 'user', parts: [{ text: promptText }] }],
+    // Temperature left at the model default: Gemini 3.x models are tuned for 1.0.
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: responseSchema || RF_GEMINI_RESPONSE_SCHEMA,
+    },
+  };
+  const chain = geminiModelChain_();
+  let model;
+  let res;
+  for (let i = 0; i < chain.length; i++) {
+    model = chain[i];
+    res = requestGemini_(model, body);
+    if (res.code !== 404 || i === chain.length - 1) break;
+    logEvent_('WARN', 'geminiModel', '', '모델 "' + model + '"을 찾을 수 없어 "' + chain[i + 1] + '"로 대체합니다 (404, 과금 없음).', String(res.text).slice(0, 500));
+  }
+  const code = res.code;
+  const text = res.text;
   if (code !== 200) {
     let detail = text;
     try {
@@ -1381,12 +1416,13 @@ function callGemini_(promptText, responseSchema) {
     if (code === 400) hint = ' (요청 형식 또는 모델명 GEMINI_MODEL을 확인하세요)';
     if (code === 401 || code === 403) hint = ' (GEMINI_API_KEY가 유효한지 확인하세요)';
     if (code === 404) {
-      hint = ' (모델 "' + model + '"을 사용할 수 없습니다 — 종료된 모델일 수 있습니다. ' +
-        'Google AI Studio에서 현재 모델 ID를 확인해 스크립트 속성 GEMINI_MODEL에 입력하세요)';
+      hint = ' (모델 ' + chain.join(', ') + ' 모두 사용할 수 없습니다. "릴스 팩토리 → Gemini 모델 확인"으로 확인한 뒤 ' +
+        '스크립트 속성 GEMINI_MODEL에 현재 Flash 모델 ID를 입력하세요)';
     }
     if (code === 429) hint = ' (요청 한도 초과 — 잠시 후 다시 시도하세요)';
     throw new Error('Gemini API 오류 HTTP ' + code + hint + ': ' + String(detail).slice(0, 500));
   }
+  RF_GEMINI_STATE.lastModel = model;
 
   const json = JSON.parse(text);
   if (json.promptFeedback && json.promptFeedback.blockReason) {
@@ -1404,6 +1440,48 @@ function callGemini_(promptText, responseSchema) {
       return p.text || '';
     })
     .join('');
+}
+
+/**
+ * Free check (models.get — no tokens, no charge): is each model in the chain available for
+ * generateContent? Returns [{ model, ok, detail }].
+ */
+function checkGeminiModels_() {
+  const key = getGeminiApiKey_();
+  return geminiModelChain_().map(function (model) {
+    const res = UrlFetchApp.fetch(RF_CONFIG.GEMINI_API_BASE + encodeURIComponent(model), {
+      method: 'get',
+      headers: { 'x-goog-api-key': key },
+      muteHttpExceptions: true,
+    });
+    const code = res.getResponseCode();
+    if (code !== 200) return { model: model, ok: false, detail: 'HTTP ' + code };
+    const info = JSON.parse(res.getContentText());
+    const methods = info.supportedGenerationMethods || [];
+    const ok = methods.indexOf('generateContent') !== -1;
+    return { model: model, ok: ok, detail: (info.displayName || info.name) + (ok ? '' : ' — generateContent 미지원') };
+  });
+}
+
+/** Menu: shows which Gemini model will be used (free). */
+function showGeminiModelCheck() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const rows = checkGeminiModels_();
+    const use = rows.filter(function (r) {
+      return r.ok;
+    })[0];
+    ui.alert(
+      'Gemini 모델 확인 (무료 — 토큰 사용 없음)\n\n' +
+        rows.map(function (r) {
+          return (r.ok ? '✓ ' : '✗ ') + r.model + ' — ' + r.detail;
+        }).join('\n') +
+        '\n\n' + (use ? '사용할 모델: ' + use.model : '사용 가능한 모델이 없습니다. GEMINI_MODEL을 현재 Flash 모델 ID로 설정하세요.') +
+        '\n실제 JSON 생성까지 확인하려면 "테스트: PRD-001 Gemini 실제 호출"을 실행하세요 (1회 과금).'
+    );
+  } catch (e) {
+    ui.alert('Gemini 모델 확인 실패\n\n' + e.message);
+  }
 }
 
 // ===== Sheets.gs =====
@@ -1751,8 +1829,20 @@ function productAppearance_(product, facts) {
   return parts.join('; ');
 }
 
+/** Clips needed so every part of a scene fits one clip (minus margin). 1 for valid storyboards. */
+function flowClipParts(sceneSec) {
+  const usable = RF_CONFIG.FLOW.CLIP_SEC - RF_CONFIG.FLOW.CLIP_MARGIN_SEC;
+  return Math.max(1, Math.ceil(Number(sceneSec) / usable - 1e-9));
+}
+
+/** File name of part k (1-based) of scene n: S3.mp4, S3b.mp4, S3c.mp4 … */
+function flowClipFile(sceneNo, part) {
+  return 'S' + sceneNo + (part > 1 ? String.fromCharCode(96 + part) : '') + '.mp4';
+}
+
 /**
- * Returns [{ scene, beat, clipSec, scriptedSec, prompt }] for the reel's current script.
+ * Returns [{ scene, part, parts, file, beat, clipSec, scriptedSec, coversSec, prompt }] for the reel's
+ * current script — one entry per Flow clip (normally one per scene).
  * Uses only PRODUCTS.확인된 기능 (+ optional 제품 외형) — never invented attributes.
  */
 function buildFlowScenePrompts(row, product) {
@@ -1762,22 +1852,31 @@ function buildFlowScenePrompts(row, product) {
   const facts = parseConfirmedFeatures(product.features);
   const appearance = productAppearance_(product, facts);
   const n = reel.scenes.length;
-  return reel.scenes.map(function (s, i) {
+  const out = [];
+  reel.scenes.forEach(function (s, i) {
     const beat = s.beat || (i === 0 ? 'HOOK' : i === n - 1 ? 'CTA' : 'DEMO');
-    const prompt = [
-      'Google Flow · ' + cellText_(row['릴스ID']) + ' · scene ' + (i + 1) + '/' + n + ' · ' + beat + ' · ' + F.CLIP_SEC + '-second clip, vertical 9:16, photorealistic',
-      'PRODUCT (identical in every scene): ' + normalizeText(product.name) + (appearance ? ' — ' + appearance : '') + '.',
-      'Verified features only: ' + facts.join(' / ') + '. Do not add other features, logos, brand names or text on the product.',
-      'SCENE: ' + normalizeText(s.flow_prompt) + ' (' + normalizeText(s.visual) + ')',
-      'PRODUCT INTERACTION: ' + F.INTERACTION[beat] + '.',
-      'CAMERA: ' + F.CAMERA[beat] + '. One continuous take, no cuts, transitions or effects inside the clip.',
-      'LIGHTING & ENVIRONMENT: ' + F.ENVIRONMENT + '. No on-screen text, subtitles, watermarks or logos.',
-      'DURATION: ' + F.CLIP_SEC + ' seconds. The editor uses about ' + Number(s.duration_sec) + ' s of it as several short cuts, so let the framing change during the clip.',
-      'CONSISTENCY: same product colour, shape and size as the other scenes; same location, door, floor and time of day; ' +
-        'if a person appears, same clothing and hands in every scene. If Flow accepts a reference image, use a photo of the real product you are allowed to use.',
-    ].join('\n');
-    return { scene: i + 1, beat: beat, clipSec: F.CLIP_SEC, scriptedSec: Number(s.duration_sec), prompt: prompt };
+    const parts = flowClipParts(s.duration_sec);
+    for (let part = 1; part <= parts; part++) {
+      const prompt = [
+        'Google Flow · ' + cellText_(row['릴스ID']) + ' · scene ' + (i + 1) + '/' + n + ' · ' + beat + ' · ' + F.CLIP_SEC + '-second clip, vertical 9:16, photorealistic',
+        'PRODUCT (identical in every scene): ' + normalizeText(product.name) + (appearance ? ' — ' + appearance : '') + '.',
+        'Verified features only: ' + facts.join(' / ') + '. Do not add other features, logos, brand names or text on the product.',
+        'SCENE: ' + normalizeText(s.flow_prompt) + ' (' + normalizeText(s.visual) + ')',
+        'PRODUCT INTERACTION: ' + F.INTERACTION[beat] + '.',
+        'CAMERA: ' + F.CAMERA[beat] + '. One continuous take, no cuts, transitions or effects inside the clip.',
+        'LIGHTING & ENVIRONMENT: ' + F.ENVIRONMENT + '. No on-screen text, subtitles, watermarks or logos.',
+        parts > 1 ? 'PART ' + part + ' of ' + parts + ': ' + (part === 1 ? 'the beginning of this scene.' : 'continue the same action, place and lighting from where part ' + (part - 1) + ' ended.') : '',
+        'DURATION: ' + F.CLIP_SEC + ' seconds. The editor uses about ' + +(Number(s.duration_sec) / parts).toFixed(1) + ' s of it as several short cuts, so let the framing change during the clip.',
+        'CONSISTENCY: same product colour, shape and size as the other scenes; same location, door, floor and time of day; ' +
+          'if a person appears, same clothing and hands in every scene. If Flow accepts a reference image, use a photo of the real product you are allowed to use.',
+      ].filter(Boolean).join('\n');
+      out.push({
+        scene: i + 1, part: part, parts: parts, file: flowClipFile(i + 1, part), beat: beat, clipSec: F.CLIP_SEC,
+        scriptedSec: Number(s.duration_sec), coversSec: +(Number(s.duration_sec) / parts).toFixed(2), prompt: prompt,
+      });
+    }
   });
+  return out;
 }
 
 // ===== RenderJob.gs =====
@@ -1887,6 +1986,7 @@ function addReelsFactoryMenu() {
     .addItem('iPhone 대시보드 링크 보기', 'showDashboardLink')
     .addItem('렌더 키 보기 (Mac 렌더러 설정용)', 'showRenderSecret')
     .addItem('Gemini API 키 설정', 'promptForGeminiApiKey')
+    .addItem('Gemini 모델 확인 (무료)', 'showGeminiModelCheck')
     .addSeparator()
     .addItem('테스트: PRD-001 오프라인 검증', 'runOfflineFixtureTest')
     .addItem('테스트: PRD-001 Gemini 실제 호출 (시트에 쓰지 않음)', 'runLiveGeminiTestPRD001')
@@ -1988,7 +2088,7 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
   for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
     const raw = callGemini_(buildGeminiPrompt(product, lastErrors));
     const result = prepareReelRecords(product, raw, existingIds, existingKeywords, {
-      model: getGeminiModel(),
+      model: RF_GEMINI_STATE.lastModel || getGeminiModel(),
       generatedAt: new Date(),
     });
     if (!result.errors.length) return { records: result.records, attempts: attempt };
@@ -2642,7 +2742,7 @@ function apiRegenerateScript(reelId, input) {
         expectedScriptVersion: scriptVersionOf(found.row),
         reel: newReel,
         note: note,
-      }, 'Gemini (' + getGeminiModel() + ')');
+      }, 'Gemini (' + (RF_GEMINI_STATE.lastModel || getGeminiModel()) + ')');
     });
     return { detail: reelDetail_(ss, id) };
   });

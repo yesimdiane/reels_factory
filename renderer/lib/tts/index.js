@@ -36,6 +36,41 @@ function billedChars(text) {
   return [...text].length;
 }
 
+// Exclusive lock files ('wx' fails if the file exists). A lock older than staleMs is from a crashed run.
+const LOCK_STALE_MS = 5 * 60 * 1000;
+function tryLock(lockFile, staleMs) {
+  try {
+    fs.writeFileSync(lockFile, String(process.pid), { flag: 'wx' });
+    return true;
+  } catch (e) {
+    if (e.code !== 'EEXIST') throw e;
+    try {
+      if (Date.now() - fs.statSync(lockFile).mtimeMs > staleMs) fs.rmSync(lockFile, { force: true });
+    } catch {}
+    return false;
+  }
+}
+function withLockSync(lockFile, fn, staleMs = 10000) {
+  const until = Date.now() + 15000;
+  while (!tryLock(lockFile, staleMs)) {
+    if (Date.now() > until) throw new Error('사용량 기록 잠금을 얻지 못했습니다: ' + lockFile);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmSync(lockFile, { force: true });
+  }
+}
+/** Waits for the lock (or until done() — another process produced the result). Returns release(). */
+async function acquireLock(lockFile, done, { staleMs = LOCK_STALE_MS, pollMs = 200 } = {}) {
+  while (!tryLock(lockFile, staleMs)) {
+    if (done()) return () => {};
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  return () => fs.rmSync(lockFile, { force: true });
+}
+
 function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledgerFile, maxCharsPerJob = 1500, monthlyCharLimit = 500000, now = () => new Date() }) {
   const keyOf = (text) =>
     crypto.createHash('sha256').update(JSON.stringify({ p: provider.name, voice, speakingRate, text })).digest('hex');
@@ -49,14 +84,22 @@ function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledge
       return {};
     }
   }
+  /**
+   * Local ledger: counts every request SENT to a paid provider (retries included), before the answer
+   * arrives, so an interrupted run can only over-count. It is a local safety cap, not Google's bill.
+   * Written atomically under a lock so parallel renders do not lose updates.
+   */
   function addUsage(chars) {
-    const l = readLedger();
-    const m = month();
-    l[m] = l[m] || { chars: 0, requests: 0 };
-    l[m].chars += chars;
-    l[m].requests += 1;
     fs.mkdirSync(path.dirname(ledgerFile), { recursive: true });
-    fs.writeFileSync(ledgerFile, JSON.stringify(l, null, 2));
+    withLockSync(ledgerFile + '.lock', () => {
+      const l = readLedger();
+      const m = month();
+      l[m] = l[m] || { chars: 0, requests: 0 };
+      l[m].chars += chars;
+      l[m].requests += 1;
+      fs.writeFileSync(ledgerFile + '.tmp', JSON.stringify(l, null, 2));
+      fs.renameSync(ledgerFile + '.tmp', ledgerFile);
+    });
   }
 
   /** What a render would cost, without calling anything. */
@@ -89,7 +132,12 @@ function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledge
     }
   }
 
-  /** Returns [{ text, file, duration, cached }] in order. Checks the budget first. */
+  /**
+   * Returns [{ text, file, duration, cached }] in order. Checks the budget first.
+   * Each line is cached as soon as it arrives, so an interrupted or failed run pays again only for the
+   * lines it never received. A per-line lock stops two renders (e.g. a watch pass and a manual run)
+   * from requesting the same line at the same time; the second one waits and reuses the cached file.
+   */
   async function synthesizeAll(segments) {
     assertBudget(estimate(segments));
     fs.mkdirSync(cacheDir, { recursive: true });
@@ -98,19 +146,45 @@ function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledge
       const file = cachePath(text);
       let cached = true;
       if (!fs.existsSync(file)) {
-        cached = false;
-        const audio = await provider.synthesize({ text, voice, speakingRate });
-        parseWav(audio); // validate before caching
-        if (provider.paid) addUsage(billedChars(text));
-        fs.writeFileSync(file + '.tmp', audio);
-        fs.renameSync(file + '.tmp', file);
+        const release = await acquireLock(file + '.lock', () => fs.existsSync(file));
+        try {
+          if (!fs.existsSync(file)) {
+            cached = false;
+            const attempt = () => {
+              if (!provider.paid) return;
+              const used = (readLedger()[month()] || {}).chars || 0;
+              if (used + billedChars(text) > monthlyCharLimit) {
+                throw new BudgetError('이번 달 TTS 사용량 한도 RF_TTS_MONTHLY_CHAR_LIMIT(' + monthlyCharLimit + ')에 도달했습니다 (재시도 포함 사용 ' + used + ').');
+              }
+              addUsage(billedChars(text));
+            };
+            // Counted before the request is sent. Providers that retry (Google) report each attempt.
+            if (!provider.reportsAttempts) attempt();
+            const audio = await provider.synthesize({ text, voice, speakingRate, onAttempt: provider.reportsAttempts ? attempt : undefined });
+            parseWav(audio); // validate before caching
+            fs.writeFileSync(file + '.tmp', audio);
+            fs.renameSync(file + '.tmp', file);
+          }
+        } finally {
+          release();
+        }
       }
       out.push({ text, file, duration: parseWav(fs.readFileSync(file)).duration, cached });
     }
     return out;
   }
 
-  return { estimate, synthesizeAll, cachePath };
+  /** Duration of an already-cached line (free), or null. */
+  function cachedDuration(text) {
+    const f = cachePath(text);
+    try {
+      return parseWav(fs.readFileSync(f)).duration;
+    } catch {
+      return null;
+    }
+  }
+
+  return { estimate, synthesizeAll, cachePath, cachedDuration };
 }
 
 module.exports = { createTtsService, splitNarration, billedChars, voiceFamily, BudgetError, PRICE_PER_MILLION };

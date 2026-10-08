@@ -99,8 +99,11 @@ const RF_CONFIG = {
   REELS_PER_PRODUCT: 3,
 
   GEMINI_API_BASE: 'https://generativelanguage.googleapis.com/v1beta/models/',
-  // gemini-2.5-flash is scheduled for shutdown on 2026-10-16; override with Script Property GEMINI_MODEL.
+  // gemini-3.5-flash: GA Flash model with structured output (ai.google.dev/gemini-api/docs/models).
+  // gemini-2.5-flash is scheduled for shutdown on 2026-10-16. Override with Script Property GEMINI_MODEL.
   DEFAULT_GEMINI_MODEL: 'gemini-3.5-flash',
+  // Used only if the configured model returns 404 (not found → nothing generated or billed).
+  GEMINI_FALLBACK_MODELS: ['gemini-flash-latest'],
   MAX_GEMINI_ATTEMPTS: 2,
 
   // Coupang Partners required disclosure wording. Inserted by code, never by the model.
@@ -138,6 +141,8 @@ const RF_CONFIG = {
   // Google Flow prompts generated (free, by code) after SCRIPT_APPROVED: one 8-second clip per scene.
   FLOW: {
     CLIP_SEC: 8,
+    // Unused head/tail of each clip. A scene longer than CLIP_SEC − CLIP_MARGIN_SEC needs more clips.
+    CLIP_MARGIN_SEC: 0.5,
     ENVIRONMENT: 'a real, lived-in small Korean apartment, natural daylight from a window or door, realistic everyday colours',
     CAMERA: {
       HOOK: 'handheld medium shot at eye level, slight natural movement; ends with a quick natural whip pan',
