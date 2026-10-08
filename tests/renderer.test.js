@@ -319,7 +319,7 @@ test('asset analysis rejects solid-colour, still-image, low-res and too-short cl
   assert.doesNotMatch(msg, /S4-1|S4-2|S5-1/);
 });
 
-test('timeline: beats stretch only for the voice, hard cuts split evenly, subtitles follow the voice, disclosure at start and end', () => {
+test('timeline: beats stretch only for the voice, hard cuts split evenly, subtitles follow the voice, disclosure only in the caption by default', () => {
   const { sb } = storyboardOf();
   const voice = [2.0, 2.2, 1.9, 1.8, 7.0].map((d) => ({ file: 'x.wav', duration: d }));
   const tl = buildTimeline(sb, voice, template);
@@ -331,11 +331,18 @@ test('timeline: beats stretch only for the voice, hard cuts split evenly, subtit
     assert.ok(b.subtitle.start >= b.start && b.subtitle.end <= b.end + 1e-9);
     assert.ok(b.subtitle.lines.length <= 2);
   });
-  assert.deepEqual(tl.disclosure.full.map((i) => [i.start, +i.end.toFixed(2)]), [[0, 2.5], [19, +tl.total.toFixed(2)]]);
-  assert.deepEqual(tl.disclosure.tag, [{ start: 2.5, end: 19 }]);
+  assert.deepEqual(tl.disclosure, { full: [], tag: [] }, 'default: disclosure only in the Instagram caption');
+
+  // Optional: templates can still show it at the start and end of the video.
+  const inVideo = JSON.parse(JSON.stringify(template));
+  inVideo.disclosure.inVideo = true;
+  inVideo.disclosure.persistentTag.enabled = true;
+  const tl2 = buildTimeline(sb, voice, inVideo);
+  assert.deepEqual(tl2.disclosure.full.map((i) => [i.start, +i.end.toFixed(2)]), [[0, 2.5], [19, +tl2.total.toFixed(2)]]);
+  assert.deepEqual(tl2.disclosure.tag, [{ start: 2.5, end: 19 }]);
 });
 
-test('ASS: white bold subtitles, thin black outline, lower-middle safe area, no headlines/slides/banners', () => {
+test('ASS: white bold subtitles, thin black outline, lower-middle safe area, no headlines/slides/banners/disclosure text', () => {
   const { sb, job } = storyboardOf();
   const tl = buildTimeline(sb, sb.beats.map(() => ({ file: 'x.wav', duration: 1.5 })), template);
   const ass = buildAss(tl, template, { font: 'NanumGothic', disclosureText: job.script['광고 표기'] });
@@ -352,7 +359,8 @@ test('ASS: white bold subtitles, thin black outline, lower-middle safe area, no 
   const subs = ass.split('\n').filter((l) => /^Dialogue: .*,Sub,/.test(l));
   assert.equal(subs.length, 5);
   assert.ok(subs.every((l) => l.split('\\N').length <= 2));
-  assert.equal(ass.split('\n').filter((l) => /,Disclosure,/.test(l)).length, 2, 'start and end only');
+  assert.equal(ass.split('\n').filter((l) => /^Dialogue: .*,(Disclosure|Tag),/.test(l)).length, 0, 'no disclosure text in the video');
+  assert.doesNotMatch(ass, /쿠팡 파트너스|광고/);
   assert.equal(esc('a{b}\\c\nd'), 'a｛b｝＼c\\Nd');
 });
 

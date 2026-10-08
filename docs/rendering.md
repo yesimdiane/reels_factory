@@ -4,7 +4,7 @@ The renderer turns an **approved storyboard** and **approved footage** into a 10
 
 - **Footage:** full-screen 9:16 footage of the real product in use, with a hard cut every 2–4 s.
 - **Voice and subtitles:** Korean narration (Google Cloud TTS), one short line per scene. Each line is shown as a **white bold subtitle with a thin black outline** in the lower-middle safe area, at most 2 lines.
-- **Disclosure:** the full Coupang Partners sentence at the **start and end**, with a small `광고` tag in between. No banners, headlines, slides or animations.
+- **Disclosure:** goes in the **Instagram caption** (first line `[광고]` + the Coupang Partners sentence), not in the video. No banners, headlines, slides or animations.
 
 It runs on your Mac today. The same code runs in a container (Cloud Run) later, with only configuration changes.
 
@@ -68,7 +68,9 @@ There is **no code path that draws coloured slides or placeholder visuals**. Wit
 ## Keyword and disclosure
 
 - **Keyword:** the CTA line is written as `… 댓글에 '{키워드}'` and replaced with the reel's **ManyChat 키워드** (e.g. `우산`). QC fails if the CTA subtitle doesn't contain this reel's keyword. Change the keyword in REELS **before** approving; it is part of the approved fingerprint.
-- **Disclosure:** the full sentence (`광고 표기`) appears during the first 2.5 s and the last scene, and a small `광고` tag in between. This follows Korean FTC (공정위) guidance for videos: start and end, visible to people who join mid-video. To remove the in-between tag, set `disclosure.persistentTag.enabled` to `false` in the template. The Instagram caption keeps `[광고]` on its first line, and you should also turn on Instagram's paid-partnership label.
+- **Disclosure (operator decision):** the Coupang Partners disclosure is **not drawn in the video**. It appears in the **Instagram caption**: the publishing pack puts `[광고]` and the full `광고 표기` sentence on the first line. Pre-flight QC still requires that sentence to be present.
+  - Also turn on Instagram's "유료 광고 포함" (paid partnership) label when posting.
+  - To show it in the video later, set `disclosure.inVideo` to `true` in the template. It then appears for the first 2.5 s and on the last scene, with an optional small `광고` tag in between (`disclosure.persistentTag.enabled`).
 - **Emoji:** emoji in a line (e.g. ☂️) are removed from the burned subtitle and the voice, because the font and TTS don't support them. QC reports this as a warning. Put emoji in the Instagram caption instead.
 
 ## No paid assets before script approval

@@ -41,7 +41,8 @@ function preflight(storyboard, template, job) {
       `폭 ${Math.round(widest)}/${geo.maxWidth}px, 위치 y ${Math.round(geo.blockTop(lines.length))}~${geo.safe.bottom} (안전영역 ${geo.safe.top}~${geo.safe.bottom})`));
   }
   const d = String(job.script['광고 표기'] || '');
-  checks.push(check('disclosure.text', d.includes('쿠팡 파트너스') && d.includes('수수료'), d || '(없음)'));
+  const where = template.disclosure.inVideo ? '영상 시작·끝 + 인스타그램 캡션' : '인스타그램 캡션 첫 줄 (영상에는 표시하지 않음)';
+  checks.push(check('disclosure.text', d.includes('쿠팡 파트너스') && d.includes('수수료'), where + ': ' + (d || '(없음)')));
   if (storyboard.removedSymbols.length) {
     checks.push(check('subtitle.symbols', false, '자막·음성에서 제외한 이모지: ' + storyboard.removedSymbols.join(' ') + ' (글꼴·TTS 미지원). 인스타그램 캡션에는 그대로 쓸 수 있습니다.', 'warn'));
   }

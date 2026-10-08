@@ -1,6 +1,6 @@
 // ASS overlay for the lifestyle template: subtitles (white bold, thin black outline, lower-middle
-// safe area, ≤2 lines), Coupang Partners disclosure at start and end, a small "광고" tag in between.
-// No headlines, no slides, no animations.
+// safe area, ≤2 lines). The Coupang Partners disclosure is drawn only if the template enables it
+// (default: caption only). No headlines, no slides, no animations.
 'use strict';
 const { wrapLines, subtitleGeometry } = require('./layout');
 

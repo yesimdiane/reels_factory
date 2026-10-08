@@ -37,9 +37,14 @@ function buildTimeline(storyboard, narration, template) {
   const total = t;
   const d = template.disclosure;
   const last = beats[beats.length - 1];
-  const full = [{ start: 0, end: Math.min(d.startSec, total) }];
-  if (d.onLastScene && last.start > d.startSec) full.push({ start: last.start, end: total });
-  const tag = d.persistentTag && d.persistentTag.enabled && last.start > d.startSec ? [{ start: d.startSec, end: last.start }] : [];
+  // Disclosure in the video is optional (default: caption only, decided by the operator).
+  const full = [];
+  let tag = [];
+  if (d.inVideo) {
+    full.push({ start: 0, end: Math.min(d.startSec, total) });
+    if (d.onLastScene && last.start > d.startSec) full.push({ start: last.start, end: total });
+    if (d.persistentTag && d.persistentTag.enabled && last.start > d.startSec) tag = [{ start: d.startSec, end: last.start }];
+  }
   return {
     width: template.canvas.width,
     height: template.canvas.height,

@@ -1,10 +1,26 @@
 {
   "name": "lifestyle-v1",
   "description": "Video-first lifestyle reel: full-screen 9:16 footage, hard cuts every 2-4 s, one narration line per scene as a white bold subtitle in the lower-middle safe area.",
-  "canvas": { "width": 1080, "height": 1920, "fps": 30 },
-  "safeArea": { "top": 0.14, "bottom": 0.35, "side": 0.06 },
-  "shots": { "minSec": 2, "maxSec": 4, "stretchToleranceSec": 1.5, "clipHeadroomSec": 1.0 },
-  "durationSec": { "min": 18, "max": 30 },
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30
+  },
+  "safeArea": {
+    "top": 0.14,
+    "bottom": 0.35,
+    "side": 0.06
+  },
+  "shots": {
+    "minSec": 2,
+    "maxSec": 4,
+    "stretchToleranceSec": 1.5,
+    "clipHeadroomSec": 1.0
+  },
+  "durationSec": {
+    "min": 18,
+    "max": 30
+  },
   "subtitle": {
     "size": 66,
     "bold": true,
@@ -16,21 +32,43 @@
     "lineHeight": 1.25,
     "holdSec": 0.25
   },
-  "narration": { "leadInSec": 0.15, "tailSec": 0.35 },
+  "narration": {
+    "leadInSec": 0.15,
+    "tailSec": 0.35
+  },
   "disclosure": {
-    "comment": "Korean FTC guidance: show at the start and the end of a video. Full Coupang Partners sentence, small, at the top; no banner.",
+    "inVideo": false,
+    "comment": "Operator decision: the Coupang Partners disclosure goes in the Instagram caption (first line [광고] + full sentence), not in the video. Set inVideo to true to show it at the start and end of the video.",
     "startSec": 2.5,
     "onLastScene": true,
     "size": 34,
-    "persistentTag": { "enabled": true, "text": "광고", "size": 30 }
+    "persistentTag": {
+      "enabled": false,
+      "text": "광고",
+      "size": 30
+    }
   },
   "assets": {
     "minShortSide": 720,
-    "allowedSources": ["own-footage", "licensed", "flow-generated"],
-    "realProductBeats": ["DEMO", "BENEFIT", "CTA"],
-    "realProductSources": ["own-footage", "licensed"],
+    "allowedSources": [
+      "own-footage",
+      "licensed",
+      "flow-generated"
+    ],
+    "realProductBeats": [
+      "DEMO",
+      "BENEFIT",
+      "CTA"
+    ],
+    "realProductSources": [
+      "own-footage",
+      "licensed"
+    ],
     "maxFlatRatio": 0.5,
     "minMotion": 0.15
   },
-  "audio": { "loudnessLufs": -16, "keepClipAudio": false }
+  "audio": {
+    "loudnessLufs": -16,
+    "keepClipAudio": false
+  }
 }
