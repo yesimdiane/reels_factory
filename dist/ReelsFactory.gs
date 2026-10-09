@@ -35,6 +35,12 @@ const RF_CONFIG = {
     status: '제작 상태',
   },
 
+  // Optional PRODUCTS columns the operator may add (right of column I). Never required, never written.
+  PRODUCT_OPTIONAL_FIELDS: {
+    keyword: 'ManyChat 키워드', // e.g. 우산 — shared by this product's reels, unique across products
+    appearance: '제품 외형', // e.g. 슬림한 사각 두 조각, 무광 다크그레이 플라스틱 — used in Flow prompts
+  },
+
   REELS_HEADERS: [
     '릴스ID',
     '상품ID',
@@ -72,6 +78,8 @@ const RF_CONFIG = {
     'ManyChat 설정 확인일시',
     '인스타그램 URL',
     '오류',
+    // Written automatically on script approval (not part of the approved fingerprint).
+    'Flow 장면 프롬프트',
   ],
 
   // Append-only history of every operator decision and system transition.
@@ -99,8 +107,11 @@ const RF_CONFIG = {
   REELS_PER_PRODUCT: 3,
 
   GEMINI_API_BASE: 'https://generativelanguage.googleapis.com/v1beta/models/',
-  // gemini-2.5-flash is scheduled for shutdown on 2026-10-16; override with Script Property GEMINI_MODEL.
+  // gemini-3.5-flash: GA Flash model with structured output (ai.google.dev/gemini-api/docs/models).
+  // gemini-2.5-flash is scheduled for shutdown on 2026-10-16. Override with Script Property GEMINI_MODEL.
   DEFAULT_GEMINI_MODEL: 'gemini-3.5-flash',
+  // Used only if the configured model returns 404 (not found → nothing generated or billed).
+  GEMINI_FALLBACK_MODELS: ['gemini-flash-latest'],
   MAX_GEMINI_ATTEMPTS: 2,
 
   // Coupang Partners required disclosure wording. Inserted by code, never by the model.
@@ -129,7 +140,38 @@ const RF_CONFIG = {
     MIN_TOTAL_SEC: 10,
     MAX_TOTAL_SEC: 40,
     MIN_FLOW_PROMPT_CHARS: 30,
+    // Storyboard (video-first template): one narration line per scene = the subtitle.
+    SCENE_MIN_SEC: 2,
+    SCENE_MAX_SEC: 6,
+    SCENE_NARRATION_MAX_CHARS: 30,
   },
+
+  // Google Flow prompts generated (free, by code) after SCRIPT_APPROVED: one 8-second clip per scene.
+  FLOW: {
+    CLIP_SEC: 8,
+    // Unused head/tail of each clip. A scene longer than CLIP_SEC − CLIP_MARGIN_SEC needs more clips.
+    CLIP_MARGIN_SEC: 0.5,
+    ENVIRONMENT: 'a real, lived-in small Korean apartment, natural daylight from a window or door, realistic everyday colours',
+    CAMERA: {
+      HOOK: 'handheld medium shot at eye level, slight natural movement; ends with a quick natural whip pan',
+      PROBLEM: 'handheld medium shot that slowly moves closer to the problem detail',
+      DEMO: 'starts as a close-up of the hands using the product, then slowly pulls back to show the product in place; handheld, smooth',
+      BENEFIT: 'slow handheld walk-through: wide view of the space first, then a closer look at the tidy result',
+      CTA: 'slow push-in to a close-up of the product in place, then hold steady for the last 2 seconds',
+    },
+    INTERACTION: {
+      HOOK: 'show the everyday situation; the product may be absent or only in the background',
+      PROBLEM: 'show the problem clearly; do not show the product solving it yet',
+      DEMO: 'a person\'s hands use the product exactly as described, only in ways the verified features allow',
+      BENEFIT: 'show the result with the product in place and being used naturally',
+      CTA: 'the product is the clear subject, mounted or placed exactly as in the earlier scenes',
+    },
+  },
+
+  // Story structure. PROBLEM may be folded into the HOOK scene; DEMO and BENEFIT are required.
+  BEATS: ['HOOK', 'PROBLEM', 'DEMO', 'BENEFIT', 'CTA'],
+  // Written by Gemini in the CTA line; replaced with the reel's ManyChat keyword at render time.
+  KEYWORD_PLACEHOLDER: '{키워드}',
 
   // Exaggerated / unverifiable claims that must not appear in viewer-facing text.
   BANNED_PHRASES: [
@@ -188,6 +230,10 @@ function validateProduct(product) {
   if (!normalizeText(product.name)) {
     errors.push('"' + f.name + '" 값이 비어 있습니다.');
   }
+  const kw = normalizeText(product.keyword);
+  if (kw && !/^[^\s'"{}<>]{1,20}$/.test(kw)) {
+    errors.push('"' + RF_CONFIG.PRODUCT_OPTIONAL_FIELDS.keyword + '"는 공백·따옴표 없이 20자 이내 한 단어여야 합니다 (예: 우산).');
+  }
   if (parseConfirmedFeatures(product.features).length === 0) {
     errors.push(
       '"' + f.features + '" 값이 비어 있습니다. 검증된 기능을 한 줄에 하나씩 입력하세요.'
@@ -224,7 +270,10 @@ function viewerFacingTexts_(reel) {
     texts.push(c);
   });
   (Array.isArray(reel.scenes) ? reel.scenes : []).forEach(function (s) {
-    if (s) texts.push(s.on_screen_text);
+    if (s) {
+      texts.push(s.on_screen_text);
+      texts.push(s.narration);
+    }
   });
   return texts.filter(function (t) {
     return typeof t === 'string';
@@ -249,8 +298,14 @@ function factContext_(product) {
  * Validates one reel script (generated, regenerated or edited by a human) against the schema
  * and the product's confirmed facts. `label` prefixes each error, e.g. "릴스 2".
  */
-function validateReelContent(reel, product, label) {
+function validateReelContent(reel, product, label, options) {
   const errors = [];
+  // Storyboard rules apply to every new script, and to older scripts once they have beats.
+  const storyboard =
+    (options && options.requireStoryboard) ||
+    (reel && Array.isArray(reel.scenes) && reel.scenes.some(function (sc) {
+      return sc && (sc.beat !== undefined || sc.narration !== undefined);
+    }));
   const L = RF_CONFIG.LIMITS;
   const ctx = factContext_(product);
   const factSet = ctx.factSet;
@@ -304,6 +359,22 @@ function validateReelContent(reel, product, label) {
       if (!isNonEmptyString_(s.flow_prompt) || s.flow_prompt.length < L.MIN_FLOW_PROMPT_CHARS) {
         errors.push(sp + '"flow_prompt"가 비어 있거나 너무 짧습니다 (' + L.MIN_FLOW_PROMPT_CHARS + '자 이상).');
       }
+      if (storyboard) {
+        if (RF_CONFIG.BEATS.indexOf(s.beat) === -1) errors.push(sp + '"beat"는 ' + RF_CONFIG.BEATS.join('/') + ' 중 하나여야 합니다.');
+        if (!isNonEmptyString_(s.narration)) {
+          errors.push(sp + '"narration"(이 장면의 내레이션·자막 한 줄)이 비어 있습니다.');
+        } else if ([...normalizeText(s.narration)].length > L.SCENE_NARRATION_MAX_CHARS) {
+          errors.push(sp + 'narration은 자막 2줄 이내(' + L.SCENE_NARRATION_MAX_CHARS + '자)여야 합니다.');
+        }
+        // A scene must fit one Google Flow clip (minus margin); the storyboard limit is never looser.
+        const maxSec = Math.min(L.SCENE_MAX_SEC, RF_CONFIG.FLOW.CLIP_SEC - RF_CONFIG.FLOW.CLIP_MARGIN_SEC);
+        if (typeof s.duration_sec === 'number' && (s.duration_sec < L.SCENE_MIN_SEC || s.duration_sec > maxSec)) {
+          errors.push(sp + '장면 길이는 ' + L.SCENE_MIN_SEC + '~' + maxSec + '초여야 합니다 (Flow 클립 ' + RF_CONFIG.FLOW.CLIP_SEC + '초로 덮을 수 있는 길이).');
+        }
+      }
+    });
+    if (storyboard) storyboardErrors_(reel.scenes).forEach(function (e) {
+      errors.push(p + e);
     });
     if (total < L.MIN_TOTAL_SEC || total > L.MAX_TOTAL_SEC) {
       errors.push(p + '총 길이는 ' + L.MIN_TOTAL_SEC + '~' + L.MAX_TOTAL_SEC + '초여야 합니다 (현재 ' + total + '초).');
@@ -352,7 +423,7 @@ function validateGeminiReels(payload, product, expectedCount) {
     errors.push('릴스 대본은 정확히 ' + count + '개여야 합니다 (받은 개수: ' + reels.length + ').');
   }
   reels.forEach(function (reel, i) {
-    validateReelContent(reel, product, '릴스 ' + (i + 1)).forEach(function (e) {
+    validateReelContent(reel, product, '릴스 ' + (i + 1), { requireStoryboard: true }).forEach(function (e) {
       errors.push(e);
     });
   });
@@ -375,6 +446,31 @@ function validateGeminiReels(payload, product, expectedCount) {
     return errors.indexOf(e) === idx;
   });
   return { errors: unique, reels: unique.length ? [] : reels };
+}
+
+/** HOOK first, CTA last, DEMO and BENEFIT present, beats in story order, keyword placeholder in the CTA. */
+function storyboardErrors_(scenes) {
+  const errors = [];
+  const beats = scenes.map(function (sc) {
+    return sc ? sc.beat : '';
+  });
+  const order = RF_CONFIG.BEATS;
+  if (beats[0] !== 'HOOK') errors.push('첫 장면은 HOOK이어야 합니다.');
+  if (beats[beats.length - 1] !== 'CTA') errors.push('마지막 장면은 CTA여야 합니다.');
+  ['DEMO', 'BENEFIT'].forEach(function (b) {
+    if (beats.indexOf(b) === -1) errors.push(b + ' 장면이 필요합니다.');
+  });
+  for (let i = 1; i < beats.length; i++) {
+    if (order.indexOf(beats[i]) < order.indexOf(beats[i - 1])) {
+      errors.push('장면 순서는 HOOK → PROBLEM → DEMO → BENEFIT → CTA여야 합니다.');
+      break;
+    }
+  }
+  const cta = scenes[scenes.length - 1];
+  if (cta && typeof cta.narration === 'string' && cta.narration.indexOf(RF_CONFIG.KEYWORD_PLACEHOLDER) === -1) {
+    errors.push('CTA 내레이션에 댓글 키워드 자리 "' + RF_CONFIG.KEYWORD_PLACEHOLDER + '"가 필요합니다.');
+  }
+  return errors;
 }
 
 /** Finds duplicate values in a list (ignoring blanks). */
@@ -548,11 +644,19 @@ function rowToReel(row) {
 
 /** Reel object → script cells (except keyword/CTA/disclosure, which are code-owned). */
 function reelToScriptCells(reel) {
+  // Storyboard scripts: the scene lines ARE the narration and the subtitles (single source).
+  const lines = Array.isArray(reel.scenes) && reel.scenes.length && reel.scenes.every(function (sc) {
+    return sc && typeof sc.narration === 'string' && sc.narration.trim();
+  })
+    ? reel.scenes.map(function (sc) {
+        return normalizeText(sc.narration);
+      })
+    : null;
   return {
     '컨셉': normalizeText(reel.concept),
     '후킹': normalizeText(reel.hook),
-    '내레이션': normalizeText(reel.narration),
-    '자막': reel.captions.map(normalizeText).join('\n'),
+    '내레이션': lines ? lines.join(' ') : normalizeText(reel.narration),
+    '자막': (lines || reel.captions.map(normalizeText)).join('\n'),
     '장면(JSON)': JSON.stringify(reel.scenes),
     'Flow 프롬프트': reel.scenes
       .map(function (s) {
@@ -579,7 +683,7 @@ function mergeScriptEdit(current, edit) {
       throw new Error('장면 개수는 수정할 수 없습니다. 장면 구성을 바꾸려면 "수정 요청"으로 재생성하세요.');
     }
     edit.scenes.forEach(function (es, i) {
-      ['visual', 'on_screen_text', 'flow_prompt'].forEach(function (k) {
+      ['visual', 'on_screen_text', 'flow_prompt', 'narration'].forEach(function (k) {
         if (typeof es[k] === 'string') merged.scenes[i][k] = es[k];
       });
     });
@@ -727,6 +831,7 @@ function planTransition(row, product, action, input, ctx) {
     updates['대본 버전'] = newScriptVersion;
     updates['승인 대본 버전'] = '';
     updates['승인 대본 해시'] = '';
+    updates['Flow 장면 프롬프트'] = '';
     snapshot = cells;
   }
 
@@ -741,6 +846,8 @@ function planTransition(row, product, action, input, ctx) {
       if (dErr) throw new Error(dErr);
       updates['승인 대본 버전'] = scriptVersion;
       updates['승인 대본 해시'] = scriptFingerprint(row);
+      // Flow prompts exist only for an approved script (protects Flow credits). Generated by code, free.
+      updates['Flow 장면 프롬프트'] = JSON.stringify(buildFlowScenePrompts(row, product));
       reviewScript();
       snapshot = {};
       RF_SCRIPT_FIELDS.forEach(function (f) {
@@ -755,6 +862,7 @@ function planTransition(row, product, action, input, ctx) {
     case 'REOPEN_SCRIPT':
       updates['승인 대본 버전'] = '';
       updates['승인 대본 해시'] = '';
+      updates['Flow 장면 프롬프트'] = '';
       reviewScript();
       break;
     case 'EDIT_SCRIPT': {
@@ -913,7 +1021,7 @@ function buildPublishingPack(row, product) {
     reelId: row['릴스ID'],
     videoUrl: driveViewUrl(fileId),
     videoDownloadUrl: 'https://drive.google.com/uc?export=download&id=' + fileId,
-    instagramCaption: ['[광고] ' + disclosure, '', cellText_(row['후킹']), '', cellText_(row['CTA'])].join('\n'),
+    instagramCaption: ['[광고] ' + disclosure, '', cellText_(row['후킹']), '', buildCta(keyword)].join('\n'),
     manychatKeyword: keyword,
     manychatDm: '요청하신 상품 링크예요 👉 ' + normalizeText(product.affiliateUrl) + '\n\n' + disclosure,
     affiliateUrl: normalizeText(product.affiliateUrl),
@@ -921,6 +1029,7 @@ function buildPublishingPack(row, product) {
       'MP4를 iPhone에 저장 (Drive 앱 → ⋯ → 사본 보내기 → 동영상 저장)',
       '인스타그램에 릴스 업로드, 캡션 붙여넣기 (첫 줄 [광고] 표기 유지)',
       '"유료 광고 포함" 라벨 설정 (인스타그램 고급 설정)',
+      'Google Flow 등 AI로 만든 장면이 있으면 인스타그램 "AI 정보" 라벨 켜기',
       'ManyChat에서 키워드 "' + keyword + '" → DM 문구 연결 후 활성화',
       '테스트 계정으로 댓글 달아 DM 링크가 맞는 상품인지 확인',
       '대시보드에서 "게시 확인", "ManyChat 확인" 누르기',
@@ -980,25 +1089,39 @@ function isPermissionApproved(permissionValue) {
   return RF_CONFIG.PERMISSION_APPROVED_VALUES.indexOf(v) !== -1;
 }
 
+/** Normalised keyword entries: strings (product unknown) or { keyword, productId }. */
+function keywordOwners_(existingKeywords) {
+  const owners = {};
+  existingKeywords.forEach(function (k) {
+    const kw = normalizeText(typeof k === 'string' ? k : k.keyword).toUpperCase();
+    if (!kw) return;
+    (owners[kw] = owners[kw] || []).push(typeof k === 'string' ? '' : normalizeText(k.productId));
+  });
+  return owners;
+}
+
 /**
  * Builds REELS row objects keyed by REELS header names.
- * Throws if an ID or keyword would collide with existing data.
+ * Keyword: PRODUCTS.'ManyChat 키워드' if the operator set one (shared by that product's reels),
+ * otherwise a per-reel code (PRD001R01). Throws if an ID or keyword would collide with another product.
  */
 function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
   const ids = nextReelIds(product.id, existingIds, reels.length);
-  const keywordTaken = {};
-  existingKeywords.forEach(function (k) {
-    keywordTaken[normalizeText(k).toUpperCase()] = true;
-  });
+  const owners = keywordOwners_(existingKeywords);
+  const productKeyword = normalizeText(product.keyword);
   const approved = isPermissionApproved(product.permission);
 
   return reels.map(function (reel, i) {
     const reelId = ids[i];
-    const keyword = buildManyChatKeyword(reelId);
-    if (keywordTaken[keyword.toUpperCase()]) {
-      throw new Error('ManyChat 키워드 "' + keyword + '"가 이미 REELS에 존재합니다. 중복 키워드를 정리한 뒤 다시 실행하세요.');
+    const keyword = productKeyword || buildManyChatKeyword(reelId);
+    const key = keyword.toUpperCase();
+    const others = (owners[key] || []).filter(function (pid) {
+      return !productKeyword || pid !== product.id;
+    });
+    if (others.length) {
+      throw new Error('ManyChat 키워드 "' + keyword + '"가 이미 다른 릴스·상품에서 쓰이고 있습니다. 상품마다 다른 키워드를 쓰세요.');
     }
-    keywordTaken[keyword.toUpperCase()] = true;
+    (owners[key] = owners[key] || []).push(product.id);
 
     const notes = [];
     if (!approved) notes.push(RF_CONFIG.PERMISSION_UNVERIFIED_NOTE);
@@ -1070,13 +1193,15 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
               type: 'OBJECT',
               properties: {
                 scene_no: { type: 'INTEGER' },
+                beat: { type: 'STRING', enum: ['HOOK', 'PROBLEM', 'DEMO', 'BENEFIT', 'CTA'] },
+                narration: { type: 'STRING' },
                 duration_sec: { type: 'NUMBER' },
                 visual: { type: 'STRING' },
                 on_screen_text: { type: 'STRING' },
                 flow_prompt: { type: 'STRING' },
               },
-              required: ['scene_no', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt'],
-              propertyOrdering: ['scene_no', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt'],
+              required: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt'],
+              propertyOrdering: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt'],
             },
           },
           facts_used: { type: 'ARRAY', items: { type: 'STRING' } },
@@ -1150,12 +1275,21 @@ function buildGeminiPrompt(product, previousErrors) {
     '2. 화면 문구·내레이션·자막에 들어가는 숫자는 확인된 기능에 적힌 숫자만 사용하세요.',
     '3. facts_used에는 실제로 사용한 확인된 기능을 위 목록 문구 그대로(한 글자도 바꾸지 말고) 넣으세요.',
     '4. 과장 표현(최저가, 100%, 무조건, 완벽, 평생, 1위, 품절 임박 등)을 쓰지 마세요.',
-    '5. URL, 가격, 광고 표기, CTA, 댓글 키워드는 쓰지 마세요. 시스템이 별도로 추가합니다.',
+    '5. URL, 가격, 광고 표기는 쓰지 마세요. 댓글 키워드는 CTA 장면에서 자리표시자 ' + RF_CONFIG.KEYWORD_PLACEHOLDER + ' 로만 쓰세요.',
     '6. hook은 ' + L.HOOK_MAX_CHARS + '자 이내, narration은 ' + L.NARRATION_MAX_CHARS + '자 이내의 자연스러운 한국어 구어체.',
     '7. captions는 화면 자막 줄 목록이며 각 ' + L.CAPTION_MAX_CHARS + '자 이내.',
     '8. scenes는 ' + L.MIN_SCENES + '~' + L.MAX_SCENES + '개, scene_no는 1부터 순서대로, duration_sec 합계는 ' + L.MIN_TOTAL_SEC + '~' + L.MAX_TOTAL_SEC + '초.',
     '9. 세 릴스는 concept과 hook이 서로 달라야 합니다 (예: 문제 해결, 설치 과정, 공간 비포/애프터).',
     '10. 시연은 실제로 가능한 사용 장면만 묘사하세요.',
+    '',
+    '## 스토리보드 (영상이 이야기를 이끌고, 자막은 보조)',
+    '- 장면 순서: HOOK → (PROBLEM) → DEMO → BENEFIT → CTA. 첫 장면 HOOK, 마지막 장면 CTA, DEMO와 BENEFIT은 반드시 포함. PROBLEM은 HOOK 장면에 합쳐도 됩니다.',
+    '- 각 장면의 narration은 그 장면에서 말하는 한 문장이며 그대로 자막이 됩니다: ' + L.SCENE_NARRATION_MAX_CHARS + '자 이내, 짧고 자연스러운 구어체.',
+    '- 장면 길이 ' + L.SCENE_MIN_SEC + '~' + L.SCENE_MAX_SEC + '초, 전체 20~25초. hook = 첫 장면 narration. narration(전체) = 장면 narration을 순서대로 이은 것, captions = 장면 narration 목록.',
+    '- 말투: 크리에이터가 직접 말하듯 짧은 구어체 구절 (예: "인테리어 하면서", "나무 질감을 중요하게 생각해서"). 자막은 한 줄씩 짧게 바뀝니다.',
+    '- visual은 실제 생활 공간에서 사람이 제품을 쓰는 모습을 구체적으로: 카메라를 보는 사람, 손으로 제품 사용 클로즈업, 발·손 POV, 질감 클로즈업, 공간 와이드. 자연광, 핸드헬드. 글자만 있는 화면·단색 배경·그래픽 금지.',
+    '- on_screen_text는 빈 문자열로 두세요 (자막은 narration으로 충분합니다).',
+    '- CTA 장면 narration 예: "제품 정보는 댓글에 \'' + RF_CONFIG.KEYWORD_PLACEHOLDER + '\'" — 과장 없이 자연스럽게.',
     '',
     '## flow_prompt (Google Flow 수동 생성용, 영어)',
     '- 각 장면마다 Google Flow에 붙여넣을 영어 영상 프롬프트를 작성하세요.',
@@ -1178,7 +1312,14 @@ function buildGeminiPrompt(product, previousErrors) {
 /**
  * Gemini API client (generateContent with JSON structured output).
  * API key is read from Script Properties: GEMINI_API_KEY. Optional: GEMINI_MODEL.
+ *
+ * Model choice: GEMINI_MODEL (if set) or RF_CONFIG.DEFAULT_GEMINI_MODEL. If Google answers 404
+ * ("model not found" — nothing was generated, nothing billed), the call falls back to
+ * RF_CONFIG.GEMINI_FALLBACK_MODELS in order. Any other error is never retried on another model.
  */
+
+// Model that actually answered the last call (recorded in REELS.생성 모델 and AUDIT).
+const RF_GEMINI_STATE = { lastModel: '' };
 
 function getGeminiApiKey_() {
   const key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
@@ -1198,21 +1339,18 @@ function getGeminiModel() {
   );
 }
 
-/**
- * Calls Gemini once and returns the raw JSON text from the first candidate.
- * Throws an actionable Error on HTTP / safety / truncation problems.
- */
-function callGemini_(promptText, responseSchema) {
-  const model = getGeminiModel();
+/** Configured model first, then the fallbacks (no duplicates). */
+function geminiModelChain_() {
+  const chain = [getGeminiModel()];
+  RF_CONFIG.GEMINI_FALLBACK_MODELS.forEach(function (m) {
+    if (chain.indexOf(m) === -1) chain.push(m);
+  });
+  return chain;
+}
+
+/** One model, with retries for 429/5xx and network errors. Returns { code, text }. */
+function requestGemini_(model, body) {
   const url = RF_CONFIG.GEMINI_API_BASE + encodeURIComponent(model) + ':generateContent';
-  const body = {
-    contents: [{ role: 'user', parts: [{ text: promptText }] }],
-    // Temperature left at the model default: Gemini 3.x models are tuned for 1.0.
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: responseSchema || RF_GEMINI_RESPONSE_SCHEMA,
-    },
-  };
   const options = {
     method: 'post',
     contentType: 'application/json',
@@ -1220,7 +1358,6 @@ function callGemini_(promptText, responseSchema) {
     payload: JSON.stringify(body),
     muteHttpExceptions: true,
   };
-
   let response;
   let code;
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -1241,8 +1378,33 @@ function callGemini_(promptText, responseSchema) {
     if (code !== 429 && code < 500) break;
     if (attempt < 3) Utilities.sleep(2000 * attempt);
   }
+  return { code: code, text: response.getContentText() };
+}
 
-  const text = response.getContentText();
+/**
+ * Calls Gemini once and returns the raw JSON text from the first candidate.
+ * Throws an actionable Error on HTTP / safety / truncation problems.
+ */
+function callGemini_(promptText, responseSchema) {
+  const body = {
+    contents: [{ role: 'user', parts: [{ text: promptText }] }],
+    // Temperature left at the model default: Gemini 3.x models are tuned for 1.0.
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: responseSchema || RF_GEMINI_RESPONSE_SCHEMA,
+    },
+  };
+  const chain = geminiModelChain_();
+  let model;
+  let res;
+  for (let i = 0; i < chain.length; i++) {
+    model = chain[i];
+    res = requestGemini_(model, body);
+    if (res.code !== 404 || i === chain.length - 1) break;
+    logEvent_('WARN', 'geminiModel', '', '모델 "' + model + '"을 찾을 수 없어 "' + chain[i + 1] + '"로 대체합니다 (404, 과금 없음).', String(res.text).slice(0, 500));
+  }
+  const code = res.code;
+  const text = res.text;
   if (code !== 200) {
     let detail = text;
     try {
@@ -1254,12 +1416,13 @@ function callGemini_(promptText, responseSchema) {
     if (code === 400) hint = ' (요청 형식 또는 모델명 GEMINI_MODEL을 확인하세요)';
     if (code === 401 || code === 403) hint = ' (GEMINI_API_KEY가 유효한지 확인하세요)';
     if (code === 404) {
-      hint = ' (모델 "' + model + '"을 사용할 수 없습니다 — 종료된 모델일 수 있습니다. ' +
-        'Google AI Studio에서 현재 모델 ID를 확인해 스크립트 속성 GEMINI_MODEL에 입력하세요)';
+      hint = ' (모델 ' + chain.join(', ') + ' 모두 사용할 수 없습니다. "릴스 팩토리 → Gemini 모델 확인"으로 확인한 뒤 ' +
+        '스크립트 속성 GEMINI_MODEL에 현재 Flash 모델 ID를 입력하세요)';
     }
     if (code === 429) hint = ' (요청 한도 초과 — 잠시 후 다시 시도하세요)';
     throw new Error('Gemini API 오류 HTTP ' + code + hint + ': ' + String(detail).slice(0, 500));
   }
+  RF_GEMINI_STATE.lastModel = model;
 
   const json = JSON.parse(text);
   if (json.promptFeedback && json.promptFeedback.blockReason) {
@@ -1277,6 +1440,48 @@ function callGemini_(promptText, responseSchema) {
       return p.text || '';
     })
     .join('');
+}
+
+/**
+ * Free check (models.get — no tokens, no charge): is each model in the chain available for
+ * generateContent? Returns [{ model, ok, detail }].
+ */
+function checkGeminiModels_() {
+  const key = getGeminiApiKey_();
+  return geminiModelChain_().map(function (model) {
+    const res = UrlFetchApp.fetch(RF_CONFIG.GEMINI_API_BASE + encodeURIComponent(model), {
+      method: 'get',
+      headers: { 'x-goog-api-key': key },
+      muteHttpExceptions: true,
+    });
+    const code = res.getResponseCode();
+    if (code !== 200) return { model: model, ok: false, detail: 'HTTP ' + code };
+    const info = JSON.parse(res.getContentText());
+    const methods = info.supportedGenerationMethods || [];
+    const ok = methods.indexOf('generateContent') !== -1;
+    return { model: model, ok: ok, detail: (info.displayName || info.name) + (ok ? '' : ' — generateContent 미지원') };
+  });
+}
+
+/** Menu: shows which Gemini model will be used (free). */
+function showGeminiModelCheck() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const rows = checkGeminiModels_();
+    const use = rows.filter(function (r) {
+      return r.ok;
+    })[0];
+    ui.alert(
+      'Gemini 모델 확인 (무료 — 토큰 사용 없음)\n\n' +
+        rows.map(function (r) {
+          return (r.ok ? '✓ ' : '✗ ') + r.model + ' — ' + r.detail;
+        }).join('\n') +
+        '\n\n' + (use ? '사용할 모델: ' + use.model : '사용 가능한 모델이 없습니다. GEMINI_MODEL을 현재 Flash 모델 ID로 설정하세요.') +
+        '\n실제 JSON 생성까지 확인하려면 "테스트: PRD-001 Gemini 실제 호출"을 실행하세요 (1회 과금).'
+    );
+  } catch (e) {
+    ui.alert('Gemini 모델 확인 실패\n\n' + e.message);
+  }
 }
 
 // ===== Sheets.gs =====
@@ -1394,6 +1599,11 @@ function readProduct_(sheet, rowNumber) {
   const product = { rowNumber: rowNumber };
   Object.keys(fields).forEach(function (k) {
     product[k] = values[colOf_(map, fields[k]) - 1];
+  });
+  const optional = RF_CONFIG.PRODUCT_OPTIONAL_FIELDS;
+  Object.keys(optional).forEach(function (k) {
+    const col = colOf_(map, optional[k]);
+    product[k] = col ? values[col - 1] : '';
   });
   product.id = normalizeText(product.id);
   return product;
@@ -1514,7 +1724,8 @@ function logEvent_(level, action, productId, message, detail) {
  * URLs are intentionally blank and permission is "미확인" — they must be verified by the operator.
  *
  * FIXTURE_PRD_001_GEMINI_RESPONSE is a hand-written sample in the expected schema,
- * NOT a recorded Gemini response.
+ * NOT a recorded Gemini response. Reel 1 is the operator's approved PRD-001 storyboard
+ * (HOOK → DEMO → DEMO → BENEFIT → CTA, 23 s).
  */
 
 const FIXTURE_PRD_001_PRODUCT = {
@@ -1534,120 +1745,222 @@ const FIXTURE_PRD_001_PRODUCT = {
   status: '',
 };
 
+function fixtureReel_(concept, scenes, factsUsed) {
+  return {
+    concept: concept,
+    hook: scenes[0][2],
+    narration: scenes.map(function (s) { return s[2]; }).join(' '),
+    captions: scenes.map(function (s) { return s[2]; }),
+    scenes: scenes.map(function (s, i) {
+      return { scene_no: i + 1, beat: s[0], duration_sec: s[1], narration: s[2], visual: s[3], on_screen_text: '', flow_prompt: s[4] };
+    }),
+    facts_used: factsUsed,
+  };
+}
+
 const FIXTURE_PRD_001_GEMINI_RESPONSE = {
   reels: [
-    {
-      concept: '문제 해결: 현관 바닥에 쓰러진 우산 정리',
-      hook: '현관에 우산 또 쓰러져 있나요?',
-      narration:
-        '비 오는 날마다 현관 바닥에 우산이 굴러다닌다면, 자석형 우산꽂이를 철제 현관문에 붙여 보세요. 장우산도 접이식 우산도 한 번에 정리됩니다.',
-      captions: ['현관에 우산 또 쓰러져 있나요?', '철제 현관문에 자석으로 착', '장우산도 접이식 우산도 OK'],
-      scenes: [
-        {
-          scene_no: 1,
-          duration_sec: 3,
-          visual: '현관 바닥에 우산 두 개가 쓰러져 있는 모습',
-          on_screen_text: '현관에 우산 또 쓰러져 있나요?',
-          flow_prompt:
-            'Vertical 9:16 photorealistic shot of a narrow Korean apartment entryway floor with two wet umbrellas lying messily on tiles, soft natural daylight, no text, no logos.',
-        },
-        {
-          scene_no: 2,
-          duration_sec: 4,
-          visual: '회색 우산꽂이를 철제 현관문 아래쪽에 붙이는 손',
-          on_screen_text: '철제 현관문에 자석으로 착',
-          flow_prompt:
-            'Vertical 9:16 close-up of a hand placing a plain gray rectangular magnetic umbrella holder onto the lower part of a steel apartment front door, natural light, unbranded product, no text.',
-        },
-        {
-          scene_no: 3,
-          duration_sec: 5,
-          visual: '장우산과 접이식 우산을 차례로 꽂는 모습',
-          on_screen_text: '장우산도 접이식 우산도 OK',
-          flow_prompt:
-            'Vertical 9:16 medium shot of a person sliding a long umbrella and then a folding umbrella into a slim gray umbrella holder attached to a steel door, tidy entryway, no logos, no readable text.',
-        },
-      ],
-      facts_used: ['호환되는 철제 표면에 자석으로 부착 가능', '장우산과 접이식 우산 모두 수납 가능'],
-    },
-    {
-      concept: '구성 소개: 상단·하단 분리형 구조',
-      hook: '우산꽂이가 두 조각인 이유',
-      narration:
-        '이 우산꽂이는 상단과 하단이 분리된 구조예요. 상단은 190×55×50mm, 하단은 188×55×82mm라서 현관 공간에 맞게 붙일 수 있어요.',
-      captions: ['우산꽂이가 두 조각인 이유', '상단 190×55×50mm', '하단 188×55×82mm'],
-      scenes: [
-        {
-          scene_no: 1,
-          duration_sec: 3,
-          visual: '테이블 위에 놓인 상단·하단 두 부품',
-          on_screen_text: '우산꽂이가 두 조각인 이유',
-          flow_prompt:
-            'Vertical 9:16 top-down shot of two plain dark gray plastic pieces of an umbrella holder, a shorter top piece and a deeper bottom tray, on a light wooden table, no branding.',
-        },
-        {
-          scene_no: 2,
-          duration_sec: 4,
-          visual: '상단 부품을 들어 보이는 손',
-          on_screen_text: '상단 190×55×50mm',
-          flow_prompt:
-            'Vertical 9:16 close-up of a hand lifting a slim dark gray umbrella holder top piece toward the camera, soft studio light, neutral background, no text or logos.',
-        },
-        {
-          scene_no: 3,
-          duration_sec: 4,
-          visual: '하단 부품을 들어 보이는 손',
-          on_screen_text: '하단 188×55×82mm',
-          flow_prompt:
-            'Vertical 9:16 close-up of a hand holding a dark gray umbrella holder bottom tray piece, showing its depth, soft studio light, neutral background, no text or logos.',
-        },
-        {
-          scene_no: 4,
-          duration_sec: 4,
-          visual: '두 부품이 철제 문에 위아래로 붙어 있는 완성 모습',
-          on_screen_text: '',
-          flow_prompt:
-            'Vertical 9:16 shot of a steel apartment door with a dark gray two-piece umbrella holder attached, top piece above and bottom tray below, one umbrella standing inside, natural light.',
-        },
-      ],
-      facts_used: ['상단·하단 분리형 (상단 190×55×50mm, 하단 188×55×82mm)', '호환되는 철제 표면에 자석으로 부착 가능'],
-    },
-    {
-      concept: '인테리어 비포/애프터: 현관 색상 매칭',
-      hook: '현관 분위기에 맞춰 고르는 우산꽂이',
-      narration:
-        '현관 문 색에 맞춰 다크그레이, 그레이, 화이트 중에 골라 보세요. 철제 현관문에 붙이니 바닥이 깔끔해졌어요.',
-      captions: ['현관 분위기에 맞춰 고르기', '다크그레이 · 그레이 · 화이트', '바닥이 깔끔해진 현관'],
-      scenes: [
-        {
-          scene_no: 1,
-          duration_sec: 3,
-          visual: '우산이 바닥에 놓인 어수선한 현관 (비포)',
-          on_screen_text: '현관 분위기에 맞춰 고르기',
-          flow_prompt:
-            'Vertical 9:16 wide shot of a cluttered small Korean apartment entryway with umbrellas leaning on the wall and floor, natural morning light, no text, no logos.',
-        },
-        {
-          scene_no: 2,
-          duration_sec: 4,
-          visual: '다크그레이, 그레이, 화이트 세 가지 색상 우산꽂이 나란히',
-          on_screen_text: '다크그레이 · 그레이 · 화이트',
-          flow_prompt:
-            'Vertical 9:16 product lineup of three plain unbranded slim umbrella holders in dark gray, gray and white standing side by side on a white surface, soft even lighting.',
-        },
-        {
-          scene_no: 3,
-          duration_sec: 5,
-          visual: '정돈된 현관, 문에 붙은 우산꽂이 (애프터)',
-          on_screen_text: '바닥이 깔끔해진 현관',
-          flow_prompt:
-            'Vertical 9:16 wide shot of the same small entryway now tidy, a white umbrella holder attached to a steel front door holding umbrellas, clear floor, natural light, no text.',
-        },
-      ],
-      facts_used: ['색상: 다크그레이, 그레이, 화이트', '호환되는 철제 표면에 자석으로 부착 가능'],
-    },
+    fixtureReel_('문제 해결: 좁은 현관의 우산 자리', [
+      ['HOOK', 3, '현관 좁은 집은 우산 어디 둬요?', '좁은 현관 바닥에 젖은 장우산과 접이식 우산이 어지럽게 놓인 모습',
+        'Vertical 9:16 handheld phone footage, narrow Korean apartment entryway, several wet umbrellas lying messily on the floor tiles, soft daylight, realistic, no text, no logos.'],
+      ['DEMO', 4, '저는 그냥 문에 붙였어요.', '손으로 자석 우산꽂이를 철제 현관문 아래쪽에 붙이는 클로즈업',
+        'Vertical 9:16 close-up, a hand placing a slim dark gray magnetic umbrella holder onto the lower part of a steel apartment front door, natural light, realistic, no text.'],
+      ['DEMO', 6, '바닥 공간을 안 차지하니까', '문에 붙은 우산꽂이에 장우산과 접이식 우산을 차례로 꽂는 모습',
+        'Vertical 9:16 medium shot, a person sliding a long umbrella and then a folding umbrella into a slim dark gray holder attached to a steel front door, natural light, no text.'],
+      ['BENEFIT', 6, '현관이 훨씬 깔끔해져요.', '우산이 문에 정리되고 바닥이 비어 있는 깔끔한 현관 전체 모습',
+        'Vertical 9:16 wide shot, tidy small Korean apartment entryway, umbrellas neatly held by a holder on the steel front door, clear floor, warm daylight, no text.'],
+      ['CTA', 4, "제품 정보는 댓글에 '{키워드}' ☂️", '현관문에 붙은 우산꽂이 제품 클로즈업',
+        'Vertical 9:16 slow close-up of a slim dark gray umbrella holder mounted on a steel door with one umbrella inside, soft light, shallow depth of field, no text.'],
+    ], ['호환되는 철제 표면에 자석으로 부착 가능', '장우산과 접이식 우산 모두 수납 가능']),
+    fixtureReel_('구성 소개: 상단·하단 분리형', [
+      ['HOOK', 3, '우산꽂이가 두 조각인 이유', '두 조각으로 된 우산꽂이 부품을 양손에 하나씩 든 모습',
+        'Vertical 9:16 close-up, two hands each holding one piece of a two-piece dark gray umbrella holder in a bright entryway, realistic, no text.'],
+      ['DEMO', 5, '상단 190×55×50mm,', '상단 부품을 철제 문 위쪽에 붙이는 손',
+        'Vertical 9:16 close-up, a hand attaching the upper piece of a dark gray umbrella holder to a steel door, natural light, no text.'],
+      ['DEMO', 5, '하단 188×55×82mm, 따로 분리돼요.', '하단 부품을 철제 문 아래쪽에 붙이는 손',
+        'Vertical 9:16 close-up, a hand attaching the lower tray piece of a dark gray umbrella holder near the bottom of a steel door, natural light, no text.'],
+      ['BENEFIT', 5, '철제 문에 자석으로 착.', '위아래 부품이 붙은 문에 장우산 하나가 서 있는 모습',
+        'Vertical 9:16 medium shot, steel apartment door with a two-piece umbrella holder, a long umbrella standing in it, tidy floor, daylight, no text.'],
+      ['CTA', 4, "제품 정보는 댓글에 '{키워드}'", '문에 붙은 다크그레이 우산꽂이 클로즈업',
+        'Vertical 9:16 slow close-up of a dark gray two-piece umbrella holder on a steel door, soft light, no text.'],
+    ], ['상단·하단 분리형 (상단 190×55×50mm, 하단 188×55×82mm)', '호환되는 철제 표면에 자석으로 부착 가능']),
+    fixtureReel_('인테리어: 현관 색에 맞춰 고르기', [
+      ['HOOK', 3, '현관 분위기에 맞는 우산꽂이?', '밝은 현관 문 앞에서 우산꽂이 색상을 고민하는 손',
+        'Vertical 9:16 close-up, a hand holding a small umbrella holder against a light-colored steel front door, bright natural light, no text.'],
+      ['PROBLEM', 4, '기대 세운 우산, 자꾸 쓰러지죠.', '벽에 기대 세워 둔 우산이 미끄러져 쓰러지는 모습',
+        'Vertical 9:16 medium shot, an umbrella leaning on an entryway wall slowly sliding and falling to the floor, realistic, no text.'],
+      ['DEMO', 5, '다크그레이, 그레이, 화이트 중에', '다크그레이·그레이·화이트 우산꽂이 세 개를 나란히 보여 주는 손',
+        'Vertical 9:16 top-down shot, three plain umbrella holders in dark gray, gray and white side by side on a wooden shoe bench, soft light, no text.'],
+      ['BENEFIT', 5, '문 색에 맞춰 골라 붙이면 돼요.', '흰 철제 문에 흰색 우산꽂이가 붙어 정돈된 현관',
+        'Vertical 9:16 wide shot, white steel apartment door with a white umbrella holder holding umbrellas, tidy floor, warm light, no text.'],
+      ['CTA', 4, "제품 정보는 댓글에 '{키워드}'", '문에 붙은 흰색 우산꽂이 클로즈업',
+        'Vertical 9:16 slow close-up of a white umbrella holder on a white steel door, one umbrella inside, soft light, no text.'],
+    ], ['색상: 다크그레이, 그레이, 화이트', '호환되는 철제 표면에 자석으로 부착 가능']),
   ],
 };
+
+// ===== FlowPrompts.gs =====
+/**
+ * Google Flow scene prompts, generated by code (no API call, no cost) from the APPROVED script and the
+ * verified product facts. Written to REELS.'Flow 장면 프롬프트' on SCRIPT_APPROVED and cleared when the
+ * script changes, so Flow credits are only ever spent on an approved storyboard.
+ * One 8-second clip per scene; the renderer takes several short cuts from each clip.
+ */
+
+/** First colour listed in a "색상: …" fact, so every scene shows the same variant. */
+function primaryColour_(facts) {
+  for (let i = 0; i < facts.length; i++) {
+    const m = facts[i].match(/^색상\s*[:：]\s*(.+)$/);
+    if (m) return normalizeText(m[1].split(/[,，/]/)[0]);
+  }
+  return '';
+}
+
+function productAppearance_(product, facts) {
+  const parts = [];
+  if (normalizeText(product.appearance)) parts.push(normalizeText(product.appearance));
+  const colour = primaryColour_(facts);
+  if (colour) parts.push('주 색상 ' + colour + ' (모든 장면에서 같은 색)');
+  facts.filter(function (f) {
+    return /\d+\s*[×xX]\s*\d+/.test(f);
+  }).forEach(function (f) {
+    parts.push('크기: ' + f);
+  });
+  return parts.join('; ');
+}
+
+/** Clips needed so every part of a scene fits one clip (minus margin). 1 for valid storyboards. */
+function flowClipParts(sceneSec) {
+  const usable = RF_CONFIG.FLOW.CLIP_SEC - RF_CONFIG.FLOW.CLIP_MARGIN_SEC;
+  return Math.max(1, Math.ceil(Number(sceneSec) / usable - 1e-9));
+}
+
+/** File name of part k (1-based) of scene n: S3.mp4, S3b.mp4, S3c.mp4 … */
+function flowClipFile(sceneNo, part) {
+  return 'S' + sceneNo + (part > 1 ? String.fromCharCode(96 + part) : '') + '.mp4';
+}
+
+/**
+ * Returns [{ scene, part, parts, file, beat, clipSec, scriptedSec, coversSec, prompt }] for the reel's
+ * current script — one entry per Flow clip (normally one per scene).
+ * Uses only PRODUCTS.확인된 기능 (+ optional 제품 외형) — never invented attributes.
+ */
+function buildFlowScenePrompts(row, product) {
+  const reel = rowToReel(row);
+  if (!reel.scenes || !reel.scenes.length) return [];
+  const F = RF_CONFIG.FLOW;
+  const facts = parseConfirmedFeatures(product.features);
+  const appearance = productAppearance_(product, facts);
+  const n = reel.scenes.length;
+  const out = [];
+  reel.scenes.forEach(function (s, i) {
+    const beat = s.beat || (i === 0 ? 'HOOK' : i === n - 1 ? 'CTA' : 'DEMO');
+    const parts = flowClipParts(s.duration_sec);
+    for (let part = 1; part <= parts; part++) {
+      const prompt = [
+        'Google Flow · ' + cellText_(row['릴스ID']) + ' · scene ' + (i + 1) + '/' + n + ' · ' + beat + ' · ' + F.CLIP_SEC + '-second clip, vertical 9:16, photorealistic',
+        'PRODUCT (identical in every scene): ' + normalizeText(product.name) + (appearance ? ' — ' + appearance : '') + '.',
+        'Verified features only: ' + facts.join(' / ') + '. Do not add other features, logos, brand names or text on the product.',
+        'SCENE: ' + normalizeText(s.flow_prompt) + ' (' + normalizeText(s.visual) + ')',
+        'PRODUCT INTERACTION: ' + F.INTERACTION[beat] + '.',
+        'CAMERA: ' + F.CAMERA[beat] + '. One continuous take, no cuts, transitions or effects inside the clip.',
+        'LIGHTING & ENVIRONMENT: ' + F.ENVIRONMENT + '. No on-screen text, subtitles, watermarks or logos.',
+        parts > 1 ? 'PART ' + part + ' of ' + parts + ': ' + (part === 1 ? 'the beginning of this scene.' : 'continue the same action, place and lighting from where part ' + (part - 1) + ' ended.') : '',
+        'DURATION: ' + F.CLIP_SEC + ' seconds. The editor uses about ' + +(Number(s.duration_sec) / parts).toFixed(1) + ' s of it as several short cuts, so let the framing change during the clip.',
+        'CONSISTENCY: same product colour, shape and size as the other scenes; same location, door, floor and time of day; ' +
+          'if a person appears, same clothing and hands in every scene. If Flow accepts a reference image, use a photo of the real product you are allowed to use.',
+      ].filter(Boolean).join('\n');
+      out.push({
+        scene: i + 1, part: part, parts: parts, file: flowClipFile(i + 1, part), beat: beat, clipSec: F.CLIP_SEC,
+        scriptedSec: Number(s.duration_sec), coversSec: +(Number(s.duration_sec) / parts).toFixed(2), prompt: prompt,
+      });
+    }
+  });
+  return out;
+}
+
+// ===== RenderJob.gs =====
+/**
+ * Render jobs: the ONLY way the renderer (Mac now, cloud later) receives a script.
+ *
+ * A job is issued only for a reel that is VIDEO_IN_PRODUCTION, whose approved script is intact
+ * and whose media permission is verified. The job is signed (HMAC-SHA256, Script Property
+ * RF_RENDER_SECRET); the renderer refuses unsigned, tampered, expired or unapproved jobs
+ * BEFORE making any paid API call (TTS). Pure functions here; signing lives in WebApp.gs.
+ */
+
+const RF_RENDER_JOB_VERSION = 1;
+const RF_RENDER_JOB_TTL_HOURS = 72;
+
+/** Returns '' if a render job may be issued for this row, otherwise the reason. */
+function renderJobBlocker(row, product) {
+  const status = reelStatus(row);
+  if (status !== 'VIDEO_IN_PRODUCTION') {
+    return '렌더 작업은 "영상 제작 중" 상태에서만 만들 수 있습니다 (현재: ' + (RF_STATUS_LABELS[status] || status || '상태 없음') + '). 대본 승인 후 "영상 제작 시작"을 누르세요.';
+  }
+  if (!isApprovedScriptIntact(row)) {
+    return '승인된 대본과 현재 대본이 다릅니다. 승인 취소 후 다시 승인하세요.';
+  }
+  if (!isPermissionApproved(product.permission)) {
+    return 'PRODUCTS의 "영상 사용 허가 상태"가 확인되지 않았습니다.';
+  }
+  return '';
+}
+
+/**
+ * Job payload (as a JSON string, so the signature covers exact bytes).
+ * Contains only what rendering needs: no affiliate URL, no API keys.
+ */
+function buildRenderJobPayload(row, product, issuedAtIso, ttlHours) {
+  const blocker = renderJobBlocker(row, product);
+  if (blocker) throw new Error(blocker);
+  const cells = {};
+  RF_SCRIPT_FIELDS.forEach(function (f) {
+    cells[f] = cellText_(row[f]);
+  });
+  const issued = new Date(issuedAtIso);
+  const expires = new Date(issued.getTime() + (ttlHours || RF_RENDER_JOB_TTL_HOURS) * 3600 * 1000);
+  return JSON.stringify({
+    jobVersion: RF_RENDER_JOB_VERSION,
+    reelId: cellText_(row['릴스ID']),
+    productId: cellText_(row['상품ID']),
+    productName: normalizeText(product.name),
+    status: 'VIDEO_IN_PRODUCTION',
+    scriptVersion: scriptVersionOf(row),
+    approvedScriptVersion: parseInt(cellText_(row['승인 대본 버전']), 10),
+    approvedHash: cellText_(row['승인 대본 해시']),
+    nextVideoVersion: videoVersionOf(row) + 1,
+    permission: normalizeText(product.permission),
+    // What the renderer needs for the shot list; facts are already public product claims.
+    product: {
+      name: normalizeText(product.name),
+      facts: parseConfirmedFeatures(product.features),
+      appearance: normalizeText(product.appearance),
+    },
+    flowPrompts: (function () {
+      try {
+        const v = JSON.parse(cellText_(row['Flow 장면 프롬프트']) || '[]');
+        if (Array.isArray(v) && v.length) return v;
+      } catch (e) {
+        // fall through: approved before prompts existed → generate now (free)
+      }
+      return buildFlowScenePrompts(row, product);
+    })(),
+    issuedAt: issued.toISOString(),
+    expiresAt: expires.toISOString(),
+    script: cells,
+  });
+}
+
+/** Hex encoding of a signed byte array (Apps Script Utilities returns -128..127). */
+function bytesToHex_(bytes) {
+  return bytes
+    .map(function (b) {
+      const v = (b < 0 ? b + 256 : b).toString(16);
+      return v.length === 1 ? '0' + v : v;
+    })
+    .join('');
+}
 
 // ===== Code.gs =====
 /**
@@ -1671,7 +1984,9 @@ function addReelsFactoryMenu() {
     .addSeparator()
     .addItem('시트 준비 (REELS / PERFORMANCE / LOG / AUDIT)', 'setupSheets')
     .addItem('iPhone 대시보드 링크 보기', 'showDashboardLink')
+    .addItem('렌더 키 보기 (Mac 렌더러 설정용)', 'showRenderSecret')
     .addItem('Gemini API 키 설정', 'promptForGeminiApiKey')
+    .addItem('Gemini 모델 확인 (무료)', 'showGeminiModelCheck')
     .addSeparator()
     .addItem('테스트: PRD-001 오프라인 검증', 'runOfflineFixtureTest')
     .addItem('테스트: PRD-001 Gemini 실제 호출 (시트에 쓰지 않음)', 'runLiveGeminiTestPRD001')
@@ -1773,7 +2088,7 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
   for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
     const raw = callGemini_(buildGeminiPrompt(product, lastErrors));
     const result = prepareReelRecords(product, raw, existingIds, existingKeywords, {
-      model: getGeminiModel(),
+      model: RF_GEMINI_STATE.lastModel || getGeminiModel(),
       generatedAt: new Date(),
     });
     if (!result.errors.length) return { records: result.records, attempts: attempt };
@@ -1838,14 +2153,39 @@ function generateScriptsForProduct_(ss, rowNumber, options) {
   const reelsSheet = ensureSheet_(ss, RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS);
   const reelsMap = getHeaderMap_(reelsSheet);
   const existingIds = readColumn_(reelsSheet, reelsMap, '릴스ID');
-  const existingKeywords = readColumn_(reelsSheet, reelsMap, 'ManyChat 키워드');
+  const existingKeywords = readRecords_(reelsSheet, ['ManyChat 키워드', '상품ID'])
+    .map(function (r) {
+      return { keyword: normalizeText(r['ManyChat 키워드']), productId: normalizeText(r['상품ID']) };
+    })
+    .filter(function (r) {
+      return r.keyword;
+    });
   const dupIds = findDuplicates(existingIds);
   if (dupIds.length) {
     throw new Error('REELS에 중복된 릴스ID가 있습니다: ' + dupIds.join(', ') + '. 정리한 뒤 다시 실행하세요.');
   }
-  const dupKeywords = findDuplicates(existingKeywords);
-  if (dupKeywords.length) {
-    throw new Error('REELS에 중복된 ManyChat 키워드가 있습니다: ' + dupKeywords.join(', ') + '. 정리한 뒤 다시 실행하세요.');
+  // A keyword may repeat within one product (same link) but must never point to two products.
+  const byKeyword = {};
+  existingKeywords.forEach(function (k) {
+    const key = k.keyword.toUpperCase();
+    (byKeyword[key] = byKeyword[key] || {})[k.productId] = true;
+  });
+  const clashes = Object.keys(byKeyword).filter(function (k) {
+    return Object.keys(byKeyword[k]).length > 1;
+  });
+  if (clashes.length) {
+    throw new Error('REELS에서 같은 ManyChat 키워드가 여러 상품에 쓰이고 있습니다: ' + clashes.join(', ') + '. 정리한 뒤 다시 실행하세요.');
+  }
+
+  // Check the product keyword before paying for Gemini: it must not belong to another product.
+  const productKeyword = normalizeText(product.keyword).toUpperCase();
+  if (productKeyword) {
+    const owner = existingKeywords.filter(function (k) {
+      return k.keyword.toUpperCase() === productKeyword && k.productId !== product.id;
+    })[0];
+    if (owner) {
+      throw new Error('ManyChat 키워드 "' + product.keyword + '"가 이미 다른 릴스·상품(' + owner.productId + ')에서 쓰이고 있습니다. 상품마다 다른 키워드를 쓰세요.');
+    }
   }
 
   const already = existingIds.filter(function (id) {
@@ -2109,7 +2449,7 @@ function api_(fn) {
 }
 
 function productFromRecord_(rec) {
-  const f = RF_CONFIG.PRODUCT_FIELDS;
+  const f = Object.assign({}, RF_CONFIG.PRODUCT_FIELDS, RF_CONFIG.PRODUCT_OPTIONAL_FIELDS);
   const p = { rowNumber: rec._row };
   Object.keys(f).forEach(function (k) {
     p[k] = rec[f[k]];
@@ -2126,7 +2466,10 @@ function loadData_(ss) {
     return f[k];
   });
   requireHeaders_(productsSheet, productHeaders);
-  const products = readRecords_(productsSheet, productHeaders)
+  const optionalHeaders = Object.keys(RF_CONFIG.PRODUCT_OPTIONAL_FIELDS).map(function (k) {
+    return RF_CONFIG.PRODUCT_OPTIONAL_FIELDS[k];
+  });
+  const products = readRecords_(productsSheet, productHeaders.concat(optionalHeaders))
     .map(productFromRecord_)
     .filter(function (p) {
       return p.id;
@@ -2188,6 +2531,15 @@ function allowedActions_(status) {
   });
 }
 
+function parseFlowScenePrompts_(row) {
+  try {
+    const v = JSON.parse(cellText_(row['Flow 장면 프롬프트']) || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 function reelDetail_(ss, reelId) {
   const data = loadData_(ss);
   const found = findReel_(data, reelId);
@@ -2228,6 +2580,7 @@ function reelDetail_(ss, reelId) {
     keyword: cellText_(row['ManyChat 키워드']),
     disclosure: cellText_(row['광고 표기']),
     flowPrompts: cellText_(row['Flow 프롬프트']),
+    flowScenePrompts: parseFlowScenePrompts_(row),
     flowStatus: cellText_(row['Flow 생성']),
     approvedVersion: cellText_(row['승인 대본 버전']),
     approvedIntact: isApprovedScriptIntact(row),
@@ -2389,7 +2742,7 @@ function apiRegenerateScript(reelId, input) {
         expectedScriptVersion: scriptVersionOf(found.row),
         reel: newReel,
         note: note,
-      }, 'Gemini (' + getGeminiModel() + ')');
+      }, 'Gemini (' + (RF_GEMINI_STATE.lastModel || getGeminiModel()) + ')');
     });
     return { detail: reelDetail_(ss, id) };
   });
@@ -2415,5 +2768,65 @@ function apiGetPublishingPack(reelId) {
   });
 }
 
+// ---------------------------------------------------------------- render jobs
+
+/** Shared HMAC key between this script and the renderer. Created on first use. */
+function getRenderSecret_() {
+  const props = PropertiesService.getScriptProperties();
+  let secret = props.getProperty('RF_RENDER_SECRET');
+  if (!secret) {
+    secret = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+    props.setProperty('RF_RENDER_SECRET', secret);
+  }
+  return secret;
+}
+
+function signRenderJob_(payload) {
+  return bytesToHex_(Utilities.computeHmacSha256Signature(payload, getRenderSecret_(), Utilities.Charset.UTF_8));
+}
+
+/**
+ * Issues a signed render job for an approved reel in production. No paid API is called here;
+ * the renderer spends TTS characters only after verifying this signature.
+ */
+function apiGetRenderJob(reelId) {
+  return api_(function (user) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const data = loadData_(ss);
+    const found = findReel_(data, normalizeText(reelId));
+    const payload = buildRenderJobPayload(found.row, found.product, new Date().toISOString(), RF_RENDER_JOB_TTL_HOURS);
+    const job = JSON.parse(payload);
+    appendAudit_(ss, [{
+      '일시': new Date(),
+      '릴스ID': job.reelId,
+      '상품ID': job.productId,
+      '작업': 'RENDER_JOB_ISSUED',
+      '이전 상태': job.status,
+      '새 상태': job.status,
+      '대본 버전': job.scriptVersion,
+      '영상 버전': job.nextVideoVersion - 1,
+      '작업자': user,
+      '메모': '만료: ' + job.expiresAt,
+    }]);
+    return {
+      fileName: job.reelId + '_v' + job.scriptVersion + '.render-job.json',
+      jobFile: JSON.stringify({ payload: payload, signature: signRenderJob_(payload) }, null, 2),
+    };
+  });
+}
+
+/** Menu: shows the render key once so the operator can put it in renderer/.env on the Mac. */
+function showRenderSecret() {
+  const ui = SpreadsheetApp.getUi();
+  const secret = escapeHtml_(getRenderSecret_());
+  ui.showModalDialog(
+    HtmlService.createHtmlOutput(
+      '<p style="font:14px sans-serif">Mac의 <code>renderer/.env</code> 파일에 아래 한 줄을 넣으세요. 이 키가 있어야 승인된 렌더 작업만 실행됩니다. 다른 사람과 공유하지 마세요.</p>' +
+        '<pre style="font:13px monospace;white-space:pre-wrap;word-break:break-all;background:#f3f3f3;padding:8px">RF_RENDER_SECRET=' + secret + '</pre>'
+    ).setWidth(460).setHeight(200),
+    '렌더 키 (Mac 설정용)'
+  );
+}
+
 // ===== Dashboard.html (embedded) =====
-const RF_DASHBOARD_HTML = "<!doctype html>\n<html lang=\"ko\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n<base target=\"_top\">\n<title>릴스 팩토리</title>\n<style>\n  :root {\n    --bg: #f2f2f7; --card: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --line: #d1d1d6;\n    --accent: #0a66d6; --ok: #1a7f37; --warn: #a15c00; --bad: #c62828; --chip: #e9e9ef;\n  }\n  @media (prefers-color-scheme: dark) {\n    :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --muted: #a1a1a6; --line: #38383a;\n      --accent: #4c9aff; --ok: #3fb950; --warn: #e3a008; --bad: #ff6b6b; --chip: #2c2c2e; }\n  }\n  * { box-sizing: border-box; }\n  html, body { margin: 0; background: var(--bg); color: var(--text);\n    font: 16px/1.45 -apple-system, BlinkMacSystemFont, \"Apple SD Gothic Neo\", \"Noto Sans KR\", sans-serif; }\n  header { position: sticky; top: 0; z-index: 5; background: var(--bg);\n    padding: calc(env(safe-area-inset-top) + 10px) 16px 8px; border-bottom: 1px solid var(--line); }\n  header h1 { font-size: 20px; margin: 0; display: flex; align-items: center; gap: 8px; }\n  header .user { font-size: 12px; color: var(--muted); }\n  main { padding: 12px 16px calc(env(safe-area-inset-bottom) + 90px); max-width: 720px; margin: 0 auto; }\n  nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 5; display: flex; background: var(--card);\n    border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }\n  nav button { flex: 1; border: 0; background: none; color: var(--muted); padding: 8px 2px 10px; font-size: 12px;\n    min-height: 56px; position: relative; }\n  nav button.on { color: var(--accent); font-weight: 600; }\n  nav .n { position: absolute; top: 4px; right: 18%; background: var(--bad); color: #fff; border-radius: 9px;\n    font-size: 11px; min-width: 18px; padding: 0 5px; }\n  nav .ico { display: block; font-size: 20px; line-height: 24px; }\n  .card { background: var(--card); border-radius: 14px; padding: 14px; margin: 0 0 12px; border: 1px solid var(--line); }\n  .card.tap { cursor: pointer; }\n  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }\n  .muted { color: var(--muted); font-size: 13px; }\n  .chip { display: inline-block; background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 12px; }\n  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }\n  h2 { font-size: 17px; margin: 18px 0 8px; }\n  h3 { font-size: 15px; margin: 14px 0 6px; }\n  .hook { font-weight: 600; font-size: 17px; margin: 6px 0; }\n  .pre { white-space: pre-wrap; word-break: break-word; }\n  .scene { border-top: 1px solid var(--line); padding: 10px 0 2px; }\n  .flow { font-size: 15px; background: var(--chip); border-radius: 8px; padding: 8px; white-space: pre-wrap; word-break: break-word; }\n  .flow.mono { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }\n  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }\n  .btns.one { grid-template-columns: 1fr; }\n  button.b { min-height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--card);\n    color: var(--text); font-size: 16px; font-weight: 600; padding: 8px 12px; }\n  button.b.primary { background: var(--accent); color: #fff; border-color: var(--accent); }\n  button.b.ok { background: var(--ok); color: #fff; border-color: var(--ok); }\n  button.b.bad { color: var(--bad); }\n  button.b:disabled { opacity: .5; }\n  button.link { border: 0; background: none; color: var(--accent); font-size: 15px; padding: 8px 0; min-height: 44px; }\n  textarea, input[type=text], input[type=url] { width: 100%; font: inherit; font-size: 16px; color: var(--text);\n    background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }\n  textarea { min-height: 88px; }\n  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }\n  .banner { border-radius: 12px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; white-space: pre-wrap; }\n  .banner.warn { background: rgba(227,160,8,.15); } .banner.bad { background: rgba(198,40,40,.13); }\n  .banner.ok { background: rgba(26,127,55,.13); }\n  .tp { display: grid; grid-template-columns: 28px 1fr; gap: 4px 8px; align-items: start; padding: 6px 0; }\n  .tp .dot { width: 24px; height: 24px; border-radius: 12px; display: grid; place-items: center; font-size: 13px;\n    background: var(--chip); }\n  .tp .dot.done { background: var(--ok); color: #fff; }\n  .video { position: relative; width: 100%; max-width: 360px; aspect-ratio: 9 / 16; margin: 8px auto;\n    background: #000; border-radius: 12px; overflow: hidden; }\n  .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }\n  .tabs2 { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }\n  .tabs2 button { flex: none; min-height: 36px; border-radius: 999px; border: 1px solid var(--line);\n    background: var(--card); color: var(--text); padding: 4px 12px; font-size: 14px; }\n  .tabs2 button.on { background: var(--accent); color: #fff; border-color: var(--accent); }\n  details summary { min-height: 44px; display: flex; align-items: center; color: var(--accent); cursor: pointer; }\n  .hist { font-size: 13px; border-top: 1px solid var(--line); padding: 6px 0; }\n  .empty { text-align: center; color: var(--muted); padding: 32px 0; }\n  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 72px); z-index: 9;\n    background: #333; color: #fff; border-radius: 12px; padding: 12px; font-size: 14px; display: none; white-space: pre-wrap; }\n  #busy { position: fixed; inset: 0; z-index: 8; background: rgba(0,0,0,.25); display: none; place-items: center; }\n  #busy div { background: var(--card); padding: 16px 20px; border-radius: 12px; }\n</style>\n</head>\n<body>\n<header>\n  <h1 id=\"title\">릴스 팩토리</h1>\n  <div class=\"user\" id=\"user\"></div>\n</header>\n<main id=\"main\"><div class=\"empty\">불러오는 중…</div></main>\n<nav id=\"nav\"></nav>\n<div id=\"toast\"></div>\n<div id=\"busy\"><div id=\"busyText\">처리 중…</div></div>\n\n<script>\n'use strict';\n// ---------------------------------------------------------------- helpers\n// All data is rendered with textContent / attributes, never parsed as HTML.\nfunction h(tag, attrs, children) {\n  const el = document.createElement(tag);\n  Object.keys(attrs || {}).forEach(function (k) {\n    const v = attrs[k];\n    if (v == null || v === false) return;\n    if (k === 'class') el.className = v;\n    else if (k === 'text') el.textContent = v;\n    else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v);\n    else el.setAttribute(k, v === true ? '' : v);\n  });\n  (children || []).forEach(function (c) {\n    if (c == null || c === false) return;\n    el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);\n  });\n  return el;\n}\nfunction clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }\nfunction fmt(v) {\n  if (!v) return '';\n  const d = new Date(v);\n  if (isNaN(d)) return String(v);\n  const p = function (n) { return (n < 10 ? '0' : '') + n; };\n  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());\n}\nfunction toast(msg, ms) {\n  const t = document.getElementById('toast');\n  t.textContent = msg; t.style.display = 'block';\n  clearTimeout(toast._t); toast._t = setTimeout(function () { t.style.display = 'none'; }, ms || 3500);\n}\nfunction busy(on, text) {\n  document.getElementById('busyText').textContent = text || '처리 중…';\n  document.getElementById('busy').style.display = on ? 'grid' : 'none';\n}\nfunction call(name) {\n  const args = Array.prototype.slice.call(arguments, 1);\n  return new Promise(function (resolve) {\n    const runner = google.script.run\n      .withSuccessHandler(function (res) { resolve(res || { ok: false, error: '빈 응답' }); })\n      .withFailureHandler(function (err) { resolve({ ok: false, error: (err && err.message) || String(err) }); });\n    runner[name].apply(runner, args);\n  });\n}\nfunction copyText(text) {\n  function fallback() {\n    const ta = h('textarea', { readonly: true, style: 'position:fixed;top:0;left:0;opacity:0' });\n    ta.value = text; document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);\n    let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }\n    document.body.removeChild(ta); return ok;\n  }\n  const done = function (ok) { toast(ok ? '복사했습니다' : '복사하지 못했습니다. 길게 눌러 직접 복사하세요.'); };\n  if (navigator.clipboard && navigator.clipboard.writeText) {\n    navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallback()); });\n  } else { done(fallback()); }\n}\nfunction copyBlock(label, text, mono) {\n  return h('div', {}, [\n    h('div', { class: 'row', style: 'justify-content:space-between' }, [\n      h('span', { class: 'muted', text: label }),\n      h('button', { class: 'link', type: 'button', onclick: function () { copyText(text); }, text: '복사' }),\n    ]),\n    h('div', { class: 'flow' + (mono ? ' mono' : ''), text: text }),\n  ]);\n}\n\n// ---------------------------------------------------------------- state\nconst TABS = [\n  { key: 'script', ico: '📝', label: '대본', statuses: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], badge: ['SCRIPT_REVIEW_PENDING'] },\n  { key: 'make', ico: '🎬', label: '제작', statuses: ['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'], badge: ['VIDEO_FAILED'] },\n  { key: 'video', ico: '▶️', label: '영상', statuses: ['VIDEO_REVIEW_PENDING'], badge: ['VIDEO_REVIEW_PENDING'] },\n  { key: 'publish', ico: '📤', label: '게시', statuses: ['VIDEO_APPROVED', 'READY_TO_PUBLISH'], badge: ['READY_TO_PUBLISH', 'VIDEO_APPROVED'] },\n  { key: 'products', ico: '🛍️', label: '상품' },\n  { key: 'done', ico: '✅', label: '기록', statuses: ['COMPLETED', 'SCRIPT_REJECTED', 'VIDEO_REJECTED', ''] },\n];\nconst S = { tab: 'script', dash: null, detail: null, mode: 'view' };\n\nfunction tabFor(status) {\n  for (let i = 0; i < TABS.length; i++) if (TABS[i].statuses && TABS[i].statuses.indexOf(status) !== -1) return TABS[i].key;\n  return 'done';\n}\nfunction statusChip(status, label) {\n  const cls = /REJECTED|FAILED/.test(status) ? 'bad' : /APPROVED|READY|COMPLETED/.test(status) ? 'ok' : 'warn';\n  return h('span', { class: 'chip ' + cls, text: label || status || '상태 없음' });\n}\n\n// ---------------------------------------------------------------- loading\nfunction loadDashboard() {\n  return call('apiGetDashboard').then(function (res) {\n    if (!res.ok) { renderFatal(res.error); return; }\n    S.dash = res;\n    document.getElementById('user').textContent = res.user + ' · Google Sheets 기준';\n    renderNav(); if (!S.detail) renderList();\n  });\n}\nfunction openReel(reelId) {\n  busy(true, '불러오는 중…');\n  return call('apiGetReel', reelId).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 6000); return; }\n    S.detail = res.detail; S.mode = 'view'; renderDetail(); window.scrollTo(0, 0);\n  });\n}\n// Reloads list data (badges, sibling chips) without leaving the open reel.\nfunction refreshAround() {\n  return loadDashboard().then(function () { if (S.detail && S.mode === 'view') renderDetail(); });\n}\nfunction backToList() { S.detail = null; S.mode = 'view'; loadDashboard().then(renderList); window.scrollTo(0, 0); }\n\nfunction renderFatal(msg) {\n  clear(document.getElementById('main')).appendChild(h('div', { class: 'banner bad', text: msg }));\n}\n\n// ---------------------------------------------------------------- nav + lists\nfunction renderNav() {\n  const nav = clear(document.getElementById('nav'));\n  const reels = (S.dash && S.dash.reels) || [];\n  TABS.forEach(function (t) {\n    const n = t.badge ? reels.filter(function (r) { return t.badge.indexOf(r.status) !== -1; }).length : 0;\n    nav.appendChild(h('button', {\n      type: 'button', class: S.tab === t.key && !S.detail ? 'on' : '',\n      onclick: function () { S.tab = t.key; S.detail = null; renderNav(); renderList(); window.scrollTo(0, 0); },\n    }, [h('span', { class: 'ico', text: t.ico }), t.label, n ? h('span', { class: 'n', text: String(n) }) : null]));\n  });\n}\n\nfunction warningsBanner(list) {\n  return (list || []).map(function (w) { return h('div', { class: 'banner warn', text: '⚠ ' + w }); });\n}\n\nfunction renderList() {\n  const main = clear(document.getElementById('main'));\n  const tab = TABS.filter(function (t) { return t.key === S.tab; })[0];\n  document.getElementById('title').textContent = '릴스 팩토리 · ' + tab.label;\n  warningsBanner(S.dash.warnings).forEach(function (b) { main.appendChild(b); });\n  if (tab.key === 'products') { renderProducts(main); return; }\n  const reels = S.dash.reels.filter(function (r) { return tabFor(r.status) === tab.key; });\n  const intro = {\n    script: '② 대본을 검토하세요. 승인된 대본 버전만 영상 제작에 쓰입니다.',\n    make: 'Google Flow 클립은 수동 생성입니다. 프롬프트를 복사해 Flow에서 만든 뒤, 완성 MP4를 Drive에 올려 등록하세요.',\n    video: '③ 완성 영상을 재생해 보고 승인/수정 요청/반려하세요.',\n    publish: '④ 게시 자료를 복사해 직접 인스타그램에 올리고 ManyChat을 설정한 뒤 확인을 누르세요. 자동 게시는 하지 않습니다.',\n    done: '완료·반려된 릴스와 상태 확인이 필요한 행입니다.',\n  }[tab.key];\n  main.appendChild(h('p', { class: 'muted', text: intro }));\n  if (!reels.length) { main.appendChild(h('div', { class: 'empty', text: '항목이 없습니다' })); return; }\n  reels.forEach(function (r) {\n    main.appendChild(h('div', { class: 'card tap', role: 'button', tabindex: '0', onclick: function () { openReel(r.reelId); } }, [\n      h('div', { class: 'row', style: 'justify-content:space-between' }, [\n        h('strong', { text: r.reelId }), statusChip(r.status, r.statusLabel),\n      ]),\n      h('div', { class: 'muted', text: r.productName + ' · 대본 v' + r.scriptVersion + (r.videoVersion ? ' · 영상 v' + r.videoVersion : '') }),\n      h('div', { class: 'hook', text: r.hook }),\n      h('div', { class: 'muted', text: r.concept }),\n      r.error ? h('div', { class: 'banner bad', style: 'margin:8px 0 0', text: r.error }) : null,\n    ]));\n  });\n}\n\nfunction renderProducts(main) {\n  main.appendChild(h('p', { class: 'muted', text: '① 상품 등록·제휴 링크·확인된 기능·영상 허가는 Google Sheets PRODUCTS에서 입력합니다. 여기서는 준비 상태를 확인하고 대본 생성을 요청할 수 있습니다.' }));\n  if (!S.dash.products.length) { main.appendChild(h('div', { class: 'empty', text: 'PRODUCTS에 상품이 없습니다' })); return; }\n  S.dash.products.forEach(function (p) {\n    const ready = p.factsCount > 0 && !p.duplicate;\n    main.appendChild(h('div', { class: 'card' }, [\n      h('div', { class: 'row', style: 'justify-content:space-between' }, [h('strong', { text: p.id }), h('span', { class: 'muted', text: '릴스 ' + p.reelCount + '개' })]),\n      h('div', { text: p.name }),\n      h('div', { class: 'row', style: 'margin-top:6px' }, [\n        h('span', { class: 'chip ' + (p.factsCount ? 'ok' : 'bad'), text: '확인된 기능 ' + p.factsCount }),\n        h('span', { class: 'chip ' + (p.affiliateUrlOk ? 'ok' : 'warn'), text: p.affiliateUrlOk ? '제휴 링크 ✓' : '제휴 링크 필요' }),\n        h('span', { class: 'chip ' + (p.permissionOk ? 'ok' : 'warn'), text: '영상 허가: ' + p.permission }),\n        p.duplicate ? h('span', { class: 'chip bad', text: '상품ID 중복' }) : null,\n      ]),\n      h('div', { class: 'btns one' }, [h('button', {\n        class: 'b', type: 'button', disabled: !ready,\n        onclick: function () { generate(p, false); },\n        text: p.reelCount ? '대본 3개 추가 생성' : '대본 3개 생성 (Gemini)',\n      })]),\n    ]));\n  });\n}\n\nfunction generate(p, allowAdditional) {\n  if (!allowAdditional && !confirm(p.id + ' 대본 3개를 Gemini로 생성할까요? (API 호출 1~2회)')) return;\n  busy(true, 'Gemini로 대본 생성 중… (최대 1분)');\n  call('apiGenerateScripts', p.id, allowAdditional).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    if (res.needsConfirm) {\n      if (confirm('이미 릴스 ' + res.needsConfirm + '개가 있습니다. 3개를 추가로 생성할까요?')) generate(p, true);\n      return;\n    }\n    toast('생성 완료: ' + res.ids.join(', '));\n    S.tab = 'script'; loadDashboard().then(function () { renderNav(); renderList(); });\n  });\n}\n\n// ---------------------------------------------------------------- detail\nfunction act(action, input, confirmText) {\n  const d = S.detail;\n  if (confirmText && !confirm(confirmText)) return;\n  const base = { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion, expectedVideoVersion: d.summary.videoVersion };\n  busy(true);\n  call('apiAction', d.summary.reelId, action, Object.assign(base, input || {})).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; S.mode = 'view'; renderDetail();\n    toast(res.notice || '저장했습니다 (REELS·AUDIT 기록)', res.notice ? 8000 : 2500);\n    refreshAround();\n  });\n}\nfunction askNote(promptText, required) {\n  const v = prompt(promptText, '');\n  if (v === null) return null;\n  if (required && !v.trim()) { toast('메모(사유)를 입력해야 합니다.'); return null; }\n  return v.trim();\n}\n\nfunction renderDetail() {\n  const d = S.detail;\n  const main = clear(document.getElementById('main'));\n  renderNav();\n  document.getElementById('title').textContent = d.summary.reelId;\n  main.appendChild(h('button', { class: 'link', type: 'button', onclick: backToList, text: '‹ 목록' }));\n  warningsBanner(d.warnings).forEach(function (b) { main.appendChild(b); });\n\n  // Sibling versions (the 3 scripts generated for the same product).\n  const siblings = (S.dash ? S.dash.reels : []).filter(function (r) { return r.productId === d.product.id; });\n  if (siblings.length > 1) {\n    main.appendChild(h('div', { class: 'tabs2' }, siblings.map(function (r) {\n      return h('button', { type: 'button', class: r.reelId === d.summary.reelId ? 'on' : '', onclick: function () { openReel(r.reelId); }, text: r.reelId.replace(d.product.id + '-', '') + ' · ' + r.statusLabel });\n    })));\n  }\n\n  main.appendChild(h('div', { class: 'card' }, [\n    h('div', { class: 'row', style: 'justify-content:space-between' }, [h('strong', { text: d.product.name }), statusChip(d.summary.status, d.summary.statusLabel)]),\n    h('div', { class: 'muted', text: '대본 v' + d.summary.scriptVersion + (d.approvedVersion ? ' · 승인 v' + d.approvedVersion + (d.approvedIntact ? '' : ' (승인 후 변경됨!)') : '') + (d.summary.videoVersion ? ' · 영상 v' + d.summary.videoVersion : '') }),\n    d.summary.error ? h('div', { class: 'banner bad', style: 'margin:8px 0 0', text: d.summary.error }) : null,\n  ]));\n\n  if (S.mode === 'edit') { renderEditor(main); return; }\n\n  if (d.video && ['VIDEO_REVIEW_PENDING', 'VIDEO_APPROVED', 'READY_TO_PUBLISH', 'COMPLETED', 'VIDEO_CHANGES_REQUESTED', 'VIDEO_REJECTED'].indexOf(d.summary.status) !== -1) {\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '완성 영상 v' + d.summary.videoVersion }),\n      h('div', { class: 'video' }, [h('iframe', { src: d.video.previewUrl, allow: 'autoplay; fullscreen', title: '영상 미리보기' })]),\n      h('a', { href: d.video.url, target: '_blank', rel: 'noopener', text: 'Google Drive에서 열기 ↗' }),\n      h('div', { class: 'muted', text: '미리보기가 안 보이면 Drive에서 열어 재생하세요 (같은 Google 계정 로그인 필요).' }),\n    ]));\n  }\n\n  renderActions(main);\n\n  // Product facts (what the script may claim).\n  main.appendChild(h('div', { class: 'card' }, [\n    h('h3', { style: 'margin-top:0', text: '확인된 기능 (PRODUCTS)' }),\n    h('ul', { style: 'margin:0;padding-left:20px' }, d.product.facts.map(function (f) { return h('li', { text: f }); })),\n    h('div', { class: 'row', style: 'margin-top:8px' }, [\n      h('span', { class: 'chip ' + (d.product.permissionOk ? 'ok' : 'warn'), text: '영상 허가: ' + d.product.permission }),\n      h('span', { class: 'chip ' + (d.product.affiliateUrlOk ? 'ok' : 'warn'), text: d.product.affiliateUrlOk ? '제휴 링크 ✓' : '제휴 링크 필요' }),\n    ]),\n  ]));\n\n  // Full script.\n  const r = d.reel;\n  const scriptCard = h('div', { class: 'card' }, [\n    h('div', { class: 'muted', text: r.concept }),\n    h('div', { class: 'hook', text: r.hook }),\n    h('h3', { text: '내레이션' }), h('div', { class: 'pre', text: r.narration }),\n    h('h3', { text: '자막' }), h('div', { class: 'pre', text: (r.captions || []).join('\\n') }),\n    h('h3', { text: '사용한 확인 기능' }), h('div', { class: 'pre muted', text: (r.facts_used || []).join('\\n') }),\n    h('h3', { text: 'CTA · ManyChat 키워드' }), h('div', { class: 'pre', text: d.cta + '\\n키워드: ' + d.keyword }),\n    h('h3', { text: '광고 표기' }), h('div', { class: 'pre', text: d.disclosure }),\n  ]);\n  if (d.scenesInvalid) scriptCard.appendChild(h('div', { class: 'banner bad', text: '장면(JSON) 셀이 손상되었습니다. 수정 요청 후 재생성하세요.' }));\n  (r.scenes || []).forEach(function (s) {\n    scriptCard.appendChild(h('div', { class: 'scene' }, [\n      h('strong', { text: '장면 ' + s.scene_no + ' · ' + s.duration_sec + '초' }),\n      h('div', { text: s.visual }),\n      s.on_screen_text ? h('div', { class: 'muted', text: '화면 문구: ' + s.on_screen_text }) : null,\n      copyBlock('Google Flow 프롬프트 (수동 생성)', s.flow_prompt, true),\n    ]));\n  });\n  main.appendChild(h('h2', { text: '대본' }));\n  main.appendChild(scriptCard);\n\n  // Touchpoints + history (audit).\n  main.appendChild(h('h2', { text: '운영자 확인 4단계' }));\n  main.appendChild(h('div', { class: 'card' }, d.touchpoints.map(function (t) {\n    return h('div', { class: 'tp' }, [\n      h('div', { class: 'dot' + (t.done ? ' done' : ''), text: t.done ? '✓' : String(t.n) }),\n      h('div', {}, [h('div', { text: t.label }), h('div', { class: 'muted', text: t.detail })]),\n    ]);\n  })));\n  main.appendChild(h('h2', { text: '기록 (AUDIT)' }));\n  main.appendChild(h('div', { class: 'card' }, d.history.length ? d.history.map(function (x) {\n    return h('div', { class: 'hist' }, [\n      h('div', {}, [h('strong', { text: x.label }), ' → ' + (x.to || ''), h('span', { class: 'muted', text: '  ' + fmt(x.at) })]),\n      h('div', { class: 'muted', text: [x.actor, x.scriptVersion ? '대본 v' + x.scriptVersion : '', x.videoVersion ? '영상 v' + x.videoVersion : ''].filter(Boolean).join(' · ') }),\n      x.note ? h('div', { class: 'pre', text: x.note }) : null,\n    ]);\n  }) : [h('div', { class: 'muted', text: '기록 없음' })]));\n}\n\nfunction renderActions(main) {\n  const d = S.detail;\n  const can = function (a) { return d.allowedActions.indexOf(a) !== -1; };\n  const card = h('div', { class: 'card' });\n  const st = d.summary.status;\n\n  if (st === 'SCRIPT_REVIEW_PENDING' || st === 'SCRIPT_CHANGES_REQUESTED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '② 대본 검토' }));\n    if (st === 'SCRIPT_CHANGES_REQUESTED') {\n      card.appendChild(h('div', { class: 'banner warn', text: '수정 요청: ' + (d.scriptReview.note || '') }));\n    }\n    const b = h('div', { class: 'btns' });\n    if (can('APPROVE_SCRIPT')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '승인 (v' + d.summary.scriptVersion + ')',\n      onclick: function () { act('APPROVE_SCRIPT', { note: '' }, '대본 v' + d.summary.scriptVersion + '을(를) 승인합니다. 이 버전 그대로 영상 제작에 사용됩니다.'); } }));\n    if (can('EDIT_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '직접 수정', onclick: function () { S.mode = 'edit'; renderDetail(); } }));\n    if (can('REQUEST_SCRIPT_CHANGES')) b.appendChild(h('button', { class: 'b', type: 'button', text: '수정 요청',\n      onclick: function () { const n = askNote('무엇을 바꿀까요? (재생성 시 Gemini에 전달)', true); if (n !== null) act('REQUEST_SCRIPT_CHANGES', { note: n }); } }));\n    if (d.canRegenerate) b.appendChild(h('button', { class: 'b primary', type: 'button', text: 'Gemini 재생성', onclick: regenerate }));\n    if (can('REJECT_SCRIPT')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '반려',\n      onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_SCRIPT', { note: n }, '이 대본을 반려할까요? 되돌릴 수 없습니다.'); } }));\n    card.appendChild(b);\n  } else if (['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'].indexOf(st) !== -1) {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '영상 제작 (Flow 수동 · FFmpeg 렌더는 다음 단계)' }));\n    if (st === 'VIDEO_CHANGES_REQUESTED') card.appendChild(h('div', { class: 'banner warn', text: '영상 수정 요청: ' + (d.videoReview.note || '') }));\n    if (!d.product.permissionOk) card.appendChild(h('div', { class: 'banner warn', text: '영상 사용 허가가 확인되지 않아 제작을 시작할 수 없습니다. PRODUCTS의 \"영상 사용 허가 상태\"를 확인하세요.' }));\n    if (!d.approvedIntact && st !== 'VIDEO_IN_PRODUCTION') card.appendChild(h('div', { class: 'banner bad', text: '승인된 대본이 변경되었습니다. 승인 취소 후 다시 승인하세요.' }));\n    const b = h('div', { class: 'btns' });\n    if (can('START_VIDEO')) b.appendChild(h('button', { class: 'b primary', type: 'button', text: '영상 제작 시작', disabled: !d.product.permissionOk || !d.approvedIntact,\n      onclick: function () { act('START_VIDEO', {}); } }));\n    if (can('REGISTER_VIDEO')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '완성 MP4 등록',\n      onclick: function () { const u = askNote('Google Drive MP4 공유 링크를 붙여넣으세요', true); if (u !== null) act('REGISTER_VIDEO', { videoUrl: u }); } }));\n    if (can('MARK_VIDEO_FAILED')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '제작 오류 기록',\n      onclick: function () { const n = askNote('오류 내용', true); if (n !== null) act('MARK_VIDEO_FAILED', { note: n }); } }));\n    if (can('REOPEN_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '대본 승인 취소',\n      onclick: function () { const n = askNote('승인 취소 사유 (선택)', false); if (n !== null) act('REOPEN_SCRIPT', { note: n }); } }));\n    card.appendChild(b);\n    card.appendChild(h('details', { style: 'margin-top:12px' }, [\n      h('summary', { text: 'Google Flow 프롬프트 전체 (수동 생성용)' }),\n      copyBlock('장면별 프롬프트', d.flowPrompts, true),\n    ]));\n  } else if (st === 'VIDEO_REVIEW_PENDING') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '③ 영상 검토 (v' + d.summary.videoVersion + ')' }));\n    card.appendChild(h('div', { class: 'btns' }, [\n      h('button', { class: 'b ok', type: 'button', text: '영상 승인',\n        onclick: function () { act('APPROVE_VIDEO', { note: '' }, '영상 v' + d.summary.videoVersion + '을(를) 승인할까요? 자동 게시는 되지 않습니다.'); } }),\n      h('button', { class: 'b', type: 'button', text: '수정 요청',\n        onclick: function () { const n = askNote('무엇을 고칠까요?', true); if (n !== null) act('REQUEST_VIDEO_CHANGES', { note: n }); } }),\n      h('button', { class: 'b bad', type: 'button', text: '반려',\n        onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_VIDEO', { note: n }, '이 릴스를 반려할까요?'); } }),\n    ]));\n  } else if (st === 'VIDEO_APPROVED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '게시 준비' }));\n    card.appendChild(h('div', { class: 'muted', text: '위 오류를 PRODUCTS에서 해결한 뒤 다시 시도하세요 (예: 쿠팡 파트너스 링크 입력).' }));\n    card.appendChild(h('div', { class: 'btns one' }, [h('button', { class: 'b primary', type: 'button', text: '게시 준비 다시 시도', onclick: function () { act('MARK_READY_TO_PUBLISH', {}); } })]));\n  } else if (st === 'READY_TO_PUBLISH' || st === 'COMPLETED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '④ 게시 · ManyChat (수동)' }));\n    card.appendChild(h('div', { class: 'btns one' }, [h('button', { class: 'b primary', type: 'button', text: '게시 자료 열기', onclick: openPack })]));\n    const b = h('div', { class: 'btns' });\n    if (can('CONFIRM_PUBLISHED')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '인스타그램 게시 완료',\n      onclick: function () { const u = askNote('게시물 URL (선택, https://www.instagram.com/…)', false); if (u !== null) act('CONFIRM_PUBLISHED', { instagramUrl: u }); } }));\n    if (can('CONFIRM_MANYCHAT')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: 'ManyChat 설정 완료',\n      onclick: function () { act('CONFIRM_MANYCHAT', {}, '키워드 \"' + d.keyword + '\" 자동화를 직접 켜고, 테스트 댓글로 올바른 링크가 오는 것을 확인했나요?'); } }));\n    card.appendChild(b);\n    if (st === 'COMPLETED') card.appendChild(h('div', { class: 'banner ok', text: '게시와 ManyChat 설정이 확인되었습니다.' }));\n  } else {\n    return;\n  }\n  main.appendChild(card);\n}\n\nfunction regenerate() {\n  const d = S.detail;\n  if (!confirm('수정 요청 메모를 반영해 이 대본 1개를 Gemini로 다시 작성할까요? (API 호출 1~2회)')) return;\n  busy(true, 'Gemini로 재생성 중… (최대 1분)');\n  call('apiRegenerateScript', d.summary.reelId, { expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; renderDetail(); toast('새 버전 v' + res.detail.summary.scriptVersion + '이(가) 검토 대기 중입니다.');\n    refreshAround();\n  });\n}\n\nfunction openPack() {\n  busy(true);\n  call('apiGetPublishingPack', S.detail.summary.reelId).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 6000); return; }\n    const p = res.pack;\n    const main = clear(document.getElementById('main'));\n    main.appendChild(h('button', { class: 'link', type: 'button', onclick: renderDetail, text: '‹ ' + p.reelId }));\n    main.appendChild(h('div', { class: 'banner warn', text: '자동 게시·자동 DM은 하지 않습니다. 아래 순서대로 직접 진행하세요.' }));\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '1. 영상' }),\n      h('a', { href: p.videoUrl, target: '_blank', rel: 'noopener', text: 'Drive에서 MP4 열기 ↗' }),\n      h('div', { class: 'muted', text: 'Drive 앱 → ⋯ → 사본 보내기 → 동영상 저장' }),\n    ]));\n    main.appendChild(h('div', { class: 'card' }, [h('h3', { style: 'margin-top:0', text: '2. 인스타그램 캡션' }), copyBlock('첫 줄 광고 표기 유지', p.instagramCaption)]));\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '3. ManyChat' }),\n      copyBlock('댓글 키워드', p.manychatKeyword, true),\n      copyBlock('DM 문구 (쿠팡 파트너스 링크 포함)', p.manychatDm),\n      copyBlock('쿠팡 파트너스 링크', p.affiliateUrl, true),\n    ]));\n    main.appendChild(h('div', { class: 'card' }, [h('h3', { style: 'margin-top:0', text: '체크리스트' }),\n      h('ol', { style: 'margin:0;padding-left:20px' }, p.checklist.map(function (c) { return h('li', { text: c }); }))]));\n    window.scrollTo(0, 0);\n  });\n}\n\n// ---------------------------------------------------------------- editor\nfunction renderEditor(main) {\n  const d = S.detail;\n  const r = d.reel;\n  const f = {};\n  function field(key, label, value, multiline) {\n    f[key] = multiline ? h('textarea', {}) : h('input', { type: 'text' });\n    f[key].value = value || '';\n    return h('div', {}, [h('label', { text: label }), f[key]]);\n  }\n  const card = h('div', { class: 'card' }, [\n    h('div', { class: 'banner warn', text: '수정하면 새 버전(v' + (d.summary.scriptVersion + 1) + ')이 되고 다시 승인해야 합니다. 숫자·기능은 PRODUCTS의 확인된 기능에 있는 것만 쓸 수 있습니다.' }),\n    field('concept', '컨셉', r.concept),\n    field('hook', '후킹 (40자 이내)', r.hook),\n    field('narration', '내레이션 (300자 이내)', r.narration, true),\n    field('captions', '자막 (한 줄에 하나, 각 40자 이내)', (r.captions || []).join('\\n'), true),\n  ]);\n  (r.scenes || []).forEach(function (s, i) {\n    card.appendChild(h('h3', { text: '장면 ' + s.scene_no + ' · ' + s.duration_sec + '초' }));\n    card.appendChild(field('s' + i + 'visual', '장면 설명', s.visual, true));\n    card.appendChild(field('s' + i + 'text', '화면 문구', s.on_screen_text));\n    card.appendChild(field('s' + i + 'flow', 'Flow 프롬프트 (영어)', s.flow_prompt, true));\n  });\n  card.appendChild(field('note', '수정 메모 (선택)', '', true));\n  card.appendChild(h('div', { class: 'btns' }, [\n    h('button', { class: 'b', type: 'button', text: '취소', onclick: function () { S.mode = 'view'; renderDetail(); } }),\n    h('button', { class: 'b primary', type: 'button', text: '저장 (v' + (d.summary.scriptVersion + 1) + ')', onclick: function () {\n      const edit = {\n        concept: f.concept.value, hook: f.hook.value, narration: f.narration.value,\n        captions: f.captions.value.split('\\n').map(function (x) { return x.trim(); }).filter(Boolean),\n        scenes: (r.scenes || []).map(function (s, i) {\n          return { visual: f['s' + i + 'visual'].value, on_screen_text: f['s' + i + 'text'].value, flow_prompt: f['s' + i + 'flow'].value };\n        }),\n      };\n      act('EDIT_SCRIPT', { edit: edit, note: f.note.value });\n    } }),\n  ]));\n  main.appendChild(card);\n}\n\nloadDashboard();\n</script>\n</body>\n</html>\n";
+const RF_DASHBOARD_HTML = "<!doctype html>\n<html lang=\"ko\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n<base target=\"_top\">\n<title>릴스 팩토리</title>\n<style>\n  :root {\n    --bg: #f2f2f7; --card: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --line: #d1d1d6;\n    --accent: #0a66d6; --ok: #1a7f37; --warn: #a15c00; --bad: #c62828; --chip: #e9e9ef;\n  }\n  @media (prefers-color-scheme: dark) {\n    :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --muted: #a1a1a6; --line: #38383a;\n      --accent: #4c9aff; --ok: #3fb950; --warn: #e3a008; --bad: #ff6b6b; --chip: #2c2c2e; }\n  }\n  * { box-sizing: border-box; }\n  html, body { margin: 0; background: var(--bg); color: var(--text);\n    font: 16px/1.45 -apple-system, BlinkMacSystemFont, \"Apple SD Gothic Neo\", \"Noto Sans KR\", sans-serif; }\n  header { position: sticky; top: 0; z-index: 5; background: var(--bg);\n    padding: calc(env(safe-area-inset-top) + 10px) 16px 8px; border-bottom: 1px solid var(--line); }\n  header h1 { font-size: 20px; margin: 0; display: flex; align-items: center; gap: 8px; }\n  header .user { font-size: 12px; color: var(--muted); }\n  main { padding: 12px 16px calc(env(safe-area-inset-bottom) + 90px); max-width: 720px; margin: 0 auto; }\n  nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 5; display: flex; background: var(--card);\n    border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }\n  nav button { flex: 1; border: 0; background: none; color: var(--muted); padding: 8px 2px 10px; font-size: 12px;\n    min-height: 56px; position: relative; }\n  nav button.on { color: var(--accent); font-weight: 600; }\n  nav .n { position: absolute; top: 4px; right: 18%; background: var(--bad); color: #fff; border-radius: 9px;\n    font-size: 11px; min-width: 18px; padding: 0 5px; }\n  nav .ico { display: block; font-size: 20px; line-height: 24px; }\n  .card { background: var(--card); border-radius: 14px; padding: 14px; margin: 0 0 12px; border: 1px solid var(--line); }\n  .card.tap { cursor: pointer; }\n  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }\n  .muted { color: var(--muted); font-size: 13px; }\n  .chip { display: inline-block; background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 12px; }\n  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }\n  h2 { font-size: 17px; margin: 18px 0 8px; }\n  h3 { font-size: 15px; margin: 14px 0 6px; }\n  .hook { font-weight: 600; font-size: 17px; margin: 6px 0; }\n  .pre { white-space: pre-wrap; word-break: break-word; }\n  .scene { border-top: 1px solid var(--line); padding: 10px 0 2px; }\n  .flow { font-size: 15px; background: var(--chip); border-radius: 8px; padding: 8px; white-space: pre-wrap; word-break: break-word; }\n  .flow.mono { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }\n  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }\n  .btns.one { grid-template-columns: 1fr; }\n  button.b { min-height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--card);\n    color: var(--text); font-size: 16px; font-weight: 600; padding: 8px 12px; }\n  button.b.primary { background: var(--accent); color: #fff; border-color: var(--accent); }\n  button.b.ok { background: var(--ok); color: #fff; border-color: var(--ok); }\n  button.b.bad { color: var(--bad); }\n  button.b:disabled { opacity: .5; }\n  button.link { border: 0; background: none; color: var(--accent); font-size: 15px; padding: 8px 0; min-height: 44px; }\n  textarea, input[type=text], input[type=url] { width: 100%; font: inherit; font-size: 16px; color: var(--text);\n    background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }\n  textarea { min-height: 88px; }\n  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }\n  .banner { border-radius: 12px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; white-space: pre-wrap; }\n  .banner.warn { background: rgba(227,160,8,.15); } .banner.bad { background: rgba(198,40,40,.13); }\n  .banner.ok { background: rgba(26,127,55,.13); }\n  .tp { display: grid; grid-template-columns: 28px 1fr; gap: 4px 8px; align-items: start; padding: 6px 0; }\n  .tp .dot { width: 24px; height: 24px; border-radius: 12px; display: grid; place-items: center; font-size: 13px;\n    background: var(--chip); }\n  .tp .dot.done { background: var(--ok); color: #fff; }\n  .video { position: relative; width: 100%; max-width: 360px; aspect-ratio: 9 / 16; margin: 8px auto;\n    background: #000; border-radius: 12px; overflow: hidden; }\n  .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }\n  .tabs2 { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }\n  .tabs2 button { flex: none; min-height: 36px; border-radius: 999px; border: 1px solid var(--line);\n    background: var(--card); color: var(--text); padding: 4px 12px; font-size: 14px; }\n  .tabs2 button.on { background: var(--accent); color: #fff; border-color: var(--accent); }\n  details summary { min-height: 44px; display: flex; align-items: center; color: var(--accent); cursor: pointer; }\n  .hist { font-size: 13px; border-top: 1px solid var(--line); padding: 6px 0; }\n  .empty { text-align: center; color: var(--muted); padding: 32px 0; }\n  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 72px); z-index: 9;\n    background: #333; color: #fff; border-radius: 12px; padding: 12px; font-size: 14px; display: none; white-space: pre-wrap; }\n  #busy { position: fixed; inset: 0; z-index: 8; background: rgba(0,0,0,.25); display: none; place-items: center; }\n  #busy div { background: var(--card); padding: 16px 20px; border-radius: 12px; }\n</style>\n</head>\n<body>\n<header>\n  <h1 id=\"title\">릴스 팩토리</h1>\n  <div class=\"user\" id=\"user\"></div>\n</header>\n<main id=\"main\"><div class=\"empty\">불러오는 중…</div></main>\n<nav id=\"nav\"></nav>\n<div id=\"toast\"></div>\n<div id=\"busy\"><div id=\"busyText\">처리 중…</div></div>\n\n<script>\n'use strict';\n// ---------------------------------------------------------------- helpers\n// All data is rendered with textContent / attributes, never parsed as HTML.\nfunction h(tag, attrs, children) {\n  const el = document.createElement(tag);\n  Object.keys(attrs || {}).forEach(function (k) {\n    const v = attrs[k];\n    if (v == null || v === false) return;\n    if (k === 'class') el.className = v;\n    else if (k === 'text') el.textContent = v;\n    else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v);\n    else el.setAttribute(k, v === true ? '' : v);\n  });\n  (children || []).forEach(function (c) {\n    if (c == null || c === false) return;\n    el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);\n  });\n  return el;\n}\nfunction clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }\nfunction fmt(v) {\n  if (!v) return '';\n  const d = new Date(v);\n  if (isNaN(d)) return String(v);\n  const p = function (n) { return (n < 10 ? '0' : '') + n; };\n  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());\n}\nfunction toast(msg, ms) {\n  const t = document.getElementById('toast');\n  t.textContent = msg; t.style.display = 'block';\n  clearTimeout(toast._t); toast._t = setTimeout(function () { t.style.display = 'none'; }, ms || 3500);\n}\nfunction busy(on, text) {\n  document.getElementById('busyText').textContent = text || '처리 중…';\n  document.getElementById('busy').style.display = on ? 'grid' : 'none';\n}\nfunction call(name) {\n  const args = Array.prototype.slice.call(arguments, 1);\n  return new Promise(function (resolve) {\n    const runner = google.script.run\n      .withSuccessHandler(function (res) { resolve(res || { ok: false, error: '빈 응답' }); })\n      .withFailureHandler(function (err) { resolve({ ok: false, error: (err && err.message) || String(err) }); });\n    runner[name].apply(runner, args);\n  });\n}\nfunction copyText(text) {\n  function fallback() {\n    const ta = h('textarea', { readonly: true, style: 'position:fixed;top:0;left:0;opacity:0' });\n    ta.value = text; document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);\n    let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }\n    document.body.removeChild(ta); return ok;\n  }\n  const done = function (ok) { toast(ok ? '복사했습니다' : '복사하지 못했습니다. 길게 눌러 직접 복사하세요.'); };\n  if (navigator.clipboard && navigator.clipboard.writeText) {\n    navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallback()); });\n  } else { done(fallback()); }\n}\nfunction copyBlock(label, text, mono) {\n  return h('div', {}, [\n    h('div', { class: 'row', style: 'justify-content:space-between' }, [\n      h('span', { class: 'muted', text: label }),\n      h('button', { class: 'link', type: 'button', onclick: function () { copyText(text); }, text: '복사' }),\n    ]),\n    h('div', { class: 'flow' + (mono ? ' mono' : ''), text: text }),\n  ]);\n}\n\n// ---------------------------------------------------------------- state\nconst TABS = [\n  { key: 'script', ico: '📝', label: '대본', statuses: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], badge: ['SCRIPT_REVIEW_PENDING'] },\n  { key: 'make', ico: '🎬', label: '제작', statuses: ['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'], badge: ['VIDEO_FAILED'] },\n  { key: 'video', ico: '▶️', label: '영상', statuses: ['VIDEO_REVIEW_PENDING'], badge: ['VIDEO_REVIEW_PENDING'] },\n  { key: 'publish', ico: '📤', label: '게시', statuses: ['VIDEO_APPROVED', 'READY_TO_PUBLISH'], badge: ['READY_TO_PUBLISH', 'VIDEO_APPROVED'] },\n  { key: 'products', ico: '🛍️', label: '상품' },\n  { key: 'done', ico: '✅', label: '기록', statuses: ['COMPLETED', 'SCRIPT_REJECTED', 'VIDEO_REJECTED', ''] },\n];\nconst S = { tab: 'script', dash: null, detail: null, mode: 'view' };\n\nfunction tabFor(status) {\n  for (let i = 0; i < TABS.length; i++) if (TABS[i].statuses && TABS[i].statuses.indexOf(status) !== -1) return TABS[i].key;\n  return 'done';\n}\nfunction statusChip(status, label) {\n  const cls = /REJECTED|FAILED/.test(status) ? 'bad' : /APPROVED|READY|COMPLETED/.test(status) ? 'ok' : 'warn';\n  return h('span', { class: 'chip ' + cls, text: label || status || '상태 없음' });\n}\n\n// ---------------------------------------------------------------- loading\nfunction loadDashboard() {\n  return call('apiGetDashboard').then(function (res) {\n    if (!res.ok) { renderFatal(res.error); return; }\n    S.dash = res;\n    document.getElementById('user').textContent = res.user + ' · Google Sheets 기준';\n    renderNav(); if (!S.detail) renderList();\n  });\n}\nfunction openReel(reelId) {\n  busy(true, '불러오는 중…');\n  return call('apiGetReel', reelId).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 6000); return; }\n    S.detail = res.detail; S.mode = 'view'; renderDetail(); window.scrollTo(0, 0);\n  });\n}\n// Reloads list data (badges, sibling chips) without leaving the open reel.\nfunction refreshAround() {\n  return loadDashboard().then(function () { if (S.detail && S.mode === 'view') renderDetail(); });\n}\nfunction backToList() { S.detail = null; S.mode = 'view'; loadDashboard().then(renderList); window.scrollTo(0, 0); }\n\nfunction renderFatal(msg) {\n  clear(document.getElementById('main')).appendChild(h('div', { class: 'banner bad', text: msg }));\n}\n\n// ---------------------------------------------------------------- nav + lists\nfunction renderNav() {\n  const nav = clear(document.getElementById('nav'));\n  const reels = (S.dash && S.dash.reels) || [];\n  TABS.forEach(function (t) {\n    const n = t.badge ? reels.filter(function (r) { return t.badge.indexOf(r.status) !== -1; }).length : 0;\n    nav.appendChild(h('button', {\n      type: 'button', class: S.tab === t.key && !S.detail ? 'on' : '',\n      onclick: function () { S.tab = t.key; S.detail = null; renderNav(); renderList(); window.scrollTo(0, 0); },\n    }, [h('span', { class: 'ico', text: t.ico }), t.label, n ? h('span', { class: 'n', text: String(n) }) : null]));\n  });\n}\n\nfunction warningsBanner(list) {\n  return (list || []).map(function (w) { return h('div', { class: 'banner warn', text: '⚠ ' + w }); });\n}\n\nfunction renderList() {\n  const main = clear(document.getElementById('main'));\n  const tab = TABS.filter(function (t) { return t.key === S.tab; })[0];\n  document.getElementById('title').textContent = '릴스 팩토리 · ' + tab.label;\n  warningsBanner(S.dash.warnings).forEach(function (b) { main.appendChild(b); });\n  if (tab.key === 'products') { renderProducts(main); return; }\n  const reels = S.dash.reels.filter(function (r) { return tabFor(r.status) === tab.key; });\n  const intro = {\n    script: '② 대본을 검토하세요. 승인된 대본 버전만 영상 제작에 쓰입니다.',\n    make: 'Google Flow 클립은 수동 생성입니다. 프롬프트를 복사해 Flow에서 만든 뒤, 완성 MP4를 Drive에 올려 등록하세요.',\n    video: '③ 완성 영상을 재생해 보고 승인/수정 요청/반려하세요.',\n    publish: '④ 게시 자료를 복사해 직접 인스타그램에 올리고 ManyChat을 설정한 뒤 확인을 누르세요. 자동 게시는 하지 않습니다.',\n    done: '완료·반려된 릴스와 상태 확인이 필요한 행입니다.',\n  }[tab.key];\n  main.appendChild(h('p', { class: 'muted', text: intro }));\n  if (!reels.length) { main.appendChild(h('div', { class: 'empty', text: '항목이 없습니다' })); return; }\n  reels.forEach(function (r) {\n    main.appendChild(h('div', { class: 'card tap', role: 'button', tabindex: '0', onclick: function () { openReel(r.reelId); } }, [\n      h('div', { class: 'row', style: 'justify-content:space-between' }, [\n        h('strong', { text: r.reelId }), statusChip(r.status, r.statusLabel),\n      ]),\n      h('div', { class: 'muted', text: r.productName + ' · 대본 v' + r.scriptVersion + (r.videoVersion ? ' · 영상 v' + r.videoVersion : '') }),\n      h('div', { class: 'hook', text: r.hook }),\n      h('div', { class: 'muted', text: r.concept }),\n      r.error ? h('div', { class: 'banner bad', style: 'margin:8px 0 0', text: r.error }) : null,\n    ]));\n  });\n}\n\nfunction renderProducts(main) {\n  main.appendChild(h('p', { class: 'muted', text: '① 상품 등록·제휴 링크·확인된 기능·영상 허가는 Google Sheets PRODUCTS에서 입력합니다. 여기서는 준비 상태를 확인하고 대본 생성을 요청할 수 있습니다.' }));\n  if (!S.dash.products.length) { main.appendChild(h('div', { class: 'empty', text: 'PRODUCTS에 상품이 없습니다' })); return; }\n  S.dash.products.forEach(function (p) {\n    const ready = p.factsCount > 0 && !p.duplicate;\n    main.appendChild(h('div', { class: 'card' }, [\n      h('div', { class: 'row', style: 'justify-content:space-between' }, [h('strong', { text: p.id }), h('span', { class: 'muted', text: '릴스 ' + p.reelCount + '개' })]),\n      h('div', { text: p.name }),\n      h('div', { class: 'row', style: 'margin-top:6px' }, [\n        h('span', { class: 'chip ' + (p.factsCount ? 'ok' : 'bad'), text: '확인된 기능 ' + p.factsCount }),\n        h('span', { class: 'chip ' + (p.affiliateUrlOk ? 'ok' : 'warn'), text: p.affiliateUrlOk ? '제휴 링크 ✓' : '제휴 링크 필요' }),\n        h('span', { class: 'chip ' + (p.permissionOk ? 'ok' : 'warn'), text: '영상 허가: ' + p.permission }),\n        p.duplicate ? h('span', { class: 'chip bad', text: '상품ID 중복' }) : null,\n      ]),\n      h('div', { class: 'btns one' }, [h('button', {\n        class: 'b', type: 'button', disabled: !ready,\n        onclick: function () { generate(p, false); },\n        text: p.reelCount ? '대본 3개 추가 생성' : '대본 3개 생성 (Gemini)',\n      })]),\n    ]));\n  });\n}\n\nfunction generate(p, allowAdditional) {\n  if (!allowAdditional && !confirm(p.id + ' 대본 3개를 Gemini로 생성할까요? (API 호출 1~2회)')) return;\n  busy(true, 'Gemini로 대본 생성 중… (최대 1분)');\n  call('apiGenerateScripts', p.id, allowAdditional).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    if (res.needsConfirm) {\n      if (confirm('이미 릴스 ' + res.needsConfirm + '개가 있습니다. 3개를 추가로 생성할까요?')) generate(p, true);\n      return;\n    }\n    toast('생성 완료: ' + res.ids.join(', '));\n    S.tab = 'script'; loadDashboard().then(function () { renderNav(); renderList(); });\n  });\n}\n\n// ---------------------------------------------------------------- detail\nfunction act(action, input, confirmText) {\n  const d = S.detail;\n  if (confirmText && !confirm(confirmText)) return;\n  const base = { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion, expectedVideoVersion: d.summary.videoVersion };\n  busy(true);\n  call('apiAction', d.summary.reelId, action, Object.assign(base, input || {})).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; S.mode = 'view'; renderDetail();\n    toast(res.notice || '저장했습니다 (REELS·AUDIT 기록)', res.notice ? 8000 : 2500);\n    refreshAround();\n  });\n}\nfunction askNote(promptText, required) {\n  const v = prompt(promptText, '');\n  if (v === null) return null;\n  if (required && !v.trim()) { toast('메모(사유)를 입력해야 합니다.'); return null; }\n  return v.trim();\n}\n\nfunction renderDetail() {\n  const d = S.detail;\n  const main = clear(document.getElementById('main'));\n  renderNav();\n  document.getElementById('title').textContent = d.summary.reelId;\n  main.appendChild(h('button', { class: 'link', type: 'button', onclick: backToList, text: '‹ 목록' }));\n  warningsBanner(d.warnings).forEach(function (b) { main.appendChild(b); });\n\n  // Sibling versions (the 3 scripts generated for the same product).\n  const siblings = (S.dash ? S.dash.reels : []).filter(function (r) { return r.productId === d.product.id; });\n  if (siblings.length > 1) {\n    main.appendChild(h('div', { class: 'tabs2' }, siblings.map(function (r) {\n      return h('button', { type: 'button', class: r.reelId === d.summary.reelId ? 'on' : '', onclick: function () { openReel(r.reelId); }, text: r.reelId.replace(d.product.id + '-', '') + ' · ' + r.statusLabel });\n    })));\n  }\n\n  main.appendChild(h('div', { class: 'card' }, [\n    h('div', { class: 'row', style: 'justify-content:space-between' }, [h('strong', { text: d.product.name }), statusChip(d.summary.status, d.summary.statusLabel)]),\n    h('div', { class: 'muted', text: '대본 v' + d.summary.scriptVersion + (d.approvedVersion ? ' · 승인 v' + d.approvedVersion + (d.approvedIntact ? '' : ' (승인 후 변경됨!)') : '') + (d.summary.videoVersion ? ' · 영상 v' + d.summary.videoVersion : '') }),\n    d.summary.error ? h('div', { class: 'banner bad', style: 'margin:8px 0 0', text: d.summary.error }) : null,\n  ]));\n\n  if (S.mode === 'edit') { renderEditor(main); return; }\n\n  if (d.video && ['VIDEO_REVIEW_PENDING', 'VIDEO_APPROVED', 'READY_TO_PUBLISH', 'COMPLETED', 'VIDEO_CHANGES_REQUESTED', 'VIDEO_REJECTED'].indexOf(d.summary.status) !== -1) {\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '완성 영상 v' + d.summary.videoVersion }),\n      h('div', { class: 'video' }, [h('iframe', { src: d.video.previewUrl, allow: 'autoplay; fullscreen', title: '영상 미리보기' })]),\n      h('a', { href: d.video.url, target: '_blank', rel: 'noopener', text: 'Google Drive에서 열기 ↗' }),\n      h('div', { class: 'muted', text: '미리보기가 안 보이면 Drive에서 열어 재생하세요 (같은 Google 계정 로그인 필요).' }),\n    ]));\n  }\n\n  renderActions(main);\n\n  // Product facts (what the script may claim).\n  main.appendChild(h('div', { class: 'card' }, [\n    h('h3', { style: 'margin-top:0', text: '확인된 기능 (PRODUCTS)' }),\n    h('ul', { style: 'margin:0;padding-left:20px' }, d.product.facts.map(function (f) { return h('li', { text: f }); })),\n    h('div', { class: 'row', style: 'margin-top:8px' }, [\n      h('span', { class: 'chip ' + (d.product.permissionOk ? 'ok' : 'warn'), text: '영상 허가: ' + d.product.permission }),\n      h('span', { class: 'chip ' + (d.product.affiliateUrlOk ? 'ok' : 'warn'), text: d.product.affiliateUrlOk ? '제휴 링크 ✓' : '제휴 링크 필요' }),\n    ]),\n  ]));\n\n  // Full script.\n  const r = d.reel;\n  const scriptCard = h('div', { class: 'card' }, [\n    h('div', { class: 'muted', text: r.concept }),\n    h('div', { class: 'hook', text: r.hook }),\n    h('h3', { text: '내레이션' }), h('div', { class: 'pre', text: r.narration }),\n    h('h3', { text: '자막' }), h('div', { class: 'pre', text: (r.captions || []).join('\\n') }),\n    h('h3', { text: '사용한 확인 기능' }), h('div', { class: 'pre muted', text: (r.facts_used || []).join('\\n') }),\n    h('h3', { text: 'CTA · ManyChat 키워드' }), h('div', { class: 'pre', text: d.cta + '\\n키워드: ' + d.keyword }),\n    h('h3', { text: '광고 표기' }), h('div', { class: 'pre', text: d.disclosure }),\n  ]);\n  if (d.scenesInvalid) scriptCard.appendChild(h('div', { class: 'banner bad', text: '장면(JSON) 셀이 손상되었습니다. 수정 요청 후 재생성하세요.' }));\n  (r.scenes || []).forEach(function (s) {\n    scriptCard.appendChild(h('div', { class: 'scene' }, [\n      h('strong', { text: '장면 ' + s.scene_no + (s.beat ? ' · ' + s.beat : '') + ' · ' + s.duration_sec + '초' }),\n      s.narration ? h('div', { class: 'hook', text: '“' + s.narration + '”' }) : null,\n      h('div', { class: 'muted', text: '화면: ' + s.visual }),\n      s.on_screen_text ? h('div', { class: 'muted', text: '화면 문구: ' + s.on_screen_text }) : null,\n      d.approvedIntact\n        ? copyBlock('Google Flow 프롬프트 (수동 생성)', s.flow_prompt, true)\n        : h('div', {}, [h('div', { class: 'muted', text: 'Google Flow 프롬프트 — 대본 승인 후 복사·생성 (Flow 크레딧 보호)' }), h('div', { class: 'flow mono', text: s.flow_prompt })]),\n    ]));\n  });\n  main.appendChild(h('h2', { text: '대본' }));\n  main.appendChild(scriptCard);\n\n  // Touchpoints + history (audit).\n  main.appendChild(h('h2', { text: '운영자 확인 4단계' }));\n  main.appendChild(h('div', { class: 'card' }, d.touchpoints.map(function (t) {\n    return h('div', { class: 'tp' }, [\n      h('div', { class: 'dot' + (t.done ? ' done' : ''), text: t.done ? '✓' : String(t.n) }),\n      h('div', {}, [h('div', { text: t.label }), h('div', { class: 'muted', text: t.detail })]),\n    ]);\n  })));\n  main.appendChild(h('h2', { text: '기록 (AUDIT)' }));\n  main.appendChild(h('div', { class: 'card' }, d.history.length ? d.history.map(function (x) {\n    return h('div', { class: 'hist' }, [\n      h('div', {}, [h('strong', { text: x.label }), ' → ' + (x.to || ''), h('span', { class: 'muted', text: '  ' + fmt(x.at) })]),\n      h('div', { class: 'muted', text: [x.actor, x.scriptVersion ? '대본 v' + x.scriptVersion : '', x.videoVersion ? '영상 v' + x.videoVersion : ''].filter(Boolean).join(' · ') }),\n      x.note ? h('div', { class: 'pre', text: x.note }) : null,\n    ]);\n  }) : [h('div', { class: 'muted', text: '기록 없음' })]));\n}\n\nfunction renderActions(main) {\n  const d = S.detail;\n  const can = function (a) { return d.allowedActions.indexOf(a) !== -1; };\n  const card = h('div', { class: 'card' });\n  const st = d.summary.status;\n\n  if (st === 'SCRIPT_REVIEW_PENDING' || st === 'SCRIPT_CHANGES_REQUESTED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '② 대본 검토' }));\n    if (st === 'SCRIPT_CHANGES_REQUESTED') {\n      card.appendChild(h('div', { class: 'banner warn', text: '수정 요청: ' + (d.scriptReview.note || '') }));\n    }\n    const b = h('div', { class: 'btns' });\n    if (can('APPROVE_SCRIPT')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '승인 (v' + d.summary.scriptVersion + ')',\n      onclick: function () { act('APPROVE_SCRIPT', { note: '' }, '대본 v' + d.summary.scriptVersion + '을(를) 승인합니다. 이 버전 그대로 영상 제작에 사용됩니다.'); } }));\n    if (can('EDIT_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '직접 수정', onclick: function () { S.mode = 'edit'; renderDetail(); } }));\n    if (can('REQUEST_SCRIPT_CHANGES')) b.appendChild(h('button', { class: 'b', type: 'button', text: '수정 요청',\n      onclick: function () { const n = askNote('무엇을 바꿀까요? (재생성 시 Gemini에 전달)', true); if (n !== null) act('REQUEST_SCRIPT_CHANGES', { note: n }); } }));\n    if (d.canRegenerate) b.appendChild(h('button', { class: 'b primary', type: 'button', text: 'Gemini 재생성', onclick: regenerate }));\n    if (can('REJECT_SCRIPT')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '반려',\n      onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_SCRIPT', { note: n }, '이 대본을 반려할까요? 되돌릴 수 없습니다.'); } }));\n    card.appendChild(b);\n  } else if (['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'].indexOf(st) !== -1) {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '영상 제작 (실제 제품 촬영·Flow → Mac 렌더)' }));\n    if (st === 'VIDEO_CHANGES_REQUESTED') card.appendChild(h('div', { class: 'banner warn', text: '영상 수정 요청: ' + (d.videoReview.note || '') }));\n    if (!d.product.permissionOk) card.appendChild(h('div', { class: 'banner warn', text: '영상 사용 허가가 확인되지 않아 제작을 시작할 수 없습니다. PRODUCTS의 \"영상 사용 허가 상태\"를 확인하세요.' }));\n    if (!d.approvedIntact && st !== 'VIDEO_IN_PRODUCTION') card.appendChild(h('div', { class: 'banner bad', text: '승인된 대본이 변경되었습니다. 승인 취소 후 다시 승인하세요.' }));\n    const b = h('div', { class: 'btns' });\n    if (can('START_VIDEO')) b.appendChild(h('button', { class: 'b primary', type: 'button', text: '영상 제작 시작', disabled: !d.product.permissionOk || !d.approvedIntact,\n      onclick: function () { act('START_VIDEO', {}); } }));\n    if (st === 'VIDEO_IN_PRODUCTION') b.appendChild(h('button', { class: 'b', type: 'button', text: '렌더 작업 파일 (Mac)', onclick: openRenderJob }));\n    if (can('REGISTER_VIDEO')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '완성 MP4 등록',\n      onclick: function () { const u = askNote('Google Drive MP4 공유 링크를 붙여넣으세요', true); if (u !== null) act('REGISTER_VIDEO', { videoUrl: u }); } }));\n    if (can('MARK_VIDEO_FAILED')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '제작 오류 기록',\n      onclick: function () { const n = askNote('오류 내용', true); if (n !== null) act('MARK_VIDEO_FAILED', { note: n }); } }));\n    if (can('REOPEN_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '대본 승인 취소',\n      onclick: function () { const n = askNote('승인 취소 사유 (선택)', false); if (n !== null) act('REOPEN_SCRIPT', { note: n }); } }));\n    card.appendChild(b);\n    // Detailed scene prompts are generated automatically on approval (free). One 8-second clip per scene.\n    const fp = d.flowScenePrompts || [];\n    card.appendChild(h('h3', { text: 'Google Flow 장면 프롬프트 (' + fp.length + '개 · 장면당 8초 클립 1개)' }));\n    if (!fp.length) {\n      card.appendChild(h('div', { class: 'banner warn', text: '대본 승인 후 자동으로 만들어집니다.' }));\n    } else {\n      card.appendChild(h('div', { class: 'muted', text: '각 프롬프트로 Flow에서 클립을 하나씩 만든 뒤, Google Drive의 ReelsFactory/clips/' + d.summary.reelId + '/ 폴더에 S1.mp4, S2.mp4 … 이름으로 올리세요. Mac 렌더러가 자동으로 편집합니다.' }));\n      fp.forEach(function (p) {\n        card.appendChild(h('details', { style: 'margin-top:8px' }, [\n          h('summary', { text: 'S' + p.scene + ' · ' + p.beat + ' → 파일 이름 S' + p.scene + '.mp4' }),\n          copyBlock('S' + p.scene + ' 프롬프트', p.prompt, true),\n        ]));\n      });\n    }\n  } else if (st === 'VIDEO_REVIEW_PENDING') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '③ 영상 검토 (v' + d.summary.videoVersion + ')' }));\n    card.appendChild(h('div', { class: 'btns' }, [\n      h('button', { class: 'b ok', type: 'button', text: '영상 승인',\n        onclick: function () { act('APPROVE_VIDEO', { note: '' }, '영상 v' + d.summary.videoVersion + '을(를) 승인할까요? 자동 게시는 되지 않습니다.'); } }),\n      h('button', { class: 'b', type: 'button', text: '수정 요청',\n        onclick: function () { const n = askNote('무엇을 고칠까요?', true); if (n !== null) act('REQUEST_VIDEO_CHANGES', { note: n }); } }),\n      h('button', { class: 'b bad', type: 'button', text: '반려',\n        onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_VIDEO', { note: n }, '이 릴스를 반려할까요?'); } }),\n    ]));\n  } else if (st === 'VIDEO_APPROVED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '게시 준비' }));\n    card.appendChild(h('div', { class: 'muted', text: '위 오류를 PRODUCTS에서 해결한 뒤 다시 시도하세요 (예: 쿠팡 파트너스 링크 입력).' }));\n    card.appendChild(h('div', { class: 'btns one' }, [h('button', { class: 'b primary', type: 'button', text: '게시 준비 다시 시도', onclick: function () { act('MARK_READY_TO_PUBLISH', {}); } })]));\n  } else if (st === 'READY_TO_PUBLISH' || st === 'COMPLETED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '④ 게시 · ManyChat (수동)' }));\n    card.appendChild(h('div', { class: 'btns one' }, [h('button', { class: 'b primary', type: 'button', text: '게시 자료 열기', onclick: openPack })]));\n    const b = h('div', { class: 'btns' });\n    if (can('CONFIRM_PUBLISHED')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '인스타그램 게시 완료',\n      onclick: function () { const u = askNote('게시물 URL (선택, https://www.instagram.com/…)', false); if (u !== null) act('CONFIRM_PUBLISHED', { instagramUrl: u }); } }));\n    if (can('CONFIRM_MANYCHAT')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: 'ManyChat 설정 완료',\n      onclick: function () { act('CONFIRM_MANYCHAT', {}, '키워드 \"' + d.keyword + '\" 자동화를 직접 켜고, 테스트 댓글로 올바른 링크가 오는 것을 확인했나요?'); } }));\n    card.appendChild(b);\n    if (st === 'COMPLETED') card.appendChild(h('div', { class: 'banner ok', text: '게시와 ManyChat 설정이 확인되었습니다.' }));\n  } else {\n    return;\n  }\n  main.appendChild(card);\n}\n\nfunction regenerate() {\n  const d = S.detail;\n  if (!confirm('수정 요청 메모를 반영해 이 대본 1개를 Gemini로 다시 작성할까요? (API 호출 1~2회)')) return;\n  busy(true, 'Gemini로 재생성 중… (최대 1분)');\n  call('apiRegenerateScript', d.summary.reelId, { expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; renderDetail(); toast('새 버전 v' + res.detail.summary.scriptVersion + '이(가) 검토 대기 중입니다.');\n    refreshAround();\n  });\n}\n\n// Signed render job for the Mac/cloud renderer. Issued only for approved reels in production.\nfunction openRenderJob() {\n  busy(true);\n  call('apiGetRenderJob', S.detail.summary.reelId).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    const main = clear(document.getElementById('main'));\n    main.appendChild(h('button', { class: 'link', type: 'button', onclick: renderDetail, text: '‹ ' + S.detail.summary.reelId }));\n    main.appendChild(h('div', { class: 'banner warn', text: '이 파일은 72시간 동안 유효합니다. Mac에서 renderer/jobs/' + res.fileName + ' 로 저장한 뒤:\\n\\nnpm run render -- --job renderer/jobs/' + res.fileName + ' --dry-run\\n(비용·계획 확인 후) --dry-run 없이 다시 실행' }));\n    const a = h('a', { href: 'data:application/json;charset=utf-8,' + encodeURIComponent(res.jobFile), download: res.fileName, text: '파일 다운로드 ↓' });\n    main.appendChild(h('div', { class: 'card' }, [a, copyBlock(res.fileName, res.jobFile, true)]));\n    window.scrollTo(0, 0);\n  });\n}\n\nfunction openPack() {\n  busy(true);\n  call('apiGetPublishingPack', S.detail.summary.reelId).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 6000); return; }\n    const p = res.pack;\n    const main = clear(document.getElementById('main'));\n    main.appendChild(h('button', { class: 'link', type: 'button', onclick: renderDetail, text: '‹ ' + p.reelId }));\n    main.appendChild(h('div', { class: 'banner warn', text: '자동 게시·자동 DM은 하지 않습니다. 아래 순서대로 직접 진행하세요.' }));\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '1. 영상' }),\n      h('a', { href: p.videoUrl, target: '_blank', rel: 'noopener', text: 'Drive에서 MP4 열기 ↗' }),\n      h('div', { class: 'muted', text: 'Drive 앱 → ⋯ → 사본 보내기 → 동영상 저장' }),\n    ]));\n    main.appendChild(h('div', { class: 'card' }, [h('h3', { style: 'margin-top:0', text: '2. 인스타그램 캡션' }), copyBlock('첫 줄 광고 표기 유지', p.instagramCaption)]));\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '3. ManyChat' }),\n      copyBlock('댓글 키워드', p.manychatKeyword, true),\n      copyBlock('DM 문구 (쿠팡 파트너스 링크 포함)', p.manychatDm),\n      copyBlock('쿠팡 파트너스 링크', p.affiliateUrl, true),\n    ]));\n    main.appendChild(h('div', { class: 'card' }, [h('h3', { style: 'margin-top:0', text: '체크리스트' }),\n      h('ol', { style: 'margin:0;padding-left:20px' }, p.checklist.map(function (c) { return h('li', { text: c }); }))]));\n    window.scrollTo(0, 0);\n  });\n}\n\n// ---------------------------------------------------------------- editor\nfunction renderEditor(main) {\n  const d = S.detail;\n  const r = d.reel;\n  // Storyboard scripts: each scene's line is the narration and the subtitle.\n  const storyboard = (r.scenes || []).some(function (s) { return s.beat || s.narration; });\n  const f = {};\n  function field(key, label, value, multiline) {\n    f[key] = multiline ? h('textarea', {}) : h('input', { type: 'text' });\n    f[key].value = value || '';\n    return h('div', {}, [h('label', { text: label }), f[key]]);\n  }\n  const card = h('div', { class: 'card' }, [\n    h('div', { class: 'banner warn', text: '수정하면 새 버전(v' + (d.summary.scriptVersion + 1) + ')이 되고 다시 승인해야 합니다. 숫자·기능은 PRODUCTS의 확인된 기능에 있는 것만 쓸 수 있습니다.' }),\n    field('concept', '컨셉', r.concept),\n    field('hook', '후킹 (40자 이내)', r.hook),\n    storyboard ? null : field('narration', '내레이션 (300자 이내)', r.narration, true),\n    storyboard ? null : field('captions', '자막 (한 줄에 하나, 각 40자 이내)', (r.captions || []).join('\\n'), true),\n  ]);\n  (r.scenes || []).forEach(function (s, i) {\n    card.appendChild(h('h3', { text: '장면 ' + s.scene_no + (s.beat ? ' · ' + s.beat : '') + ' · ' + s.duration_sec + '초' }));\n    if (storyboard) card.appendChild(field('s' + i + 'line', '내레이션 = 자막 (30자 이내, CTA에는 {키워드})', s.narration));\n    card.appendChild(field('s' + i + 'visual', '장면 설명', s.visual, true));\n    if (!storyboard) card.appendChild(field('s' + i + 'text', '화면 문구', s.on_screen_text));\n    card.appendChild(field('s' + i + 'flow', 'Flow 프롬프트 (영어)', s.flow_prompt, true));\n  });\n  card.appendChild(field('note', '수정 메모 (선택)', '', true));\n  card.appendChild(h('div', { class: 'btns' }, [\n    h('button', { class: 'b', type: 'button', text: '취소', onclick: function () { S.mode = 'view'; renderDetail(); } }),\n    h('button', { class: 'b primary', type: 'button', text: '저장 (v' + (d.summary.scriptVersion + 1) + ')', onclick: function () {\n      const edit = {\n        concept: f.concept.value, hook: f.hook.value,\n        narration: storyboard ? undefined : f.narration.value,\n        captions: storyboard ? undefined : f.captions.value.split('\\n').map(function (x) { return x.trim(); }).filter(Boolean),\n        scenes: (r.scenes || []).map(function (s, i) {\n          const out = { visual: f['s' + i + 'visual'].value, flow_prompt: f['s' + i + 'flow'].value };\n          if (storyboard) out.narration = f['s' + i + 'line'].value; else out.on_screen_text = f['s' + i + 'text'].value;\n          return out;\n        }),\n      };\n      act('EDIT_SCRIPT', { edit: edit, note: f.note.value });\n    } }),\n  ]));\n  main.appendChild(card);\n}\n\nloadDashboard();\n</script>\n</body>\n</html>\n";

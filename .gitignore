@@ -3,3 +3,7 @@ node_modules/
 .clasprc.json
 .env
 *.local
+renderer/.env
+renderer/output/
+renderer/clips/
+renderer/jobs/*.json

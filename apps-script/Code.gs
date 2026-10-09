@@ -19,7 +19,9 @@ function addReelsFactoryMenu() {
     .addSeparator()
     .addItem('시트 준비 (REELS / PERFORMANCE / LOG / AUDIT)', 'setupSheets')
     .addItem('iPhone 대시보드 링크 보기', 'showDashboardLink')
+    .addItem('렌더 키 보기 (Mac 렌더러 설정용)', 'showRenderSecret')
     .addItem('Gemini API 키 설정', 'promptForGeminiApiKey')
+    .addItem('Gemini 모델 확인 (무료)', 'showGeminiModelCheck')
     .addSeparator()
     .addItem('테스트: PRD-001 오프라인 검증', 'runOfflineFixtureTest')
     .addItem('테스트: PRD-001 Gemini 실제 호출 (시트에 쓰지 않음)', 'runLiveGeminiTestPRD001')
@@ -121,7 +123,7 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
   for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
     const raw = callGemini_(buildGeminiPrompt(product, lastErrors));
     const result = prepareReelRecords(product, raw, existingIds, existingKeywords, {
-      model: getGeminiModel(),
+      model: RF_GEMINI_STATE.lastModel || getGeminiModel(),
       generatedAt: new Date(),
     });
     if (!result.errors.length) return { records: result.records, attempts: attempt };
@@ -186,14 +188,39 @@ function generateScriptsForProduct_(ss, rowNumber, options) {
   const reelsSheet = ensureSheet_(ss, RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS);
   const reelsMap = getHeaderMap_(reelsSheet);
   const existingIds = readColumn_(reelsSheet, reelsMap, '릴스ID');
-  const existingKeywords = readColumn_(reelsSheet, reelsMap, 'ManyChat 키워드');
+  const existingKeywords = readRecords_(reelsSheet, ['ManyChat 키워드', '상품ID'])
+    .map(function (r) {
+      return { keyword: normalizeText(r['ManyChat 키워드']), productId: normalizeText(r['상품ID']) };
+    })
+    .filter(function (r) {
+      return r.keyword;
+    });
   const dupIds = findDuplicates(existingIds);
   if (dupIds.length) {
     throw new Error('REELS에 중복된 릴스ID가 있습니다: ' + dupIds.join(', ') + '. 정리한 뒤 다시 실행하세요.');
   }
-  const dupKeywords = findDuplicates(existingKeywords);
-  if (dupKeywords.length) {
-    throw new Error('REELS에 중복된 ManyChat 키워드가 있습니다: ' + dupKeywords.join(', ') + '. 정리한 뒤 다시 실행하세요.');
+  // A keyword may repeat within one product (same link) but must never point to two products.
+  const byKeyword = {};
+  existingKeywords.forEach(function (k) {
+    const key = k.keyword.toUpperCase();
+    (byKeyword[key] = byKeyword[key] || {})[k.productId] = true;
+  });
+  const clashes = Object.keys(byKeyword).filter(function (k) {
+    return Object.keys(byKeyword[k]).length > 1;
+  });
+  if (clashes.length) {
+    throw new Error('REELS에서 같은 ManyChat 키워드가 여러 상품에 쓰이고 있습니다: ' + clashes.join(', ') + '. 정리한 뒤 다시 실행하세요.');
+  }
+
+  // Check the product keyword before paying for Gemini: it must not belong to another product.
+  const productKeyword = normalizeText(product.keyword).toUpperCase();
+  if (productKeyword) {
+    const owner = existingKeywords.filter(function (k) {
+      return k.keyword.toUpperCase() === productKeyword && k.productId !== product.id;
+    })[0];
+    if (owner) {
+      throw new Error('ManyChat 키워드 "' + product.keyword + '"가 이미 다른 릴스·상품(' + owner.productId + ')에서 쓰이고 있습니다. 상품마다 다른 키워드를 쓰세요.');
+    }
   }
 
   const already = existingIds.filter(function (id) {

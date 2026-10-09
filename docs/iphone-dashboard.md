@@ -85,6 +85,6 @@ Deploy → **Manage deployments** → ✏️ → Version: **New version** → De
 - **Several Google accounts in Safari** can make Apps Script web apps fail with "Sorry, unable to open the file" or a blank page. Use a Safari profile signed in to only the workbook-owner account, or a private tab.
 - **Video preview** is an embedded Google Drive player. If Safari blocks it (cross-site tracking prevention), tap **Google Drive에서 열기** and play it in the Drive app. The Drive file must be viewable by your account.
 - **Google Flow is not automated.** No supported Flow API has been verified for this project. The dashboard gives you the per-scene prompts to paste into Flow by hand.
-- **FFmpeg rendering is the next milestone (Mac).** Until then, *완성 MP4 등록* takes a Google Drive share link to a finished MP4 that you produced yourself. The renderer will later register videos the same way.
+- **Rendering runs on your Mac** ([rendering.md](rendering.md)): tap *렌더 작업 파일 (Mac)*, render, upload the MP4 to Drive, then *완성 MP4 등록*. Automatic upload and registration are a later step.
 - **Speed:** generating or regenerating scripts calls Gemini and can take up to about a minute. Other dashboard actions take 1–3 seconds (Apps Script is not instant).
 - The dashboard does not edit PRODUCTS. Product data, links and permissions are entered in the sheet (touchpoint ①).

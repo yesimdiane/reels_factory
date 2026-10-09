@@ -127,7 +127,7 @@ function api_(fn) {
 }
 
 function productFromRecord_(rec) {
-  const f = RF_CONFIG.PRODUCT_FIELDS;
+  const f = Object.assign({}, RF_CONFIG.PRODUCT_FIELDS, RF_CONFIG.PRODUCT_OPTIONAL_FIELDS);
   const p = { rowNumber: rec._row };
   Object.keys(f).forEach(function (k) {
     p[k] = rec[f[k]];
@@ -144,7 +144,10 @@ function loadData_(ss) {
     return f[k];
   });
   requireHeaders_(productsSheet, productHeaders);
-  const products = readRecords_(productsSheet, productHeaders)
+  const optionalHeaders = Object.keys(RF_CONFIG.PRODUCT_OPTIONAL_FIELDS).map(function (k) {
+    return RF_CONFIG.PRODUCT_OPTIONAL_FIELDS[k];
+  });
+  const products = readRecords_(productsSheet, productHeaders.concat(optionalHeaders))
     .map(productFromRecord_)
     .filter(function (p) {
       return p.id;
@@ -206,6 +209,15 @@ function allowedActions_(status) {
   });
 }
 
+function parseFlowScenePrompts_(row) {
+  try {
+    const v = JSON.parse(cellText_(row['Flow 장면 프롬프트']) || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 function reelDetail_(ss, reelId) {
   const data = loadData_(ss);
   const found = findReel_(data, reelId);
@@ -246,6 +258,7 @@ function reelDetail_(ss, reelId) {
     keyword: cellText_(row['ManyChat 키워드']),
     disclosure: cellText_(row['광고 표기']),
     flowPrompts: cellText_(row['Flow 프롬프트']),
+    flowScenePrompts: parseFlowScenePrompts_(row),
     flowStatus: cellText_(row['Flow 생성']),
     approvedVersion: cellText_(row['승인 대본 버전']),
     approvedIntact: isApprovedScriptIntact(row),
@@ -407,7 +420,7 @@ function apiRegenerateScript(reelId, input) {
         expectedScriptVersion: scriptVersionOf(found.row),
         reel: newReel,
         note: note,
-      }, 'Gemini (' + getGeminiModel() + ')');
+      }, 'Gemini (' + (RF_GEMINI_STATE.lastModel || getGeminiModel()) + ')');
     });
     return { detail: reelDetail_(ss, id) };
   });
@@ -431,4 +444,64 @@ function apiGetPublishingPack(reelId) {
     const found = findReel_(data, normalizeText(reelId));
     return { pack: buildPublishingPack(found.row, found.product) };
   });
+}
+
+// ---------------------------------------------------------------- render jobs
+
+/** Shared HMAC key between this script and the renderer. Created on first use. */
+function getRenderSecret_() {
+  const props = PropertiesService.getScriptProperties();
+  let secret = props.getProperty('RF_RENDER_SECRET');
+  if (!secret) {
+    secret = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+    props.setProperty('RF_RENDER_SECRET', secret);
+  }
+  return secret;
+}
+
+function signRenderJob_(payload) {
+  return bytesToHex_(Utilities.computeHmacSha256Signature(payload, getRenderSecret_(), Utilities.Charset.UTF_8));
+}
+
+/**
+ * Issues a signed render job for an approved reel in production. No paid API is called here;
+ * the renderer spends TTS characters only after verifying this signature.
+ */
+function apiGetRenderJob(reelId) {
+  return api_(function (user) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const data = loadData_(ss);
+    const found = findReel_(data, normalizeText(reelId));
+    const payload = buildRenderJobPayload(found.row, found.product, new Date().toISOString(), RF_RENDER_JOB_TTL_HOURS);
+    const job = JSON.parse(payload);
+    appendAudit_(ss, [{
+      '일시': new Date(),
+      '릴스ID': job.reelId,
+      '상품ID': job.productId,
+      '작업': 'RENDER_JOB_ISSUED',
+      '이전 상태': job.status,
+      '새 상태': job.status,
+      '대본 버전': job.scriptVersion,
+      '영상 버전': job.nextVideoVersion - 1,
+      '작업자': user,
+      '메모': '만료: ' + job.expiresAt,
+    }]);
+    return {
+      fileName: job.reelId + '_v' + job.scriptVersion + '.render-job.json',
+      jobFile: JSON.stringify({ payload: payload, signature: signRenderJob_(payload) }, null, 2),
+    };
+  });
+}
+
+/** Menu: shows the render key once so the operator can put it in renderer/.env on the Mac. */
+function showRenderSecret() {
+  const ui = SpreadsheetApp.getUi();
+  const secret = escapeHtml_(getRenderSecret_());
+  ui.showModalDialog(
+    HtmlService.createHtmlOutput(
+      '<p style="font:14px sans-serif">Mac의 <code>renderer/.env</code> 파일에 아래 한 줄을 넣으세요. 이 키가 있어야 승인된 렌더 작업만 실행됩니다. 다른 사람과 공유하지 마세요.</p>' +
+        '<pre style="font:13px monospace;white-space:pre-wrap;word-break:break-all;background:#f3f3f3;padding:8px">RF_RENDER_SECRET=' + secret + '</pre>'
+    ).setWidth(460).setHeight(200),
+    '렌더 키 (Mac 설정용)'
+  );
 }

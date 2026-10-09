@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const crypto = require('node:crypto');
 
 const BUNDLE = path.join(__dirname, '..', '..', 'dist', 'ReelsFactory.gs');
 const PRODUCT_HEADERS = ['상품ID', '상품명', '카테고리', '확인된 기능', '타깃', '쿠팡파트너스 URL', '영상 소스 URL', '영상 사용 허가 상태', '제작 상태'];
@@ -63,7 +64,7 @@ class MockSheet {
 function createEnv(opts = {}) {
   const sheets = { PRODUCTS: new MockSheet('PRODUCTS', [PRODUCT_HEADERS, ...(opts.products || [])]) };
   const props = Object.assign({ GEMINI_API_KEY: 'test-key' }, opts.reviewers ? { RF_REVIEWERS: opts.reviewers } : {});
-  const state = { email: opts.email ?? 'owner@example.com', fetches: [], alerts: [], locks: 0 };
+  const state = { email: opts.email ?? 'owner@example.com', fetches: [], modelCalls: [], alerts: [], locks: 0 };
   const ss = {
     getSheetByName: (n) => sheets[n] || null,
     insertSheet: (n) => (sheets[n] = new MockSheet(n, [])),
@@ -100,6 +101,17 @@ function createEnv(opts = {}) {
     HtmlService: { createHtmlOutput: htmlOutput, createHtmlOutputFromFile: () => htmlOutput('') },
     UrlFetchApp: {
       fetch(url, o) {
+        const m = url.match(/\/models\/([^:/?]+)(:generateContent)?$/);
+        const model = m ? decodeURIComponent(m[1]) : '';
+        state.modelCalls.push((m && m[2] ? 'generate ' : 'get ') + model);
+        if ((opts.missingModels || []).includes(model)) {
+          const t = JSON.stringify({ error: { code: 404, message: `models/${model} is not found for API version v1beta` } });
+          return { getResponseCode: () => 404, getContentText: () => t };
+        }
+        if (m && !m[2]) {
+          const t = JSON.stringify({ name: 'models/' + model, displayName: model, supportedGenerationMethods: ['generateContent', 'countTokens'] });
+          return { getResponseCode: () => 200, getContentText: () => t };
+        }
         const body = JSON.parse(o.payload);
         state.fetches.push(body);
         let payload = typeof opts.gemini === 'function' ? opts.gemini(state.fetches.length, body) : opts.gemini;
@@ -108,7 +120,14 @@ function createEnv(opts = {}) {
         return { getResponseCode: () => 200, getContentText: () => text };
       },
     },
-    Utilities: { sleep() {} },
+    Utilities: {
+      sleep() {},
+      getUuid: () => crypto.randomUUID(),
+      Charset: { UTF_8: 'UTF-8' },
+      // Like Apps Script: returns signed bytes (-128..127).
+      computeHmacSha256Signature: (value, key) =>
+        Array.from(crypto.createHmac('sha256', Buffer.from(key, 'utf8')).update(value, 'utf8').digest()).map((b) => (b > 127 ? b - 256 : b)),
+    },
   });
   vm.runInContext(fs.readFileSync(BUNDLE, 'utf8'), ctx, { filename: 'ReelsFactory.gs' });
   const gs = (expr) => vm.runInContext(expr, ctx);

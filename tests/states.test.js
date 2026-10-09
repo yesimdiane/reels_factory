@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const SRC = path.join(__dirname, '..', 'apps-script');
 const ctx = vm.createContext({ console });
-for (const f of ['Config.gs', 'Validation.gs', 'States.gs', 'Reels.gs', 'Prompt.gs', 'Fixtures.gs']) {
+for (const f of ['Config.gs', 'Validation.gs', 'States.gs', 'Reels.gs', 'Prompt.gs', 'Fixtures.gs', 'FlowPrompts.gs']) {
   vm.runInContext(fs.readFileSync(path.join(SRC, f), 'utf8'), ctx, { filename: f });
 }
 const gs = (expr) => vm.runInContext(expr, ctx);
@@ -123,10 +123,14 @@ test('EDIT_SCRIPT creates a new version, clears approval, and is validated like 
 test('the approved version is exactly what was edited and reviewed', () => {
   const p = ok();
   const row = freshRow(p);
-  run(row, p, 'EDIT_SCRIPT', { edit: { captions: ['새 자막 하나', '새 자막 둘'] } });
+  const scenes = JSON.parse(row['장면(JSON)']).map((sc, i) => (i === 1 ? { narration: '저는 문에 붙여 썼어요.' } : {}));
+  run(row, p, 'EDIT_SCRIPT', { edit: { scenes } });
   const approve = run(row, p, 'APPROVE_SCRIPT');
   assert.equal(row['승인 대본 버전'], 2);
-  assert.equal(JSON.parse(approve.audit['스냅샷(JSON)'])['자막'], '새 자막 하나\n새 자막 둘');
+  const snap = JSON.parse(approve.audit['스냅샷(JSON)']);
+  assert.equal(snap['자막'].split('\n')[1], '저는 문에 붙여 썼어요.', 'subtitles follow the edited scene line');
+  assert.match(snap['내레이션'], /저는 문에 붙여 썼어요\./);
+  assert.equal(JSON.parse(snap['장면(JSON)'])[1].narration, '저는 문에 붙여 썼어요.');
 });
 
 test('request changes → regenerate → review again', () => {
@@ -272,4 +276,47 @@ test('parseDriveFileId accepts share links, open?id= links and bare IDs', () => 
   assert.equal(f('https://drive.google.com/open?id=' + id), id);
   assert.equal(f(id), id);
   assert.equal(f('https://youtube.com/watch?v=abc'), '');
+});
+
+test('storyboard rules: beats in order, CTA keyword placeholder, scene length and subtitle length', () => {
+  const v = (mut) => {
+    const reel = plain(gs('FIXTURE_PRD_001_GEMINI_RESPONSE')).reels[0];
+    mut(reel);
+    return plain(gs('validateReelContent')(reel, product(), 'R', { requireStoryboard: true })).join('\n');
+  };
+  assert.equal(v(() => {}), '');
+  assert.match(v((r) => (r.scenes[0].beat = 'DEMO')), /첫 장면은 HOOK/);
+  assert.match(v((r) => (r.scenes[4].beat = 'BENEFIT')), /마지막 장면은 CTA/);
+  assert.match(v((r) => ([r.scenes[1].beat, r.scenes[3].beat] = ['BENEFIT', 'DEMO'])), /순서/);
+  assert.match(v((r) => (r.scenes[4].narration = '제품 정보는 댓글에')), /\{키워드\}/);
+  assert.match(v((r) => (r.scenes[2].duration_sec = 8)), /2~6초/);
+  assert.match(v((r) => (r.scenes[3].narration = '가'.repeat(31))), /자막 2줄 이내/);
+  assert.match(v((r) => (r.scenes[3].narration = '3초 만에 설치 끝')), /수치.*"3"/);
+});
+
+test('Google Flow clip coverage: valid scenes fit one 8 s clip; a longer scene is split into S3 + S3b, never an impossible plan', () => {
+  const F = plain(gs('RF_CONFIG.FLOW'));
+  assert.equal(F.CLIP_SEC, 8);
+  // The validator's scene maximum always fits one clip (minus margin).
+  assert.ok(gs('RF_CONFIG.LIMITS.SCENE_MAX_SEC') <= F.CLIP_SEC - F.CLIP_MARGIN_SEC);
+  const one = plain(gs('buildFlowScenePrompts')(freshRow(), product()));
+  assert.equal(one.length, 5);
+  assert.ok(one.every((p) => p.parts === 1 && p.coversSec <= F.CLIP_SEC - F.CLIP_MARGIN_SEC));
+  assert.deepEqual(one.map((p) => p.file), ['S1.mp4', 'S2.mp4', 'S3.mp4', 'S4.mp4', 'S5.mp4']);
+  // With shorter clips (e.g. a Flow setting change), long scenes get more clip requirements.
+  const row = freshRow();
+  gs('RF_CONFIG.FLOW.CLIP_SEC = 4');
+  try {
+    const split = plain(gs('buildFlowScenePrompts')(row, product()));
+    const s3 = split.filter((p) => p.scene === 3);
+    assert.deepEqual(s3.map((p) => p.file), ['S3.mp4', 'S3b.mp4']);
+    assert.ok(split.every((p) => p.coversSec <= 3.5), JSON.stringify(split.map((p) => [p.file, p.coversSec])));
+    assert.match(s3[1].prompt, /PART 2 of 2: continue the same action/);
+    // …and the validator now refuses scenes a single clip cannot cover.
+    const reel = plain(gs('FIXTURE_PRD_001_GEMINI_RESPONSE')).reels[0];
+    const errs = plain(gs('validateReelContent')(reel, product(), 'R', { requireStoryboard: true })).join('\n');
+    assert.match(errs, /2~3\.5초여야 합니다 \(Flow 클립 4초/);
+  } finally {
+    gs('RF_CONFIG.FLOW.CLIP_SEC = 8');
+  }
 });
