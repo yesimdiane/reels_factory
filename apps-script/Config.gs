@@ -147,6 +147,8 @@ const RF_CONFIG = {
     CAMERA: {
       HOOK: 'handheld medium shot at eye level, slight natural movement; ends with a quick natural whip pan',
       PROBLEM: 'handheld medium shot that slowly moves closer to the problem detail',
+      EMPATHY: 'handheld medium shot that slowly moves closer to the annoying detail, as if the viewer is standing there',
+      SOLUTION: 'handheld medium shot; the product comes into frame naturally in the same place as the problem',
       DEMO: 'starts as a close-up of the hands using the product, then slowly pulls back to show the product in place; handheld, smooth',
       BENEFIT: 'slow handheld walk-through: wide view of the space first, then a closer look at the tidy result',
       CTA: 'slow push-in to a close-up of the product in place, then hold steady for the last 2 seconds',
@@ -154,14 +156,41 @@ const RF_CONFIG = {
     INTERACTION: {
       HOOK: 'show the everyday situation; the product may be absent or only in the background',
       PROBLEM: 'show the problem clearly; do not show the product solving it yet',
+      EMPATHY: 'show why the situation is annoying (clutter, no space, things in the way); no product yet',
+      SOLUTION: 'a person\'s hands bring in or place the product in the space from the earlier scenes; calm and natural, no presenting gesture',
       DEMO: 'a person\'s hands use the product exactly as described, only in ways the verified features allow',
       BENEFIT: 'show the result with the product in place and being used naturally',
       CTA: 'the product is the clear subject, mounted or placed exactly as in the earlier scenes',
     },
   },
 
-  // Story structure. PROBLEM may be folded into the HOOK scene; DEMO and BENEFIT are required.
-  BEATS: ['HOOK', 'PROBLEM', 'DEMO', 'BENEFIT', 'CTA'],
+  // Story structure. New scripts: HOOK → EMPATHY → SOLUTION → DEMO → CTA (BENEFIT optional before CTA).
+  // Older scripts (HOOK → PROBLEM → DEMO → BENEFIT → CTA) stay valid. PROBLEM and EMPATHY share a slot.
+  BEATS: ['HOOK', 'PROBLEM', 'EMPATHY', 'SOLUTION', 'DEMO', 'BENEFIT', 'CTA'],
+  BEAT_RANK: { HOOK: 0, PROBLEM: 1, EMPATHY: 1, SOLUTION: 2, DEMO: 3, BENEFIT: 4, CTA: 5 },
+  // Beats where the product is on screen (Flow prompts and the renderer's footage check).
+  PRODUCT_BEATS: ['SOLUTION', 'DEMO', 'BENEFIT', 'CTA'],
+
+  // Creative angles: one reel each, so the three scripts never feel alike.
+  ANGLES: {
+    EVERYDAY_FRUSTRATION: 'A 일상 불편',
+    SMALL_SPACE: 'B 좁은 공간',
+    LIFESTYLE_SITUATION: 'C 생활 상황',
+  },
+
+  // Hook style for new Gemini scripts (not applied to reviewer edits): a relatable problem, spoken in
+  // the first ~2–3 seconds — not an ad. Each pattern is a common ad-style hook.
+  HOOK_STYLE: {
+    MAX_CHARS: 25,
+    AD_PATTERNS: [
+      { pattern: /니다[.!?~…]*$/, why: '광고 문구 같은 "~니다" 말투' },
+      { pattern: /(다면|라면|이라면)\s*[?？]*[.!~…]*$/, why: '"~다면?" 같은 뻔한 질문형' },
+      { pattern: /(하시나요|시나요|신가요|있나요|아시나요|어떨까요|어떠세요|궁금하지\s*않|해\s*보셨나요)\s*[?？]*[.!~…]*$/, why: '"~하시나요?" 같은 뻔한 질문형' },
+      { pattern: /(하세요|해\s*보세요|만나\s*보세요|확인하세요)[.!~…]*$/, why: '광고 같은 권유형' },
+      { pattern: /(하나로|소개|추천|필수템|꿀템|신박템|강추|이것만|역대)/, why: '광고 문구' },
+      { pattern: /달라(집니다|져요|졌어요|지는)/, why: '"~이 달라집니다" 같은 결과 약속' },
+    ],
+  },
   // Written by Gemini in the CTA line; replaced with the reel's ManyChat keyword at render time.
   KEYWORD_PLACEHOLDER: '{키워드}',
 
@@ -197,6 +226,7 @@ const RF_CONFIG = {
     { type: '수납 용량', pattern: /(대용량|여러\s*개|몇\s*개(?:든|라도)|가득|\d+\s*개까지)/ },
     { type: '가격', pattern: /(가격|할인|세일|쿠폰|특가|무료\s*배송|로켓|가성비|저렴|(?<![가-힣])싸(?:요|다|게|고)|(?:만|천)\s*원|공짜|이벤트|혜택)/ },
     { type: '후기·인기', pattern: /(후기|리뷰|별점|평점|구매평|만족도|재구매|판매량|인기|베스트|입소문|난리|품절|대박|핫한|다들\s*(?:사|쓰))/ },
+    { type: '체험·결과', pattern: /(써\s*보니|써\s*봤|써\s*본\s|사용해\s*보니|사용해\s*봤|\d+\s*(?:일|주|달|개월)\s*(?:째|동안|간)|한\s*달\s*(?:째|동안|간|써)|일주일\s*(?:째|동안|간|써)|바꿨더니|붙였더니|샀더니)/ },
     { type: '인증', pattern: /(특허|인증|KC|FDA|친환경|무독성|국내산|국산|최고|최강)/ },
   ],
 };

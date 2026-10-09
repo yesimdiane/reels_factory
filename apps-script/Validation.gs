@@ -352,7 +352,7 @@ function validateReelContent(reel, product, label, options) {
         }
       }
     });
-    if (storyboard) storyboardErrors_(reel.scenes).forEach(function (e) {
+    if (storyboard) storyboardErrors_(reel.scenes, options && options.newStructure).forEach(function (e) {
       errors.push(p + e);
     });
     if (total < L.MIN_TOTAL_SEC || total > L.MAX_TOTAL_SEC) {
@@ -414,8 +414,9 @@ function validateReelContent(reel, product, label, options) {
  * Validates the parsed Gemini payload: exactly `expectedCount` reels (default 3), each passing
  * validateReelContent, with distinct concepts and hooks. Returns { errors: string[], reels: object[] }.
  */
-function validateGeminiReels(payload, product, expectedCount) {
+function validateGeminiReels(payload, product, expectedCount, options) {
   const count = expectedCount || RF_CONFIG.REELS_PER_PRODUCT;
+  const avoidHooks = (options && options.avoidHooks) || [];
   const errors = [];
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.reels)) {
     return { errors: ['응답에 "reels" 배열이 없습니다.'], reels: [], reelErrors: [] };
@@ -425,7 +426,13 @@ function validateGeminiReels(payload, product, expectedCount) {
     errors.push('릴스 대본은 정확히 ' + count + '개여야 합니다 (받은 개수: ' + reels.length + ').');
   }
   const reelErrors = reels.map(function (reel, i) {
-    return dedupe_(validateReelContent(reel, product, '릴스 ' + (i + 1), { requireStoryboard: true, requireFactRefs: true }));
+    const label = '릴스 ' + (i + 1);
+    const opts = { requireStoryboard: true, requireFactRefs: true, newStructure: true };
+    const errs = validateReelContent(reel, product, label, opts).concat(hookStyleErrors_(reel, product, label, avoidHooks));
+    if (count > 1 && reel && !RF_CONFIG.ANGLES[reel.angle]) {
+      errs.push(label + ': angle은 ' + Object.keys(RF_CONFIG.ANGLES).join(', ') + ' 중 하나여야 합니다.');
+    }
+    return dedupe_(errs);
   });
   reelErrors.forEach(function (list) {
     list.forEach(function (e) {
@@ -445,6 +452,23 @@ function validateGeminiReels(payload, product, expectedCount) {
     if (h) seenHooks[h] = i + 1;
     if (c) seenConcepts[c] = i + 1;
   });
+  // Three different angles and three different openings.
+  if (count > 1) {
+    const seenAngles = {};
+    const seenOpenings = {};
+    reels.forEach(function (reel, i) {
+      if (!reel) return;
+      if (RF_CONFIG.ANGLES[reel.angle] && seenAngles[reel.angle]) {
+        errors.push('릴스 ' + (i + 1) + ': angle ' + reel.angle + '이 릴스 ' + seenAngles[reel.angle] + '와 같습니다. 세 릴스는 A·B·C 각도를 하나씩 써야 합니다.');
+      }
+      if (reel.angle) seenAngles[reel.angle] = i + 1;
+      const o = hookOpening_(reel.hook);
+      if (o && seenOpenings[o]) {
+        errors.push('릴스 ' + (i + 1) + ': hook이 릴스 ' + seenOpenings[o] + '와 같은 말("' + o + '")로 시작합니다. 서로 다른 첫마디로 쓰세요.');
+      }
+      if (o) seenOpenings[o] = i + 1;
+    });
+  }
 
   // De-duplicate identical messages (e.g. the same number repeated).
   const unique = dedupe_(errors);
@@ -471,6 +495,10 @@ function dedupe_(list) {
 function canonicalReel_(reel, product) {
   const ctx = factContext_(product);
   const out = JSON.parse(JSON.stringify(reel));
+  // The creative angle is shown in 컨셉 (no new column), e.g. "A 일상 불편 · 출근길 우산".
+  const angleLabel = RF_CONFIG.ANGLES[out.angle];
+  if (angleLabel && normalizeText(out.concept).indexOf(angleLabel) !== 0) out.concept = angleLabel + ' · ' + normalizeText(out.concept);
+  delete out.angle;
   const used = [];
   const add = function (ref) {
     const i = resolveFactRef_(ref, ctx);
@@ -502,7 +530,7 @@ function canonicalReel_(reel, product) {
  * Builds the best payload from several attempts without another paid call: for each position the
  * latest reel that passed on its own. Returns { errors, reels } like validateGeminiReels, or null.
  */
-function combineValidReels(attempts, product, expectedCount) {
+function combineValidReels(attempts, product, expectedCount, options) {
   const count = expectedCount || RF_CONFIG.REELS_PER_PRODUCT;
   const picked = [];
   for (let i = 0; i < count; i++) {
@@ -515,25 +543,37 @@ function combineValidReels(attempts, product, expectedCount) {
     }
     if (!picked[i]) return null;
   }
-  const res = validateGeminiReels({ reels: picked }, product, count);
+  const res = validateGeminiReels({ reels: picked }, product, count, options);
   return res.errors.length ? null : res;
 }
 
-/** HOOK first, CTA last, DEMO and BENEFIT present, beats in story order, keyword placeholder in the CTA. */
-function storyboardErrors_(scenes) {
+/**
+ * HOOK first, CTA last, beats in story order, keyword placeholder in the CTA.
+ * New scripts (newStructure): HOOK → EMPATHY → SOLUTION → DEMO → CTA (BENEFIT optional).
+ * Other scripts (older rows, reviewer edits): DEMO plus BENEFIT or SOLUTION.
+ */
+function storyboardErrors_(scenes, newStructure) {
   const errors = [];
   const beats = scenes.map(function (sc) {
     return sc ? sc.beat : '';
   });
-  const order = RF_CONFIG.BEATS;
+  const rank = RF_CONFIG.BEAT_RANK;
   if (beats[0] !== 'HOOK') errors.push('첫 장면은 HOOK이어야 합니다.');
   if (beats[beats.length - 1] !== 'CTA') errors.push('마지막 장면은 CTA여야 합니다.');
-  ['DEMO', 'BENEFIT'].forEach(function (b) {
-    if (beats.indexOf(b) === -1) errors.push(b + ' 장면이 필요합니다.');
-  });
+  const has = function (b) {
+    return beats.indexOf(b) !== -1;
+  };
+  if (newStructure) {
+    if (!has('EMPATHY') && !has('PROBLEM')) errors.push('EMPATHY 장면(이 상황이 왜 불편한지)이 필요합니다.');
+    if (!has('SOLUTION')) errors.push('SOLUTION 장면(제품을 자연스럽게 등장)이 필요합니다.');
+    if (!has('DEMO')) errors.push('DEMO 장면(확인된 기능 시연)이 필요합니다.');
+  } else {
+    if (!has('DEMO')) errors.push('DEMO 장면이 필요합니다.');
+    if (!has('BENEFIT') && !has('SOLUTION')) errors.push('BENEFIT 또는 SOLUTION 장면이 필요합니다.');
+  }
   for (let i = 1; i < beats.length; i++) {
-    if (order.indexOf(beats[i]) < order.indexOf(beats[i - 1])) {
-      errors.push('장면 순서는 HOOK → PROBLEM → DEMO → BENEFIT → CTA여야 합니다.');
+    if (rank[beats[i]] < rank[beats[i - 1]]) {
+      errors.push('장면 순서는 HOOK → EMPATHY → SOLUTION → DEMO → (BENEFIT) → CTA여야 합니다.');
       break;
     }
   }
@@ -541,6 +581,44 @@ function storyboardErrors_(scenes) {
   if (cta && typeof cta.narration === 'string' && cta.narration.indexOf(RF_CONFIG.KEYWORD_PLACEHOLDER) === -1) {
     errors.push('CTA 내레이션에 댓글 키워드 자리 "' + RF_CONFIG.KEYWORD_PLACEHOLDER + '"가 필요합니다.');
   }
+  return errors;
+}
+
+/** The first two words of a hook, for spotting three reels that open the same way. */
+function hookOpening_(hook) {
+  return normalizeText(hook).replace(/[^\s가-힣A-Za-z0-9]/g, '').split(' ').slice(0, 2).join(' ');
+}
+
+/**
+ * Hook style for new Gemini scripts: short, starts from a relatable problem, not an ad.
+ * Not applied to reviewer edits (the reviewer decides). Returns error strings with a fix.
+ */
+function hookStyleErrors_(reel, product, label, avoidHooks) {
+  const errors = [];
+  const hook = normalizeText(reel && reel.hook);
+  if (!hook) return errors;
+  const H = RF_CONFIG.HOOK_STYLE;
+  const p = label + ': hook "' + hook + '" — ';
+  const fix = ' 시청자가 겪는 구체적인 불편·상황으로 시작하는 짧은 구어체로 다시 쓰세요 (예: "급하게 출근하면 꼭 까먹는 우산!").';
+  if ([...hook].length > H.MAX_CHARS) {
+    errors.push(p + '첫 2~3초에 말할 수 있게 ' + H.MAX_CHARS + '자 이내여야 합니다.');
+  }
+  // Problem first: the hook must not open with the product.
+  const nameTokens = normalizeText(product && product.name).split(' ').filter(function (t) {
+    return [...t].length >= 2;
+  });
+  const first = hook.split(' ')[0];
+  if (nameTokens.some(function (t) { return first.indexOf(t) === 0; })) {
+    errors.push(p + '제품 이름으로 시작합니다. 제품이 아니라 상황·불편으로 시작하세요.' + fix);
+  }
+  H.AD_PATTERNS.forEach(function (rule) {
+    if (rule.pattern.test(hook)) errors.push(p + rule.why + '입니다.' + fix);
+  });
+  (avoidHooks || []).forEach(function (old) {
+    if (normalizeText(old) && looseText_(old) === looseText_(hook)) {
+      errors.push(p + '이 상품의 기존 릴스 hook과 같습니다. 새로운 hook을 쓰세요.');
+    }
+  });
   return errors;
 }
 

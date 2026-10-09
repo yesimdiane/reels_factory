@@ -31,7 +31,7 @@ Caption size was verified by rendering. Glyph height is 37.6 px in the reference
 It runs on your Mac today. The same code runs in a container (Cloud Run) later, with only configuration changes.
 
 ```
-Approved script (storyboard: HOOK → PROBLEM → DEMO → BENEFIT → CTA, one narration line per scene)
+Approved script (storyboard: HOOK → EMPATHY → SOLUTION → DEMO → CTA — older scripts: HOOK → PROBLEM → DEMO → BENEFIT → CTA; one narration line per scene)
    │ 렌더 작업 파일 (Mac)  ← signed by the Sheet; valid 72 h; no links or keys
    ▼
 renderer/cli.js render
@@ -73,7 +73,7 @@ There is **no code path that draws coloured slides or placeholder visuals**. Wit
   - To use footage you filmed for one scene, set that scene's `source` to `own-footage`.
   - To replace a single cut, add a file `S3-2.mp4`.
   - Marketplace or Coupang listing videos are rejected. `licensed` requires `rights`.
-- **Product scenes and AI footage:** DEMO, BENEFIT and CTA scenes must show the product. Because the product in AI-generated scenes may differ from the real one, the render manifest flags AI footage. At **video review (③)** you confirm shape, colour and size match the real product. The publishing checklist reminds you to turn on Instagram's **AI info** label.
+- **Product scenes and AI footage:** SOLUTION, DEMO, BENEFIT and CTA scenes must show the product. Because the product in AI-generated scenes may differ from the real one, the render manifest flags AI footage. At **video review (③)** you confirm shape, colour and size match the real product. The publishing checklist reminds you to turn on Instagram's **AI info** label.
 - **8 s clip coverage:** every scene must fit its clip. The renderer predicts each scene's length from its narration **before TTS** and, if a scene would outgrow one clip (7.5 s usable), asks for an extra clip `S3b.mp4`. It re-checks with the real voice after TTS; the voice is cached, so the rerun is free. Details: [cost-safety.md](cost-safety.md#2-google-flow-clips-are-8-seconds).
 - **Clip checks:** ≥720p, at least the covered length + 0.5 s (≥4 s, ≤8 s), not a single colour, not a still image. Any problem → `ASSETS_REQUIRED`, and `SHOTLIST.md` + `FLOW_PROMPTS.md` are written next to the clips. Both are written once and not rewritten if unchanged.
 
@@ -166,7 +166,7 @@ Steps 2 and 3 run **before** TTS on purpose. A render that would fail anyway, be
    ```
    This lists the QC checks, the footage status and the TTS cost.
 3. **Footage:** if footage is missing, `npm run render -- --job …` stops with `ASSETS_REQUIRED` and writes `renderer/clips/<릴스ID>/SHOTLIST.md`.
-   - Film the real-product shots with your iPhone (9:16, 4K/1080p, 30 fps). Generate HOOK/PROBLEM context shots in Flow if you like.
+   - Film the real-product shots with your iPhone (9:16, 4K/1080p, 30 fps). Generate HOOK/EMPATHY context shots in Flow if you like.
    - Name the files as in the list.
    - Copy `assets.template.json` to `assets.json` and fill in `source` and `rights`.
 4. **Preview and final:**
