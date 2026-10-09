@@ -22,7 +22,20 @@ function esc(text) {
     .replace(/\r?\n/g, '\\N');
 }
 
-function buildAss(timeline, template, { font, disclosureText, keyword = '', preview = false }) {
+/**
+ * Merges [start, end] intervals that touch, so the AI label is one continuous line across cuts.
+ */
+function mergeIntervals(list) {
+  const out = [];
+  list.slice().sort((a, b) => a.start - b.start).forEach((iv) => {
+    const last = out[out.length - 1];
+    if (last && iv.start <= last.end + 1e-6) last.end = Math.max(last.end, iv.end);
+    else out.push({ start: iv.start, end: iv.end });
+  });
+  return out;
+}
+
+function buildAss(timeline, template, { font, disclosureText, keyword = '', preview = false, aiIntervals = [] }) {
   const W = template.canvas.width;
   const H = template.canvas.height;
   const geo = geometry(template);
@@ -48,6 +61,7 @@ function buildAss(timeline, template, { font, disclosureText, keyword = '', prev
     style('Disclosure', d.size, false, 2, 1, 8, geo.safe.left, W - geo.safe.right, geo.safe.top),
     style('Tag', d.persistentTag ? d.persistentTag.size : 30, false, 2, 1, 7, geo.safe.left, 0, geo.safe.top),
     style('Preview', 26, false, 2, 1, 9, 0, geo.safe.left, geo.safe.top),
+    style('AiLabel', (template.aiLabel && template.aiLabel.size) || 30, false, 2, 1, 7, geo.safe.left, 0, geo.safe.top),
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -66,7 +80,10 @@ function buildAss(timeline, template, { font, disclosureText, keyword = '', prev
   }
   timeline.disclosure.tag.forEach((iv) => ev(3, iv.start, iv.end, 'Tag', esc(d.persistentTag.text)));
   if (preview) ev(4, 0, timeline.total, 'Preview', esc('미리보기 음성'));
+  // "AI 시뮬레이션" over every AI-generated or AI-visualization shot (never removed by a template switch).
+  const ai = template.aiLabel || { enabled: false };
+  if (ai.enabled) mergeIntervals(aiIntervals).forEach((iv) => ev(3, iv.start, iv.end, 'AiLabel', esc(ai.text)));
   return lines.join('\n') + '\n';
 }
 
-module.exports = { buildAss, ts, esc };
+module.exports = { buildAss, ts, esc, mergeIntervals };

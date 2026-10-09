@@ -134,8 +134,12 @@ async function render(opts) {
       });
     }
   }
+  // AI-generated footage and AI visualization scenes are labelled on screen (brand rule).
+  const planBeat = (n) => storyboard.beats.find((x) => x.sceneNo === n) || {};
+  timeline.beats.forEach((b) => { b.aiVisualization = !!planBeat(b.sceneNo).aiVisualization; });
+  const aiIntervals = qc.aiShots(timeline, resolved).map((sh) => ({ start: sh.start, end: sh.end }));
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'rf-render-'));
-  fs.writeFileSync(path.join(work, 'subs.ass'), buildAss(timeline, template, { font: opts.font, disclosureText: job.script['광고 표기'], keyword: storyboard.keyword, preview: !!opts.preview }));
+  fs.writeFileSync(path.join(work, 'subs.ass'), buildAss(timeline, template, { font: opts.font, disclosureText: job.script['광고 표기'], keyword: storyboard.keyword, preview: !!opts.preview, aiIntervals }));
   await ffm.buildNarrationTrack(opts.ffmpeg, timeline, path.join(work, 'narration.wav'), work);
   const tmpOut = path.join(work, 'reel.mp4');
   const inputs = await ffm.composeVideo(opts.ffmpeg, timeline, resolved, {
@@ -144,7 +148,7 @@ async function render(opts) {
 
   // 9. Post-render QC.
   const probed = await ffm.probe(opts.ffmpeg.ffprobe, tmpOut);
-  const post = qc.postRender(probed, timeline, template, inputs, resolved);
+  const post = qc.postRender(probed, timeline, template, inputs, resolved, aiIntervals);
   const fileName = `${job.reelId}_script-v${job.scriptVersion}${opts.preview ? '_PREVIEW' : ''}${post.ok ? '' : '_QC_FAILED'}.mp4`;
   const stored = await opts.storage.publish(tmpOut, key + '/' + fileName);
   const manifest = {
@@ -160,7 +164,8 @@ async function render(opts) {
     output: { path: stored.path, uri: stored.uri, sha256: sha256File(stored.path), duration: probed.duration, streams: probed.streams },
     qc: { preflight: pre, postRender: post },
     tts: Object.assign({}, estimate, opts.ttsInfo || {}, { lines: narration.map((n) => ({ text: n.text, duration: +n.duration.toFixed(3), cached: n.cached })) }),
-    footage: Object.fromEntries(Object.entries(resolved).map(([id, a]) => [id, { file: path.basename(a.file), in: +a.in.toFixed(2), source: a.source, showsProduct: a.showsProduct, rights: a.rights }])),
+    footage: Object.fromEntries(Object.entries(resolved).map(([id, a]) => [id, { file: path.basename(a.file), in: +a.in.toFixed(2), source: a.source, aiGenerated: a.source === 'flow-generated', showsProduct: a.showsProduct, rights: a.rights }])),
+    aiLabel: { text: template.aiLabel && template.aiLabel.enabled ? template.aiLabel.text : '', shots: qc.aiShots(timeline, resolved).map((s) => s.id) },
     aiGeneratedFootage: Object.values(resolved).some((a) => a.source === 'flow-generated'),
     reviewNote: Object.values(resolved).some((a) => a.source === 'flow-generated')
       ? 'AI(Google Flow) 생성 장면 포함: 영상 검토(③)에서 제품 모양·색·크기가 실제 제품과 같은지 확인하고, 게시할 때 인스타그램 "AI 정보" 라벨을 켜세요.'

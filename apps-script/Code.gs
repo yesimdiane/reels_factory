@@ -50,7 +50,7 @@ function setupSheets() {
     );
 
     const managed = [
-      [RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS],
+      [RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS.concat(RF_CONFIG.REELS_OPTIONAL_HEADERS)],
       [RF_CONFIG.SHEETS.PERFORMANCE, RF_CONFIG.PERFORMANCE_HEADERS],
       [RF_CONFIG.SHEETS.LOG, RF_CONFIG.LOG_HEADERS],
       [RF_CONFIG.SHEETS.AUDIT, RF_CONFIG.AUDIT_HEADERS],
@@ -197,7 +197,7 @@ function generateScriptsForProduct_(ss, rowNumber, options) {
   }
   findProductRow_(productsSheet, product.id); // duplicate 상품ID check
 
-  const reelsSheet = ensureSheet_(ss, RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS);
+  const reelsSheet = ensureSheet_(ss, RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS, RF_CONFIG.REELS_OPTIONAL_HEADERS);
   const reelsMap = getHeaderMap_(reelsSheet);
   const existingIds = readColumn_(reelsSheet, reelsMap, '릴스ID');
   const existingKeywords = readRecords_(reelsSheet, ['ManyChat 키워드', '상품ID'])

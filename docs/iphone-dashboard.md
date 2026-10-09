@@ -9,6 +9,19 @@ A small web page that lives inside your Apps Script project. On your iPhone you 
 
 Google Sheets stays the system of record. Every button writes to the **REELS** row and adds a line to **AUDIT**.
 
+## Brand view (서울에서 집꾸미기)
+
+- **① 상품 tab:** shows the brand name, tagline, current focus and the content-pillar mix against the targets.
+- **Each script shows:**
+  - its content pillar;
+  - the problem-based hook (first 0–3 s);
+  - the full narration and the scene-by-scene storyboard, with an **AI 시뮬레이션** chip on AI-visualization scenes;
+  - the CTA and keyword, and the disclosure.
+- **Verification flags:** if a script needs real-world checking (personal experience, product test, couple story, before/after, comparison, AI scene), a yellow **확인 필요** box lists the items. **승인** works only after ticking *모두 확인했습니다*.
+- **직접 수정:** you can change the pillar, the hook, each scene line, the scene descriptions and Flow prompts, and tick *AI 시뮬레이션 장면* before approving.
+
+Details: [brand.md](brand.md).
+
 ## Your four manual steps (nothing else needs you)
 
 | # | You do | Where | What the system blocks until you do it |

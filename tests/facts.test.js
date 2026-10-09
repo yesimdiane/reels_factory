@@ -25,6 +25,7 @@ function setup(gemini) {
 function reel(angle, concept, scenes, factsUsed) {
   return {
     angle,
+    pillar: 'PRODUCT_DISCOVERY',
     concept,
     hook: scenes[0][2],
     narration: scenes.map((s) => s[2]).join(' '),

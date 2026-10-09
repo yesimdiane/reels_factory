@@ -165,7 +165,10 @@ function loadData_(ss) {
     if (missing.length) {
       warnings.push('REELS 시트에 승인 관리용 헤더가 없습니다 (' + missing.length + '개). Google Sheets에서 "릴스 팩토리 → 시트 준비"를 실행하세요.');
     }
-    reels = readRecords_(reelsSheet, RF_CONFIG.REELS_HEADERS).filter(function (r) {
+    if (!missing.length && missingHeaders_(reelsSheet, RF_CONFIG.REELS_OPTIONAL_HEADERS).length) {
+      warnings.push('REELS에 "콘텐츠 기둥"·"확인 필요" 열이 없습니다. "릴스 팩토리 → 시트 준비"를 실행하면 추가됩니다 (없어도 동작합니다).');
+    }
+    reels = readRecords_(reelsSheet, RF_CONFIG.REELS_HEADERS.concat(RF_CONFIG.REELS_OPTIONAL_HEADERS)).filter(function (r) {
       return normalizeText(r['릴스ID']);
     });
   }
@@ -197,10 +200,40 @@ function reelSummary_(row, data) {
     statusLabel: RF_STATUS_LABELS[status] || '상태 확인 필요',
     concept: cellText_(row['컨셉']),
     hook: cellText_(row['후킹']),
+    pillar: pillarLabel(pillarIdOf(row['콘텐츠 기둥'])),
     scriptVersion: scriptVersionOf(row),
     videoVersion: videoVersionOf(row),
     error: cellText_(row['오류']),
   };
+}
+
+/** Brand settings the dashboard shows (name, tagline, pillars with targets, current focus). */
+function brandSummary_() {
+  const B = RF_CONFIG.BRAND;
+  return {
+    name: B.NAME,
+    tagline: B.TAGLINE,
+    focus: B.CURRENT_FOCUS,
+    aiLabel: B.AI_LABEL,
+    pillars: Object.keys(B.PILLARS).map(function (id) {
+      return { id: id, label: B.PILLARS[id].label, target: B.PILLARS[id].target };
+    }),
+  };
+}
+
+/** Reels per content pillar vs the editorial targets (planning aid, not a rule). */
+function pillarMix_(reels) {
+  const counts = {};
+  let tagged = 0;
+  reels.forEach(function (r) {
+    const id = pillarIdOf(r['콘텐츠 기둥']);
+    if (!id) return;
+    counts[id] = (counts[id] || 0) + 1;
+    tagged++;
+  });
+  return brandSummary_().pillars.map(function (p) {
+    return { id: p.id, label: p.label, target: p.target, count: counts[p.id] || 0, share: tagged ? Math.round(((counts[p.id] || 0) * 100) / tagged) : 0 };
+  });
 }
 
 function allowedActions_(status) {
@@ -277,6 +310,11 @@ function reelDetail_(ss, reelId) {
     touchpoints: touchpointSummary(row, product),
     allowedActions: allowedActions_(status),
     canRegenerate: status === 'SCRIPT_CHANGES_REQUESTED',
+    pillar: { id: reel.pillar, label: pillarLabel(reel.pillar) },
+    pillars: brandSummary_().pillars,
+    // Recomputed from the current script, so an edit made in the sheet is reflected too.
+    verificationFlags: reel.scenes ? verificationLines_(reel, reel.pillar, row) : [],
+    brand: brandSummary_(),
     history: history,
     warnings: data.warnings,
   };
@@ -332,6 +370,8 @@ function apiGetDashboard() {
       reels: data.reels.map(function (r) {
         return reelSummary_(r, data);
       }),
+      brand: brandSummary_(),
+      pillarMix: pillarMix_(data.reels),
     };
   });
 }

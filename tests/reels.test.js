@@ -44,7 +44,7 @@ test('PRD-001 fixture response produces 3 REELS records', () => {
     plain(res.records.map((r) => r['ManyChat 키워드'])),
     ['PRD001R01', 'PRD001R02', 'PRD001R03']
   );
-  const headers = gs('RF_CONFIG.REELS_HEADERS');
+  const headers = gs('RF_CONFIG.REELS_HEADERS.concat(RF_CONFIG.REELS_OPTIONAL_HEADERS)');
   for (const r of res.records) {
     for (const k of Object.keys(r)) assert.ok(headers.includes(k), 'unknown header ' + k);
     assert.equal(r['상태'], 'SCRIPT_REVIEW_PENDING');

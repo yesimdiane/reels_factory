@@ -52,6 +52,8 @@ function buildStoryboard(job, template) {
       ttsText: clean(line),
       visual: s.visual,
       flowPrompt: s.flow_prompt,
+      // Scene marked as an AI interior visualization in the approved script (labelled on screen).
+      aiVisualization: s.ai_visualization === true,
       shots,
     };
   });

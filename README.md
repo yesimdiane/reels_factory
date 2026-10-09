@@ -1,5 +1,7 @@
 # Seoul Home Reels Factory
 
+Instagram account: **서울에서 집꾸미기** — "우리 집에 들이기 전에, 먼저 보여드릴게요." Brand rules, content pillars and script logic: [docs/brand.md](docs/brand.md).
+
 Low-cost Instagram home-decor affiliate reels production workflow.
 
 ## Objective

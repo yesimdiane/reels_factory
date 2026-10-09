@@ -91,6 +91,12 @@
     "centerY": 0.745,
     "size": 38
   },
+  "aiLabel": {
+    "enabled": true,
+    "comment": "Brand rule: AI-generated scenes (Google Flow footage) and AI interior visualizations carry a visible label so they are never mistaken for real product footage. Top-left inside the safe area.",
+    "text": "AI 시뮬레이션",
+    "size": 30
+  },
   "narration": {
     "leadInSec": 0.15,
     "tailSec": 0.35,

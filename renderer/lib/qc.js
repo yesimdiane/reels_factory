@@ -77,7 +77,12 @@ function preflight(storyboard, template, job) {
 }
 
 /** After rendering: format, duration, and that every shot came from a validated asset. */
-function postRender(probe, timeline, template, inputs, shotAssets) {
+/** Shots that must carry the AI label: AI-generated footage or a scene marked as an AI visualization. */
+function aiShots(timeline, shotAssets) {
+  return timeline.beats.flatMap((b) => b.shots.filter((sh) => b.aiVisualization || (shotAssets[sh.id] && shotAssets[sh.id].source === 'flow-generated')));
+}
+
+function postRender(probe, timeline, template, inputs, shotAssets, aiIntervals = []) {
   const v = probe.streams.find((s) => s.codec_type === 'video') || {};
   const a = probe.streams.find((s) => s.codec_type === 'audio');
   const { width, height, fps } = template.canvas;
@@ -95,6 +100,7 @@ function postRender(probe, timeline, template, inputs, shotAssets) {
     check('visuals.noPlaceholders', inputs.every((i) => i.type === 'asset'), inputs.map((i) => i.type).join(',')),
     check('visuals.noFlatOrStill', Object.values(shotAssets).every((s) => s.analysis.flatRatio <= template.assets.maxFlatRatio && s.analysis.motion >= template.assets.minMotion), '모든 소스 클립 단색·정지 아님'),
     check('visuals.noRepeatedFootage', noRepeats(timeline, shotAssets), '같은 클립에서 자른 컷끼리 겹치지 않음', 'warn'),
+    aiLabelCheck(timeline, template, shotAssets, aiIntervals),
     check('shots.finalLength', long.length === 0, long.length ? '음성 때문에 길어진 컷: ' + long.map((s) => `${s.id} ${s.duration.toFixed(1)}s`).join(', ') : '모든 컷 ' + tol + '초 이하', 'warn'),
   ]);
 }
@@ -112,4 +118,16 @@ function noRepeats(timeline, shotAssets) {
   });
 }
 
-module.exports = { preflight, postRender, QcError };
+/** Every AI shot is covered by the on-screen AI label, so AI scenes are never shown as real footage. */
+function aiLabelCheck(timeline, template, shotAssets, aiIntervals) {
+  const need = aiShots(timeline, shotAssets);
+  const covered = (sh) => aiIntervals.some((iv) => iv.start <= sh.start + 1e-6 && iv.end >= sh.end - 1e-6);
+  const missing = need.filter((sh) => !covered(sh));
+  const label = template.aiLabel || { enabled: false };
+  if (!need.length) return check('ai.label', true, 'AI 장면 없음 (모두 실제 촬영·허가 영상)');
+  return check('ai.label', label.enabled && missing.length === 0,
+    label.enabled ? `"${label.text}" 표시: AI 컷 ${need.length - missing.length}/${need.length}` + (missing.length ? ' — 표시 없음: ' + missing.map((s) => s.id).join(', ') : '')
+      : 'AI 장면이 있는데 템플릿 aiLabel이 꺼져 있습니다');
+}
+
+module.exports = { preflight, postRender, QcError, aiShots };

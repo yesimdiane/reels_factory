@@ -15,6 +15,8 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
         properties: {
           // Creative angle: one reel each (A 일상 불편, B 좁은 공간, C 생활 상황).
           angle: { type: 'STRING', enum: ['EVERYDAY_FRUSTRATION', 'SMALL_SPACE', 'LIFESTYLE_SITUATION'] },
+          // Content pillar (RF_CONFIG.BRAND.PILLARS).
+          pillar: { type: 'STRING', enum: ['AI_MAKEOVER', 'PRODUCT_DISCOVERY', 'INTL_COUPLE', 'COMPARE'] },
           concept: { type: 'STRING' },
           hook: { type: 'STRING' },
           narration: { type: 'STRING' },
@@ -33,6 +35,8 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
                 flow_prompt: { type: 'STRING' },
                 // IDs (F1, F2 …) of the verified facts this scene says or shows.
                 fact_ids: { type: 'ARRAY', items: { type: 'STRING' } },
+                // true when the scene shows an AI interior visualization (labelled "AI 시뮬레이션").
+                ai_visualization: { type: 'BOOLEAN' },
               },
               required: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt', 'fact_ids'],
               propertyOrdering: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt', 'fact_ids'],
@@ -40,9 +44,11 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
           },
           // IDs (F1, F2 …) of every verified fact the reel relies on.
           facts_used: { type: 'ARRAY', items: { type: 'STRING' } },
+          // Anything the operator must confirm is real before approval (empty if none).
+          needs_verification: { type: 'ARRAY', items: { type: 'STRING' } },
         },
-        required: ['angle', 'concept', 'hook', 'narration', 'captions', 'scenes', 'facts_used'],
-        propertyOrdering: ['angle', 'concept', 'hook', 'narration', 'captions', 'scenes', 'facts_used'],
+        required: ['angle', 'pillar', 'concept', 'hook', 'narration', 'captions', 'scenes', 'facts_used'],
+        propertyOrdering: ['angle', 'pillar', 'concept', 'hook', 'narration', 'captions', 'scenes', 'facts_used', 'needs_verification'],
       },
     },
   },
@@ -89,9 +95,15 @@ function buildRegenerationPrompt(product, currentReel, reviewerNote, previousErr
  */
 function buildGeminiPrompt(product, previousErrors, previousResponse, avoidHooks) {
   const L = RF_CONFIG.LIMITS;
+  const B = RF_CONFIG.BRAND;
   const facts = parseConfirmedFeatures(product.features);
   const lines = [
-    '당신은 한국 인스타그램 릴스(9:16 세로 숏폼) 대본 작가입니다. 계정 주제는 한국 홈데코, 작은 집·원룸 살이, 정리 수납, 생활에 쓸모 있는 물건입니다.',
+    '당신은 인스타그램 계정 "' + B.NAME + '"의 릴스(9:16 세로 숏폼) 대본 작가입니다.',
+    '- 계정 소개: ' + B.POSITIONING,
+    '- 슬로건: "' + B.TAGLINE + '"',
+    '- 말투: ' + B.PERSONALITY,
+    '- 차별점: ' + B.DIFFERENTIATORS.join(' / '),
+    '- ' + B.CURRENT_FOCUS,
     '광고 문구가 아니라 실제 한국 라이프스타일 크리에이터가 친구에게 말하듯 쓰세요.',
     '아래 상품에 대해 서로 다른 컨셉의 릴스 대본을 정확히 ' + RF_CONFIG.REELS_PER_PRODUCT + '개 작성하세요.',
     '',
@@ -119,23 +131,34 @@ function buildGeminiPrompt(product, previousErrors, previousResponse, avoidHooks
     '8. scenes는 ' + L.MIN_SCENES + '~' + L.MAX_SCENES + '개, scene_no는 1부터 순서대로, duration_sec 합계는 ' + L.MIN_TOTAL_SEC + '~' + L.MAX_TOTAL_SEC + '초.',
     '9. 세 릴스는 angle, concept, hook, hook의 첫마디가 모두 서로 달라야 합니다.',
     '10. 시연은 실제로 가능한 사용 장면만 묘사하세요.',
-    '11. 경험담·사용 결과를 지어내지 마세요 ("한 달 써 보니", "바꿨더니 ~됐어요", "저는 ~했더니" 금지). 상황은 시청자 입장에서 "~잖아요", "~죠", "~할 때"처럼 말하세요.',
+    '11. 경험담·구매·테스트·남편 반응·전후 결과를 지어내지 마세요 ("한 달 써 보니", "샀는데", "테스트해 보니", "남편이 좋아했어요", "바꿨더니 ~됐어요" 금지). 상황은 시청자 입장에서 "~잖아요", "~죠", "~할 때"처럼 말하세요.',
+    '12. 실제 경험이나 제품 테스트가 꼭 필요한 내용이면 지어내지 말고 needs_verification에 무엇을 확인해야 하는지 적으세요 (운영자가 승인 전에 확인합니다). 없으면 [].',
+    '13. AI 인테리어 시뮬레이션 장면은 ai_visualization=true로 표시하세요 (영상에 "' + B.AI_LABEL + '"이 표시됩니다). 실제 제품 장면과 섞어 진짜처럼 보이게 하지 마세요.',
+    '',
+    '## 콘텐츠 기둥 (릴스마다 pillar 하나 — 목표 비율은 계정 전체 기준이며, 상품에 맞는 것을 고르세요)',
+    Object.keys(B.PILLARS).map(function (id) {
+      const pl = B.PILLARS[id];
+      return '- ' + id + ' (' + pl.label + ', 목표 ' + pl.target + '%): ' + pl.hint;
+    }).join('\n'),
     '',
     '## 세 가지 각도 (릴스마다 하나씩, angle 필드에 표시)',
-    '- EVERYDAY_FRUSTRATION (A 일상 불편): 매일 겪는 짜증·깜빡함에서 시작. 예: "급하게 출근하면 꼭 까먹는 우산!"',
-    '- SMALL_SPACE (B 좁은 공간): 원룸·좁은 현관·수납 부족 문제에서 시작. 예: "좁은 현관에 우산꽂이까지 놓기 싫잖아요."',
-    '- LIFESTYLE_SITUATION (C 생활 상황): 비 오는 날 귀가, 손님 올 때, 이사 직후 같은 구체적인 장면에서 시작. 예: "원룸 살 때 제일 애매한 게 우산꽂이였어요."',
+    '- 세 대본은 서로 확실히 다른 컨셉·hook·각도여야 합니다.',
+    '- EVERYDAY_FRUSTRATION (A 일상 불편): 매일 겪는 짜증·깜빡함에서 시작. 예: "급하게 출근할 때마다 우산 깜빡하는 사람?"',
+    '- SMALL_SPACE (B 좁은 공간): 원룸·좁은 현관·수납 부족 문제에서 시작. 예: "원룸 살면 우산꽂이 둘 자리도 애매하잖아요."',
+    '- LIFESTYLE_SITUATION (C 생활 상황): 비 오는 날 귀가, 손님 올 때, 이사 직후 같은 구체적인 장면에서 시작. 예: "비 오는 날마다 현관이 지저분해지는 이유."',
     '',
     '## hook (첫 장면, 첫 2~3초)',
     '- ' + RF_CONFIG.HOOK_STYLE.MAX_CHARS + '자 이내. 첫 2초 안에 "어, 나도 그래" 싶은 구체적인 불편이나 상황을 말하세요.',
     '- 제품 이름으로 시작하지 마세요. 제품 소개·결과 약속으로 시작하지 마세요.',
     '- 쓰지 말 것: "~니다" 광고 말투, "~다면?"·"~하시나요?" 같은 뻔한 질문, "~하세요" 권유, "하나로", "소개", "추천", "필수템", "꿀템", "~이 달라집니다".',
     '- 나쁜 예: "현관이 좁아 우산 둘 곳이 없다면?", "우산꽂이 하나로 현관이 달라집니다."',
-    '- 좋은 예: "급하게 출근하면 꼭 까먹는 우산!", "원룸 살 때 제일 애매한 게 우산꽂이였어요.", "좁은 현관에 우산꽂이까지 놓기 싫잖아요."',
+    '- 좋은 예: "급하게 출근할 때마다 우산 깜빡하는 사람?", "원룸 살면 우산꽂이 둘 자리도 애매하잖아요.", "비 오는 날마다 현관이 지저분해지는 이유."',
+    '- 기능 나열로 시작하지 마세요 (예: "자석형 2피스 우산꽂이" ✗).',
     '- 첫 장면 visual은 첫 프레임부터 그 불편한 상황을 보여 주세요 (느린 도입·로고·제품 클로즈업 금지).',
     '',
     '## 스토리보드 (영상이 이야기를 이끌고, 자막은 보조)',
-    '- 장면 순서: HOOK(공감 가는 불편·상황, 2~3초) → EMPATHY(왜 짜증 나는지) → SOLUTION(제품을 자연스럽게 등장) → DEMO(확인된 기능 시연) → CTA(댓글 키워드). 필요하면 DEMO 뒤에 BENEFIT 1개를 더할 수 있습니다.',
+    '- 이야기 흐름: PROBLEM → EMPATHY → SOLUTION → DEMONSTRATION → CTA.',
+    '- 장면 beat: HOOK(= PROBLEM, 공감 가는 불편·상황, 0~3초) → EMPATHY(왜 짜증 나는지) → SOLUTION(제품을 자연스럽게 등장) → DEMO(= DEMONSTRATION, 확인된 기능 시연) → CTA(댓글에 키워드 남기기). 필요하면 DEMO 뒤에 BENEFIT 1개를 더할 수 있습니다.',
     '- SOLUTION은 "그래서 ~" 처럼 자연스럽게 이어 주세요. 제품을 광고처럼 소개하지 마세요.',
     '- 각 장면의 narration은 그 장면에서 말하는 한 문장이며 그대로 자막이 됩니다: ' + L.SCENE_NARRATION_MAX_CHARS + '자 이내, 짧고 자연스러운 구어체.',
     '- 장면 길이 ' + L.SCENE_MIN_SEC + '~' + L.SCENE_MAX_SEC + '초, 전체 20~25초. hook = 첫 장면 narration. narration(전체) = 장면 narration을 순서대로 이은 것, captions = 장면 narration 목록.',

@@ -77,13 +77,14 @@ function appendMissingHeaders_(sheet, headers) {
  * Creates the sheet with headers if it does not exist (or is completely empty).
  * Never modifies an existing header row; only verifies it.
  */
-function ensureSheet_(ss, name, headers) {
+function ensureSheet_(ss, name, headers, optionalHeaders) {
   let sheet = findSheet_(ss, name);
   if (!sheet) {
     sheet = ss.insertSheet(name);
   }
   if (sheet.getLastRow() === 0 && sheet.getLastColumn() === 0) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    const all = headers.concat(optionalHeaders || []);
+    sheet.getRange(1, 1, 1, all.length).setValues([all]).setFontWeight('bold');
     sheet.setFrozenRows(1);
   }
   requireHeaders_(sheet, headers);
@@ -184,6 +185,10 @@ function readRecords_(sheet, headers) {
  */
 function updateRecord_(sheet, rowNumber, updates) {
   const map = getHeaderMap_(sheet);
+  // Optional brand columns are skipped (not an error) until 시트 준비 adds them.
+  Object.keys(updates).forEach(function (h) {
+    if (!colOf_(map, h) && RF_CONFIG.REELS_OPTIONAL_HEADERS.indexOf(h) !== -1) delete updates[h];
+  });
   const missing = Object.keys(updates).filter(function (h) {
     return !colOf_(map, h);
   });

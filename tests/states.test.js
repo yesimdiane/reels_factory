@@ -125,7 +125,9 @@ test('the approved version is exactly what was edited and reviewed', () => {
   const row = freshRow(p);
   const scenes = JSON.parse(row['장면(JSON)']).map((sc, i) => (i === 1 ? { narration: '저는 문에 붙여 썼어요.' } : {}));
   run(row, p, 'EDIT_SCRIPT', { edit: { scenes } });
-  const approve = run(row, p, 'APPROVE_SCRIPT');
+  // "저는 …" is a personal experience: approval needs the reviewer to confirm it is real.
+  assert.throws(() => run(row, p, 'APPROVE_SCRIPT'), /확인 필요 항목 1건[\s\S]*\[개인 경험\] 장면 2/);
+  const approve = run(row, p, 'APPROVE_SCRIPT', { flagsConfirmed: true });
   assert.equal(row['승인 대본 버전'], 2);
   const snap = JSON.parse(approve.audit['스냅샷(JSON)']);
   assert.equal(snap['자막'].split('\n')[1], '저는 문에 붙여 썼어요.', 'subtitles follow the edited scene line');

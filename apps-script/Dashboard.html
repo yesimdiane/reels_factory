@@ -226,7 +226,7 @@ function renderList() {
   const tab = TABS.filter(function (t) { return t.key === S.tab; })[0];
   document.getElementById('title').textContent = '릴스 팩토리 · ' + tab.label;
   warningsBanner(S.dash.warnings).forEach(function (b) { main.appendChild(b); });
-  if (tab.key === 'products') { renderProducts(main); return; }
+  if (tab.key === 'products') { renderBrand(main); renderProducts(main); return; }
   const reels = S.dash.reels.filter(function (r) { return tabFor(r.status) === tab.key; });
   const intro = {
     script: '② 대본을 검토하세요. 승인된 대본 버전만 영상 제작에 쓰입니다.',
@@ -245,9 +245,29 @@ function renderList() {
       h('div', { class: 'muted', text: r.productName + ' · 대본 v' + r.scriptVersion + (r.videoVersion ? ' · 영상 v' + r.videoVersion : '') }),
       h('div', { class: 'hook', text: r.hook }),
       h('div', { class: 'muted', text: r.concept }),
+      r.pillar ? h('span', { class: 'chip', text: r.pillar }) : null,
       r.error ? h('div', { class: 'banner bad', style: 'margin:8px 0 0', text: r.error }) : null,
     ]));
   });
+}
+
+// Brand and content-pillar mix (editorial targets are a planning aid, not a rule per product).
+function renderBrand(main) {
+  const b = S.dash.brand;
+  if (!b) return;
+  const mix = S.dash.pillarMix || [];
+  main.appendChild(h('div', { class: 'card' }, [
+    h('strong', { text: b.name }),
+    h('div', { class: 'muted', text: '“' + b.tagline + '”' }),
+    b.focus ? h('div', { class: 'banner ok', style: 'margin:8px 0', text: b.focus }) : null,
+    h('h3', { text: '콘텐츠 기둥 (현재 / 목표)' }),
+    h('div', {}, mix.map(function (m) {
+      return h('div', { class: 'row', style: 'justify-content:space-between' }, [
+        h('span', { text: m.label }),
+        h('span', { class: 'muted', text: m.count + '개 · ' + m.share + '% / ' + m.target + '%' }),
+      ]);
+    })),
+  ]));
 }
 
 function renderProducts(main) {
@@ -357,7 +377,12 @@ function renderDetail() {
   // Full script.
   const r = d.reel;
   const scriptCard = h('div', { class: 'card' }, [
+    h('div', { class: 'row' }, [
+      h('span', { class: 'chip', text: '콘텐츠 기둥: ' + (d.pillar && d.pillar.label ? d.pillar.label : '미지정') }),
+      (d.verificationFlags || []).length ? h('span', { class: 'chip warn', text: '확인 필요 ' + d.verificationFlags.length }) : null,
+    ]),
     h('div', { class: 'muted', text: r.concept }),
+    h('h3', { text: '후킹 (문제 제시 · 첫 0~3초)' }),
     h('div', { class: 'hook', text: r.hook }),
     h('h3', { text: '내레이션' }), h('div', { class: 'pre', text: r.narration }),
     h('h3', { text: '자막' }), h('div', { class: 'pre', text: (r.captions || []).join('\n') }),
@@ -369,6 +394,7 @@ function renderDetail() {
   (r.scenes || []).forEach(function (s) {
     scriptCard.appendChild(h('div', { class: 'scene' }, [
       h('strong', { text: '장면 ' + s.scene_no + (s.beat ? ' · ' + s.beat : '') + ' · ' + s.duration_sec + '초' }),
+      s.ai_visualization ? h('span', { class: 'chip warn', style: 'margin-left:6px', text: d.brand ? d.brand.aiLabel : 'AI 시뮬레이션' }) : null,
       s.narration ? h('div', { class: 'hook', text: '“' + s.narration + '”' }) : null,
       h('div', { class: 'muted', text: '화면: ' + s.visual }),
       s.on_screen_text ? h('div', { class: 'muted', text: '화면 문구: ' + s.on_screen_text }) : null,
@@ -409,9 +435,23 @@ function renderActions(main) {
     if (st === 'SCRIPT_CHANGES_REQUESTED') {
       card.appendChild(h('div', { class: 'banner warn', text: '수정 요청: ' + (d.scriptReview.note || '') }));
     }
+    // Verification flags: the reviewer confirms they are real (or labelled) before approving.
+    const flags = d.verificationFlags || [];
+    let flagBox = null;
+    if (flags.length) {
+      flagBox = h('input', { type: 'checkbox', id: 'flagsOk' });
+      card.appendChild(h('div', { class: 'banner warn' }, [
+        h('strong', { text: '확인 필요 ' + flags.length + '건 — 승인 전에 실제 경험·테스트·AI 표시인지 확인하세요' }),
+        h('ul', { style: 'margin:6px 0;padding-left:20px' }, flags.map(function (f) { return h('li', { text: f }); })),
+        h('label', { style: 'display:flex;gap:8px;align-items:center' }, [flagBox, h('span', { text: '모두 확인했습니다' })]),
+      ]));
+    }
     const b = h('div', { class: 'btns' });
     if (can('APPROVE_SCRIPT')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '승인 (v' + d.summary.scriptVersion + ')',
-      onclick: function () { act('APPROVE_SCRIPT', { note: '' }, '대본 v' + d.summary.scriptVersion + '을(를) 승인합니다. 이 버전 그대로 영상 제작에 사용됩니다.'); } }));
+      onclick: function () {
+        if (flagBox && !flagBox.checked) { alert('확인 필요 항목을 확인한 뒤 "모두 확인했습니다"에 체크하세요.'); return; }
+        act('APPROVE_SCRIPT', { note: '', flagsConfirmed: !!(flagBox && flagBox.checked) }, '대본 v' + d.summary.scriptVersion + '을(를) 승인합니다. 이 버전 그대로 영상 제작에 사용됩니다.');
+      } }));
     if (can('EDIT_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '직접 수정', onclick: function () { S.mode = 'edit'; renderDetail(); } }));
     if (can('REQUEST_SCRIPT_CHANGES')) b.appendChild(h('button', { class: 'b', type: 'button', text: '수정 요청',
       onclick: function () { const n = askNote('무엇을 바꿀까요? (재생성 시 Gemini에 전달)', true); if (n !== null) act('REQUEST_SCRIPT_CHANGES', { note: n }); } }));
@@ -547,6 +587,11 @@ function renderEditor(main) {
   }
   const card = h('div', { class: 'card' }, [
     h('div', { class: 'banner warn', text: '수정하면 새 버전(v' + (d.summary.scriptVersion + 1) + ')이 되고 다시 승인해야 합니다. 숫자·기능은 PRODUCTS의 확인된 기능에 있는 것만 쓸 수 있습니다.' }),
+    d.pillars ? h('div', {}, [h('label', { text: '콘텐츠 기둥' }), (f.pillar = h('select', {}, [h('option', { value: '', text: '(그대로)' })].concat(d.pillars.map(function (p) {
+      const o = h('option', { value: p.id, text: p.label });
+      if (d.pillar && d.pillar.id === p.id) o.selected = true;
+      return o;
+    }))))]) : null,
     field('concept', '컨셉', r.concept),
     field('hook', '후킹 (40자 이내)', r.hook),
     storyboard ? null : field('narration', '내레이션 (300자 이내)', r.narration, true),
@@ -558,6 +603,9 @@ function renderEditor(main) {
     card.appendChild(field('s' + i + 'visual', '장면 설명', s.visual, true));
     if (!storyboard) card.appendChild(field('s' + i + 'text', '화면 문구', s.on_screen_text));
     card.appendChild(field('s' + i + 'flow', 'Flow 프롬프트 (영어)', s.flow_prompt, true));
+    f['s' + i + 'ai'] = h('input', { type: 'checkbox' });
+    f['s' + i + 'ai'].checked = !!s.ai_visualization;
+    card.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:center' }, [f['s' + i + 'ai'], h('span', { text: 'AI 시뮬레이션 장면 (영상에 표시)' })]));
   });
   card.appendChild(field('note', '수정 메모 (선택)', '', true));
   card.appendChild(h('div', { class: 'btns' }, [
@@ -565,10 +613,11 @@ function renderEditor(main) {
     h('button', { class: 'b primary', type: 'button', text: '저장 (v' + (d.summary.scriptVersion + 1) + ')', onclick: function () {
       const edit = {
         concept: f.concept.value, hook: f.hook.value,
+        pillar: f.pillar && f.pillar.value ? f.pillar.value : undefined,
         narration: storyboard ? undefined : f.narration.value,
         captions: storyboard ? undefined : f.captions.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean),
         scenes: (r.scenes || []).map(function (s, i) {
-          const out = { visual: f['s' + i + 'visual'].value, flow_prompt: f['s' + i + 'flow'].value };
+          const out = { visual: f['s' + i + 'visual'].value, flow_prompt: f['s' + i + 'flow'].value, ai_visualization: f['s' + i + 'ai'].checked };
           if (storyboard) out.narration = f['s' + i + 'line'].value; else out.on_screen_text = f['s' + i + 'text'].value;
           return out;
         }),

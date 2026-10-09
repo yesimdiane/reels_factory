@@ -41,6 +41,7 @@ const FIXTURE_PRD_001_PRODUCT = {
 function fixtureReel_(angle, concept, scenes, factsUsed) {
   return {
     angle: angle,
+    pillar: 'PRODUCT_DISCOVERY',
     concept: concept,
     hook: scenes[0][2],
     narration: scenes.map(function (s) { return s[2]; }).join(' '),
@@ -49,6 +50,7 @@ function fixtureReel_(angle, concept, scenes, factsUsed) {
       return { scene_no: i + 1, beat: s[0], duration_sec: s[1], narration: s[2], visual: s[3], on_screen_text: '', flow_prompt: s[4], fact_ids: s[5] || [] };
     }),
     facts_used: factsUsed,
+    needs_verification: [],
   };
 }
 

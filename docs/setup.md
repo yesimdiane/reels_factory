@@ -34,13 +34,14 @@ The code lives in the Apps Script project. Your data lives in the sheets. Replac
 3. In the left panel, click the file `ReelsFactory` (the one you pasted before). **Do not delete the project, and do not create a second copy of the code.** Two files defining the same functions would conflict.
 4. Click inside the code, press **⌘A** (Mac) or **Ctrl+A**, and then **Delete**. The file is now empty.
 5. Open [`dist/ReelsFactory.gs`](../dist/ReelsFactory.gs) on GitHub (on the `main` branch after the PR is merged, or on the PR's branch to try it first). Click **Copy raw file**, paste it into the empty file, and click **💾 Save**.
-   - To check you have the new code, press ⌘F / Ctrl+F in the editor and search for `CLAIM_RULES`; it should be found.
+   - To check you have the new code, press ⌘F / Ctrl+F in the editor and search for `서울에서 집꾸미기`; it should be found.
 6. The iPhone dashboard page is inside this same file, so there is nothing else to paste. Leave any other files in the project as they are.
 7. Reload the spreadsheet tab. In the **릴스 팩토리** menu:
    - run **테스트: PRD-001 오프라인 검증**. It should say 통과, with no API call.
    - Optionally run **Gemini 모델 확인 (무료)**.
 8. **If you use the iPhone dashboard:** **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**. The URL stays the same, but until you redeploy the dashboard keeps running the old code.
-9. You do **not** need to run 시트 준비 again for this update, because no columns changed. Running it is harmless: it only adds missing headers, after asking.
+9. **Recommended once:** run **릴스 팩토리 → 시트 준비** and answer **예**. It adds the two optional REELS columns `콘텐츠 기둥` and `확인 필요` at the right end of row 1. Existing cells are never changed.
+   - Without them, everything still works: the dashboard shows a warning, and verification flags are still computed from each script and still gate approval. The pillar is just not saved.
 
 Existing REELS rows keep working. Their `사용한 확인 기능` text still resolves to your facts, so they can still be approved, edited and rendered.
 

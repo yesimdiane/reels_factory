@@ -225,7 +225,8 @@ test('setupSheets appends missing headers to an existing REELS sheet only after 
   vm.runInContext('setupSheets()', env2.ctx);
   const header = env2.sheets.REELS.rows[0];
   assert.deepEqual(header.slice(0, 2), ['릴스ID', '운영자 메모']);
-  assert.equal(header.length, 2 + vm.runInContext('RF_CONFIG.REELS_HEADERS.length', env2.ctx) - 1);
+  assert.equal(header.length, 2 + vm.runInContext('RF_CONFIG.REELS_HEADERS.length + RF_CONFIG.REELS_OPTIONAL_HEADERS.length', env2.ctx) - 1);
+  assert.deepEqual(header.slice(-2), ['콘텐츠 기둥', '확인 필요'], 'optional brand columns added last');
   assert.deepEqual(env2.sheets.REELS.rows[1], ['OLD-1', '보존']);
   assert.ok(env2.sheets.PERFORMANCE && env2.sheets.LOG);
   assert.match(env2.alerts.at(-1), /✓ PRODUCTS/);
