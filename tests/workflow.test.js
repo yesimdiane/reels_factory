@@ -105,7 +105,7 @@ function fixturePayload() {
   return JSON.parse(JSON.stringify(vm.runInContext('FIXTURE_PRD_001_GEMINI_RESPONSE', ctx)));
 }
 
-test('generates 3 REELS rows for PRD-001 without touching PRODUCTS', () => {
+test('generates one REELS row (five hooks + script) for PRD-001 without touching PRODUCTS', () => {
   const env = setup({ productRows: [], geminiPayload: fixturePayload() });
   const row = prd001Row(env.ctx);
   env.products.rows.push(row);
@@ -116,18 +116,19 @@ test('generates 3 REELS rows for PRD-001 without touching PRODUCTS', () => {
 
   assert.equal(JSON.stringify(env.products.rows), before, 'PRODUCTS must be unchanged');
   const reels = env.sheets.REELS.rows;
-  assert.equal(reels.length, 4);
+  assert.equal(reels.length, 2);
   assert.equal(reels[0][0], '릴스ID');
-  assert.deepEqual(reels.slice(1).map((r) => r[0]), ['PRD-001-R01', 'PRD-001-R02', 'PRD-001-R03']);
+  assert.deepEqual(reels.slice(1).map((r) => r[0]), ['PRD-001-R01']);
+  assert.equal(JSON.parse(reels[1][reels[0].indexOf('훅 후보(JSON)')]).hooks.length, 5);
   assert.equal(env.fetches(), 1);
-  assert.match(env.alerts.at(-1), /REELS에 3개 행을 추가/);
+  assert.match(env.alerts.at(-1), /REELS에 1개 행을 추가/);
   assert.match(env.alerts.at(-1), /허가 미확인/);
   const log = env.sheets.LOG.rows;
   assert.equal(log.at(-1)[1], 'INFO');
 });
 
 test('writes by header name into an existing REELS sheet with reordered/extra columns', () => {
-  const headers = vm.runInContext('RF_CONFIG.REELS_HEADERS', setup({ productRows: [] }).ctx).slice();
+  const headers = vm.runInContext('RF_CONFIG.REELS_HEADERS.concat(RF_CONFIG.REELS_HOOK_HEADERS)', setup({ productRows: [] }).ctx).slice();
   const reordered = ['운영자 메모', ...headers.reverse()];
   const existing = new Array(reordered.length).fill('');
   existing[0] = '기존 메모 유지';
@@ -140,11 +141,23 @@ test('writes by header name into an existing REELS sheet with reordered/extra co
   vm.runInContext('generateReelsForSelectedProduct()', env.ctx);
 
   const rows = env.sheets.REELS.rows;
-  assert.equal(rows.length, 5);
+  assert.equal(rows.length, 3);
   assert.equal(rows[1][0], '기존 메모 유지');
   const idCol = reordered.indexOf('릴스ID');
-  assert.deepEqual(rows.slice(2).map((r) => r[idCol]), ['PRD-001-R02', 'PRD-001-R03', 'PRD-001-R04']);
+  assert.deepEqual(rows.slice(2).map((r) => r[idCol]), ['PRD-001-R02']);
   assert.equal(rows[2][0], '');
+});
+
+test('an existing REELS sheet without the hook columns: generation asks for 시트 준비 before any Gemini call', () => {
+  const headers = vm.runInContext('RF_CONFIG.REELS_HEADERS', setup({ productRows: [] }).ctx).slice();
+  const env = setup({ productRows: [], reelsRows: [headers], geminiPayload: fixturePayload() });
+  env.products.rows.push(prd001Row(env.ctx));
+  env.products.activeRow = 2;
+  const before = JSON.stringify(env.sheets.REELS.rows);
+  vm.runInContext('generateReelsForSelectedProduct()', env.ctx);
+  assert.equal(env.fetches(), 0, 'no paid call');
+  assert.match(env.alerts.at(-1), /훅 저장 열이 없습니다[\s\S]*시트 준비/);
+  assert.equal(JSON.stringify(env.sheets.REELS.rows), before, 'REELS unchanged');
 });
 
 test('retries once with validation errors, then writes nothing if still invalid', () => {
@@ -175,7 +188,7 @@ test('second attempt succeeds after a corrective retry', () => {
   vm.runInContext('generateReelsForSelectedProduct()', env.ctx);
 
   assert.equal(env.fetches(), 2);
-  assert.equal(env.sheets.REELS.rows.length, 4);
+  assert.equal(env.sheets.REELS.rows.length, 2);
 });
 
 test('blocks duplicate product IDs in PRODUCTS before calling Gemini', () => {
@@ -211,7 +224,7 @@ test('tolerates spaced headers and a tab name with trailing space / different ca
   env.products.rows.push(prd001Row(env.ctx));
   env.products.activeRow = 2;
   vm.runInContext('generateReelsForSelectedProduct()', env.ctx);
-  assert.equal(env.sheets.REELS.rows.length, 4, env.alerts.at(-1));
+  assert.equal(env.sheets.REELS.rows.length, 2, env.alerts.at(-1));
 });
 
 test('setupSheets appends missing headers to an existing REELS sheet only after confirmation', () => {
@@ -226,7 +239,7 @@ test('setupSheets appends missing headers to an existing REELS sheet only after 
   const header = env2.sheets.REELS.rows[0];
   assert.deepEqual(header.slice(0, 2), ['릴스ID', '운영자 메모']);
   assert.equal(header.length, 2 + vm.runInContext('RF_CONFIG.REELS_HEADERS.length + RF_CONFIG.REELS_OPTIONAL_HEADERS.length', env2.ctx) - 1);
-  assert.deepEqual(header.slice(-2), ['콘텐츠 기둥', '확인 필요'], 'optional brand columns added last');
+  assert.deepEqual(header.slice(-4), ['콘텐츠 기둥', '확인 필요', '훅 후보(JSON)', '선택한 훅'], 'optional brand and hook columns added last');
   assert.deepEqual(env2.sheets.REELS.rows[1], ['OLD-1', '보존']);
   assert.ok(env2.sheets.PERFORMANCE && env2.sheets.LOG);
   assert.match(env2.alerts.at(-1), /✓ PRODUCTS/);
@@ -250,13 +263,13 @@ test('network/timeout errors from UrlFetchApp are retried, then reported clearly
   assert.equal(env.sheets.REELS.rows.length, 1);
 });
 
-test('a transient network error followed by success still writes 3 rows', () => {
+test('a transient network error followed by success still writes the row', () => {
   const good = fixturePayload();
   const env = setup({ productRows: [], geminiPayload: (n) => (n === 1 ? new Error('Address unavailable') : good) });
   env.products.rows.push(prd001Row(env.ctx));
   env.products.activeRow = 2;
   vm.runInContext('generateReelsForSelectedProduct()', env.ctx);
-  assert.equal(env.sheets.REELS.rows.length, 4);
+  assert.equal(env.sheets.REELS.rows.length, 2);
 });
 
 test('onOpen builds the menu via addReelsFactoryMenu', () => {

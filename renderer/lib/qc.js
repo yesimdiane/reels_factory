@@ -130,4 +130,24 @@ function aiLabelCheck(timeline, template, shotAssets, aiIntervals) {
       : 'AI 장면이 있는데 템플릿 aiLabel이 꺼져 있습니다');
 }
 
-module.exports = { preflight, postRender, QcError, aiShots };
+/**
+ * After TTS, before rendering: scene timing against the real Korean voice. Each beat is at least as long
+ * as its line (lead-in + voice + tail); the total must stay within the template range (20–40 s).
+ * Errors stop the render before FFmpeg (the voice is cached, so fixing the script and re-running costs
+ * nothing for unchanged lines).
+ */
+function ttsTiming(storyboard, timeline, template) {
+  const tr = template.durationSec;
+  const warnSec = (template.ttsTiming && template.ttsTiming.stretchWarnSec) || 1.0;
+  const checks = [check('timing.total', timeline.total >= tr.min - 1e-6 && timeline.total <= tr.max + 1e-6,
+    `실제 음성 기준 ${timeline.total.toFixed(1)}초 (허용 ${tr.min}~${tr.max}초, 대본 ${storyboard.scriptedTotal}초)`)];
+  timeline.beats.forEach((b, i) => {
+    const plan = storyboard.beats[i];
+    const extra = b.duration - plan.scriptedSec;
+    checks.push(check(`timing.S${b.sceneNo}`, extra <= warnSec + 1e-6,
+      `음성 ${b.voice.duration.toFixed(2)}초 → 장면 ${b.duration.toFixed(2)}초 (대본 ${plan.scriptedSec}초${extra > 1e-6 ? ', +' + extra.toFixed(2) + '초 늘어남' : ''})`, 'warn'));
+  });
+  return report(checks);
+}
+
+module.exports = { preflight, postRender, ttsTiming, QcError, aiShots };

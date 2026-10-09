@@ -77,17 +77,17 @@ test('full lifecycle on the phone: four touchpoints, gated and audited', () => {
   const env = setup();
   const productsBefore = JSON.stringify(env.sheets.PRODUCTS.rows);
 
-  // ① Product → generate 3 scripts from the dashboard.
+  // ① Product → five hooks + one script from the dashboard.
   const gen = api(env, 'apiGenerateScripts', 'PRD-001');
   assert.equal(gen.ok, true, gen.error);
-  assert.deepEqual(gen.ids, ['PRD-001-R01', 'PRD-001-R02', 'PRD-001-R03']);
+  assert.deepEqual(gen.ids, ['PRD-001-R01']);
   assert.equal(env.state.fetches.length, 1);
   const again = api(env, 'apiGenerateScripts', 'PRD-001');
-  assert.equal(again.needsConfirm, 3, 'no paid call without confirmation');
+  assert.equal(again.needsConfirm, 1, 'no paid call without confirmation');
   assert.equal(env.state.fetches.length, 1);
 
   const dash = api(env, 'apiGetDashboard');
-  assert.equal(dash.reels.length, 3);
+  assert.equal(dash.reels.length, 1);
   assert.ok(dash.reels.every((r) => r.status === 'SCRIPT_REVIEW_PENDING'));
 
   // Video work is impossible before script approval.
@@ -124,7 +124,7 @@ test('full lifecycle on the phone: four touchpoints, gated and audited', () => {
   // ④ Publishing pack, then manual confirmations.
   const pack = api(env, 'apiGetPublishingPack', 'PRD-001-R01').pack;
   assert.ok(pack.instagramCaption.startsWith('[광고] '));
-  assert.equal(pack.manychatKeyword, 'PRD001R01');
+  assert.equal(pack.manychatKeyword, '우산', 'customer-facing keyword');
   assert.match(pack.manychatDm, /link\.coupang\.com\/a\/abc123/);
   action(env, 'PRD-001-R01', 'CONFIRM_PUBLISHED', { instagramUrl: 'https://www.instagram.com/reel/xyz/' });
   const done = action(env, 'PRD-001-R01', 'CONFIRM_MANYCHAT');
@@ -134,7 +134,7 @@ test('full lifecycle on the phone: four touchpoints, gated and audited', () => {
   // Audit trail, in order, with the reviewer recorded.
   const rows = env.sheets.AUDIT.rows.slice(1).filter((r) => r[1] === 'PRD-001-R01' || r[3] === 'PRODUCT_SUBMITTED');
   assert.deepEqual(rows.map((r) => r[3]), [
-    'PRODUCT_SUBMITTED', 'SCRIPTS_GENERATED', 'APPROVE_SCRIPT', 'START_VIDEO', 'REGISTER_VIDEO', 'APPROVE_VIDEO',
+    'PRODUCT_SUBMITTED', 'SCRIPTS_GENERATED', 'SELECT_HOOK', 'APPROVE_SCRIPT', 'START_VIDEO', 'REGISTER_VIDEO', 'APPROVE_VIDEO',
     'READY_TO_PUBLISH_BLOCKED', 'MARK_READY_TO_PUBLISH', 'CONFIRM_PUBLISHED', 'CONFIRM_MANYCHAT',
   ]);
   assert.ok(rows.filter((r) => /APPROVE|CONFIRM/.test(r[3])).every((r) => r[8] === 'owner@example.com'));
@@ -163,13 +163,13 @@ test('a script edited in the sheet after approval cannot go to video', () => {
   const env = setup();
   env.sheets.PRODUCTS.set(2, '영상 사용 허가 상태', '허가 완료');
   api(env, 'apiGenerateScripts', 'PRD-001');
-  action(env, 'PRD-001-R02', 'APPROVE_SCRIPT');
-  const { n } = reelRow(env, 'PRD-001-R02');
+  action(env, 'PRD-001-R01', 'APPROVE_SCRIPT');
+  const { n } = reelRow(env, 'PRD-001-R01');
   env.sheets.REELS.set(n, '내레이션', '시트에서 몰래 바꾼 내레이션');
-  const res = action(env, 'PRD-001-R02', 'START_VIDEO');
+  const res = action(env, 'PRD-001-R01', 'START_VIDEO');
   assert.equal(res.ok, false);
   assert.match(res.error, /승인된 대본과 현재 대본이 다릅니다/);
-  assert.equal(api(env, 'apiGetReel', 'PRD-001-R02').detail.approvedIntact, false);
+  assert.equal(api(env, 'apiGetReel', 'PRD-001-R01').detail.approvedIntact, false);
 });
 
 test('edit on the phone → new version → approve exactly that version', () => {
@@ -189,18 +189,19 @@ test('request changes → Gemini regenerates one script (1-reel schema, reviewer
   const env = setup({
     gemini: (n, body) => {
       const f = plain(env.gs('FIXTURE_PRD_001_GEMINI_RESPONSE'));
-      return n === 1 ? f : { reels: [f.reels[1]] };
+      return n === 1 ? f : { reels: [f.reels[0]] };
     },
   });
   api(env, 'apiGenerateScripts', 'PRD-001');
-  assert.equal(api(env, 'apiRegenerateScript', 'PRD-001-R03', { expectedScriptVersion: 1 }).ok, false, 'needs 수정 요청 first');
-  action(env, 'PRD-001-R03', 'REQUEST_SCRIPT_CHANGES', { note: '치수 이야기를 넣어 주세요' });
-  const res = api(env, 'apiRegenerateScript', 'PRD-001-R03', { expectedScriptVersion: 1 });
+  assert.equal(api(env, 'apiRegenerateScript', 'PRD-001-R01', { expectedScriptVersion: 1 }).ok, false, 'needs 수정 요청 first');
+  action(env, 'PRD-001-R01', 'REQUEST_SCRIPT_CHANGES', { note: '치수 이야기를 넣어 주세요' });
+  const res = api(env, 'apiRegenerateScript', 'PRD-001-R01', { expectedScriptVersion: 1 });
   assert.equal(res.ok, true, res.error);
   assert.equal(res.detail.summary.status, 'SCRIPT_REVIEW_PENDING');
   assert.equal(res.detail.summary.scriptVersion, 2);
   const body = env.state.fetches[1];
   assert.equal(body.generationConfig.responseSchema.properties.reels.maxItems, 1);
+  assert.equal(body.generationConfig.responseSchema.properties.hooks, undefined, 'the five hooks are kept, not regenerated');
   assert.match(body.contents[0].parts[0].text, /치수 이야기를 넣어 주세요/);
   assert.match(body.contents[0].parts[0].text, /현재 대본/);
   assert.ok(auditActions(env).includes('REGENERATE_SCRIPT'));

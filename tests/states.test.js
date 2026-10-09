@@ -25,7 +25,10 @@ function freshRow(p) {
   const raw = JSON.stringify(gs('FIXTURE_PRD_001_GEMINI_RESPONSE'));
   const res = gs('prepareReelRecords')(p || product(), raw, [], [], { model: 'm', generatedAt: 'g' });
   assert.deepEqual(plain(res.errors), []);
-  return Object.assign({ _row: 2 }, plain(res.records[0]));
+  const row = Object.assign({ _row: 2 }, plain(res.records[0]));
+  // The operator's hook choice (approval requires it); see the five-hook tests for the gate itself.
+  row['선택한 훅'] = JSON.stringify({ id: 'H4', text: row['후킹'], scriptVersion: 1 });
+  return row;
 }
 // Applies an action like the server does and returns the plan.
 function run(row, p, action, input) {
@@ -142,7 +145,12 @@ test('request changes → regenerate → review again', () => {
   run(row, p, 'REQUEST_SCRIPT_CHANGES', { note: '더 짧게' });
   assert.equal(gs('reelStatus')(row), 'SCRIPT_CHANGES_REQUESTED');
   assert.throws(() => run(row, p, 'APPROVE_SCRIPT'), /할 수 없습니다/);
-  const newReel = plain(gs('FIXTURE_PRD_001_GEMINI_RESPONSE')).reels[2];
+  // A rewritten script (here: same scenes, starting with hook H1 instead).
+  const ref = plain(gs('FIXTURE_PRD_001_GEMINI_RESPONSE'));
+  const newReel = ref.reels[0];
+  newReel.hook = ref.hooks[0].text;
+  newReel.scenes[0].narration = newReel.hook;
+  newReel.captions[0] = newReel.hook;
   const out = run(row, p, 'REGENERATE_SCRIPT', { reel: newReel });
   assert.equal(out.status, 'SCRIPT_REVIEW_PENDING');
   assert.equal(row['대본 버전'], 2);
@@ -244,8 +252,8 @@ test('publishing pack: conspicuous disclosure, keyword and matching affiliate li
   const ready = toReadyToPublish(p);
   const pack = plain(gs('buildPublishingPack')(ready, p));
   assert.ok(pack.instagramCaption.startsWith('[광고] 이 게시물은 쿠팡 파트너스 활동의 일환으로'));
-  assert.match(pack.instagramCaption, /PRD001R01/);
-  assert.equal(pack.manychatKeyword, 'PRD001R01');
+  assert.match(pack.instagramCaption, /댓글에 "우산"/, 'simple customer-facing keyword');
+  assert.equal(pack.manychatKeyword, '우산');
   assert.match(pack.manychatDm, /link\.coupang\.com\/a\/abc123/);
   assert.match(pack.manychatDm, /수수료/);
   assert.match(pack.videoDownloadUrl, /uc\?export=download&id=1AbC/);
@@ -288,9 +296,9 @@ test('storyboard rules: beats in order, CTA keyword placeholder, scene length an
   };
   assert.equal(v(() => {}), '');
   assert.match(v((r) => (r.scenes[0].beat = 'DEMO')), /첫 장면은 HOOK/);
-  assert.match(v((r) => (r.scenes[4].beat = 'BENEFIT')), /마지막 장면은 CTA/);
-  assert.match(v((r) => ([r.scenes[1].beat, r.scenes[3].beat] = ['BENEFIT', 'DEMO'])), /순서/);
-  assert.match(v((r) => (r.scenes[4].narration = '제품 정보는 댓글에')), /\{키워드\}/);
+  assert.match(v((r) => (r.scenes[5].beat = 'BENEFIT')), /마지막 장면은 CTA/);
+  assert.match(v((r) => ([r.scenes[1].beat, r.scenes[3].beat] = ['DEMO', 'EMPATHY'])), /순서/);
+  assert.match(v((r) => (r.scenes[5].narration = '제품 정보는 댓글에')), /\{키워드\}/);
   assert.match(v((r) => (r.scenes[2].duration_sec = 8)), /2~6초/);
   assert.match(v((r) => (r.scenes[3].narration = '가'.repeat(31))), /자막 2줄 이내/);
   assert.match(v((r) => (r.scenes[3].narration = '3초 만에 설치 끝')), /수치.*"3"/);
@@ -302,9 +310,9 @@ test('Google Flow clip coverage: valid scenes fit one 8 s clip; a longer scene i
   // The validator's scene maximum always fits one clip (minus margin).
   assert.ok(gs('RF_CONFIG.LIMITS.SCENE_MAX_SEC') <= F.CLIP_SEC - F.CLIP_MARGIN_SEC);
   const one = plain(gs('buildFlowScenePrompts')(freshRow(), product()));
-  assert.equal(one.length, 5);
+  assert.equal(one.length, 6);
   assert.ok(one.every((p) => p.parts === 1 && p.coversSec <= F.CLIP_SEC - F.CLIP_MARGIN_SEC));
-  assert.deepEqual(one.map((p) => p.file), ['S1.mp4', 'S2.mp4', 'S3.mp4', 'S4.mp4', 'S5.mp4']);
+  assert.deepEqual(one.map((p) => p.file), ['S1.mp4', 'S2.mp4', 'S3.mp4', 'S4.mp4', 'S5.mp4', 'S6.mp4']);
   // With shorter clips (e.g. a Flow setting change), long scenes get more clip requirements.
   const row = freshRow();
   gs('RF_CONFIG.FLOW.CLIP_SEC = 4');

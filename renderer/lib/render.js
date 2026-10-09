@@ -1,6 +1,7 @@
 // Render orchestration, ordered so that nothing billable happens unless the render can succeed:
 //   1 approval gate → 2 storyboard → 3 pre-flight QC → 4 footage (ASSETS_REQUIRED) → 5 font + FFmpeg
-//   → 6 reuse → 7 TTS (budget-checked, cached) → 8 timeline/overlay/audio/video → 9 post-render QC.
+//   → 6 reuse → 7 TTS (budget-checked, cached) → 8 timeline + TTS timing check → overlay/audio/video
+//   → 9 post-render QC.
 'use strict';
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -102,6 +103,10 @@ async function render(opts) {
 
   // 8. Timeline → overlay → audio → video.
   const timeline = buildTimeline(storyboard, narration, template);
+  // 8a. Scene timing validated against the actual Korean TTS duration, before any rendering.
+  const timing = qc.ttsTiming(storyboard, timeline, template);
+  timing.checks.filter((c) => !c.ok).forEach((c) => log(`! ${c.id}: ${c.detail}`));
+  if (!timing.ok) throw new qc.QcError(timing, '음성 길이 점검 (렌더링 전)');
   // Every Flow clip must hold all of its cuts without reusing footage.
   for (const b of timeline.beats) {
     const plan = storyboard.beats.find((x) => x.sceneNo === b.sceneNo);
@@ -162,7 +167,7 @@ async function render(opts) {
     previewWarning: opts.preview ? '미리보기 음성(무료 로컬 음성)입니다. 게시하거나 영상으로 등록하지 마세요.' : '',
     renderedAt: new Date().toISOString(),
     output: { path: stored.path, uri: stored.uri, sha256: sha256File(stored.path), duration: probed.duration, streams: probed.streams },
-    qc: { preflight: pre, postRender: post },
+    qc: { preflight: pre, ttsTiming: timing, postRender: post },
     tts: Object.assign({}, estimate, opts.ttsInfo || {}, { lines: narration.map((n) => ({ text: n.text, duration: +n.duration.toFixed(3), cached: n.cached })) }),
     footage: Object.fromEntries(Object.entries(resolved).map(([id, a]) => [id, { file: path.basename(a.file), in: +a.in.toFixed(2), source: a.source, aiGenerated: a.source === 'flow-generated', showsProduct: a.showsProduct, rights: a.rights }])),
     aiLabel: { text: template.aiLabel && template.aiLabel.enabled ? template.aiLabel.text : '', shots: qc.aiShots(timeline, resolved).map((s) => s.id) },

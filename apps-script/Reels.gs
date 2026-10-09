@@ -60,6 +60,23 @@ function keywordOwners_(existingKeywords) {
   return owners;
 }
 
+function isInternalKeyword_(k) {
+  return /^PRD\d+R\d+$/i.test(normalizeText(k));
+}
+
+function friendlyKeywordFor_(productId, existingKeywords, owners, suggested) {
+  const mine = (existingKeywords || []).filter(function (k) {
+    return k.productId === productId && !isInternalKeyword_(k.keyword);
+  })[0];
+  if (mine) return normalizeText(mine.keyword);
+  const s = normalizeText(suggested);
+  if (!s || commentKeywordError(s)) return '';
+  const others = (owners[s.toUpperCase()] || []).filter(function (pid) {
+    return pid !== productId;
+  });
+  return others.length ? '' : s;
+}
+
 /**
  * Builds REELS row objects keyed by REELS header names.
  * Keyword: PRODUCTS.'ManyChat 키워드' if the operator set one (shared by that product's reels),
@@ -68,7 +85,9 @@ function keywordOwners_(existingKeywords) {
 function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
   const ids = nextReelIds(product.id, existingIds, reels.length);
   const owners = keywordOwners_(existingKeywords);
-  const productKeyword = normalizeText(product.keyword);
+  // Customer-facing keyword (e.g. 우산): PRODUCTS column, else one this product already uses, else
+  // Gemini's suggestion if no other product owns it. Internal codes (PRD001R01) only as a last resort.
+  const productKeyword = normalizeText(product.keyword) || friendlyKeywordFor_(product.id, existingKeywords, owners, meta && meta.commentKeyword);
   const approved = isPermissionApproved(product.permission);
 
   return reels.map(function (reel, i) {
@@ -85,6 +104,7 @@ function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
 
     const notes = [];
     if (!approved) notes.push(RF_CONFIG.PERMISSION_UNVERIFIED_NOTE);
+    if (!productKeyword) notes.push('댓글 키워드가 내부 코드입니다 — PRODUCTS "ManyChat 키워드"에 쉬운 단어(예: 우산)를 넣으세요.');
     notes.push('게시·DM 자동화 전 사람 검토 필요.');
 
     const record = {
@@ -110,6 +130,9 @@ function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
     });
     // Optional columns (written only where 시트 준비 has added them).
     record['콘텐츠 기둥'] = pillarLabel(reel.pillar);
+    // Five hook candidates + recommendation; the operator's choice is stored on selection.
+    record['훅 후보(JSON)'] = meta && meta.hookSet ? JSON.stringify(meta.hookSet) : '';
+    record['선택한 훅'] = '';
     const flags = formatVerificationFlags(verificationFlags(reel, reel.pillar));
     const asked = (Array.isArray(reel.needs_verification) ? reel.needs_verification : []).map(function (x) {
       return '[Gemini 요청] ' + normalizeText(x);
@@ -131,6 +154,7 @@ function prepareReelRecords(product, rawText, existingIds, existingKeywords, met
   const parsed = parseModelJson(rawText);
   if (parsed.error) return { errors: [parsed.error], records: [], attempt: null };
   const result = validateGeminiReels(parsed.value, product, null, options);
+  meta = Object.assign({}, meta, { hookSet: result.hookSet, commentKeyword: result.commentKeyword });
   // Kept so a later attempt can be combined with this one's valid reels (no extra paid call).
   const attempt = { reels: parsed.value && parsed.value.reels, reelErrors: result.reelErrors };
   if (result.errors.length) return { errors: result.errors, records: [], attempt: attempt };
