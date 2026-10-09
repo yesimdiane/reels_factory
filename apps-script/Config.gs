@@ -6,6 +6,10 @@
  */
 
 const RF_CONFIG = {
+  // Shown in the dashboard header and in 릴스 팩토리 → 코드 버전 확인. If the two differ, the web app
+  // was not redeployed after the code was replaced (Deploy → Manage deployments → New version).
+  CODE_VERSION: '2026-10-09 · five-hooks 2',
+
   // Instagram brand. Used in the Gemini prompt and shown in the dashboard; edit here to reuse the
   // factory for another account. See docs/brand.md.
   BRAND: {

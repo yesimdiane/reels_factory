@@ -38,7 +38,7 @@ function reel(angle, concept, scenes, factsUsed) {
 // Natural Korean paraphrases of the operator's verified facts (none copies the sheet wording), in
 // the five-hook format: hooks H1–H5, the recommended hook (H4) opening one script.
 function paraphrasePayload() {
-  return {
+  return withOpenings({
     hooks: [
       { id: 'H1', type: 'QUESTION', text: '매번 우산 어디 둘지 고민하는 사람?' },
       { id: 'H2', type: 'NUMBER', text: '세 가지 색 중에 문 색 맞추기' },
@@ -58,7 +58,12 @@ function paraphrasePayload() {
         ['CTA', 4, "제품 정보는 댓글에 '{키워드}'", []],
       ], ['F1', 'F3', 'F4']),
     ],
-  };
+  });
+}
+// Each hook carries its own opening scene (shown and swapped in when the operator picks it).
+function withOpenings(p) {
+  p.hooks.forEach((h) => Object.assign(h, { visual: '현관에서 ' + h.text + ' 상황을 보여 주는 첫 장면', flow_prompt: FLOW, emphasis: '', sfx: '' }));
+  return p;
 }
 
 function validate(env, product, payload) {

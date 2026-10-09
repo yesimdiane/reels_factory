@@ -7,9 +7,12 @@ Every product reel is made this way. The reference output is `FIXTURE_PRD_001_GE
 ② Gemini: five hooks H1–H5 + recommended hook + reason
           + one script built on the recommended hook        ← 1 call (+ at most 1 corrective retry)
 ③ Dashboard: operator picks the final hook, may edit it     ← operator (checkpoint 2)
-     · "이 훅으로 정하기" — free: only the first line changes
+     · "이 훅으로 정하기" — free: the whole first scene becomes that hook's opening
+                          (line, caption, visual, Flow prompt, emphasis, SFX); scenes 2+ stay
      · "대본 다시 쓰기"   — 1 Gemini call: the whole script is rewritten around the hook
-④ Operator approves the script → SCRIPT_APPROVED            ← operator (checkpoint 2)
+   Scripts written before this workflow: "훅 5개 만들기" (1 Gemini call, script unchanged) first.
+④ Operator reviews the updated script, ticks "끝까지 확인했습니다", approves → SCRIPT_APPROVED
+   (approval needs: five hooks, a choice made on THIS script version, and the review tick)
    (only now: Flow prompts, Google Flow by hand, paid TTS, rendering)
 ⑤ Renderer: TTS → scene timing checked on the real voice → FFmpeg → QC
 ⑥ Final video review → publishing pack (caption with [광고]) → ManyChat   ← checkpoints 3 and 4
@@ -32,7 +35,14 @@ The set must also pass these checks:
 - **No repeats:** none may repeat one of this product's earlier hooks (they are listed in the prompt).
 - **Facts:** the fact, claim and number rules apply, so there are no invented features, compatibility, prices or dimensions.
 
-Gemini recommends one hook (`recommended_hook.id` plus a reason), and its script starts with exactly that hook. **The final choice is the operator's.** Approval is refused until a hook is chosen in the dashboard, and the script's first line must equal the chosen hook.
+Each hook also carries **its own opening scene**: `visual`, `flow_prompt`, `emphasis` and `sfx` for scene 1. Gemini writes scenes 2 onward so that they follow any of the five hooks.
+
+Gemini recommends one hook (`recommended_hook.id` plus a reason), and its script starts with exactly that hook and its opening. **The final choice is the operator's.** Approval is refused unless:
+1. the script has five hook candidates;
+2. a hook was chosen on the current script version, and the script's first line equals it;
+3. the operator ticked *선택한 훅이 반영된 대본 vN을 끝까지 확인했습니다* (`hookReviewed`).
+
+An edit that keeps the hook carries the choice over to the new version.
 
 ## The script
 
@@ -84,8 +94,17 @@ The free local preview voice (`--preview`) shows the timing before paying for Go
 
 Both hook columns are added by **시트 준비**, which appends them without touching existing cells. Generation checks for them **before** calling Gemini and asks for 시트 준비 if they are missing. Older REELS rows without hook candidates keep working; they need no hook choice.
 
+## Troubleshooting: "the script review screen has no hook section"
+
+| Check | Fix |
+|---|---|
+| The dashboard header shows `코드 2026-10-09 · five-hooks 2` (or newer) | If it shows `코드 이전 버전`, an older version is deployed. Paste the current `dist/ReelsFactory.gs` from **`main`**, then **Deploy → Manage deployments → ✏️ → New version → Deploy**. The `/exec` URL keeps serving the old version until you redeploy. |
+| The menu **릴스 팩토리 → 코드 버전 확인** shows the same version as the dashboard | A different version means the code was pasted but the web app was not redeployed. |
+| REELS has the `훅 후보(JSON)` and `선택한 훅` columns | Run **시트 준비** once. Until then the hook section shows a red banner and approval is blocked. |
+| The script has no hook candidates (written before this workflow) | The hook section shows **훅 5개 만들기 (Gemini 1회)**. Tap it, choose a hook, review, approve. |
+
 ## Cost and safety
 
-- **Generation:** one Gemini call (plus at most one corrective retry) for five hooks and the script. Choosing or editing a hook is free. "대본 다시 쓰기" is one call (plus at most one retry).
+- **Generation:** one Gemini call (plus at most one corrective retry) for five hooks and the script. Choosing or editing a hook is free. "대본 다시 쓰기" and "훅 5개 만들기" are one call each (plus at most one retry). All of these are text only.
 - **No paid steps before approval:** nothing paid or video-related happens before `SCRIPT_APPROVED`. That covers Flow prompts, Flow generation, TTS and rendering.
 - **No substitute footage:** missing footage is never replaced by slides or invented product demos. Missing clips → `ASSETS_REQUIRED`. AI footage is labelled "AI 시뮬레이션" on screen.

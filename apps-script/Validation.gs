@@ -495,6 +495,17 @@ function validateGeminiReels(payload, product, expectedCount, options) {
 
   // De-duplicate identical messages (e.g. the same number repeated).
   const unique = dedupe_(errors);
+  // The script's own first scene is the recommended hook's opening (so "keep" changes nothing).
+  if (!unique.length && hookSet && reels[0] && reels[0].scenes && reels[0].scenes[0]) {
+    const first = reels[0].scenes[0];
+    hookSet.hooks.forEach(function (h) {
+      if (h.id !== hookSet.recommended.id || h.text !== normalizeText(reels[0].hook)) return;
+      h.visual = normalizeText(first.visual);
+      h.flow_prompt = normalizeText(first.flow_prompt);
+      h.emphasis = normalizeText(first.emphasis);
+      h.sfx = normalizeText(first.sfx);
+    });
+  }
   return {
     errors: unique,
     reels: unique.length ? [] : reels.map(function (r) {
@@ -552,7 +563,11 @@ function parseHookSet(cell) {
     if (v && Array.isArray(v.hooks)) {
       return {
         hooks: v.hooks.filter(function (h) { return h && RF_CONFIG.HOOK_TYPES[h.id] && normalizeText(h.text); }).map(function (h) {
-          return { id: h.id, type: RF_CONFIG.HOOK_TYPES[h.id].type, label: RF_CONFIG.HOOK_TYPES[h.id].label, text: normalizeText(h.text) };
+          return {
+            id: h.id, type: RF_CONFIG.HOOK_TYPES[h.id].type, label: RF_CONFIG.HOOK_TYPES[h.id].label, text: normalizeText(h.text),
+            visual: normalizeText(h.visual), flow_prompt: normalizeText(h.flow_prompt),
+            emphasis: normalizeText(h.emphasis), sfx: normalizeText(h.sfx),
+          };
         }),
         recommended: v.recommended && v.recommended.id ? { id: v.recommended.id, reason: normalizeText(v.recommended.reason) } : null,
       };
@@ -696,6 +711,11 @@ function validateHookSet(payload, product, avoidHooks) {
     extractNumbers(text).forEach(function (n) {
       if (!ctx.allowedNumbers[n] && id !== 'H2') errors.push(where + '확인된 기능에 없는 수치가 포함되어 있습니다: "' + n + '".');
     });
+    // Its opening scene (scene 1 when this hook is chosen).
+    if (!normalizeText(h.visual)) errors.push('훅 ' + id + ': visual(이 훅으로 시작할 때 첫 장면 연출)이 비어 있습니다.');
+    if (normalizeText(h.flow_prompt).length < RF_CONFIG.LIMITS.MIN_FLOW_PROMPT_CHARS) {
+      errors.push('훅 ' + id + ': flow_prompt(첫 장면 Google Flow 프롬프트)가 비어 있거나 너무 짧습니다.');
+    }
     const key = looseText_(text);
     if (seenText[key]) errors.push('훅 ' + id + '가 ' + seenText[key] + '와 같습니다.');
     seenText[key] = id;
@@ -708,7 +728,12 @@ function validateHookSet(payload, product, avoidHooks) {
   else if (!normalizeText(rec.reason)) errors.push('recommended_hook.reason(추천 이유)이 비어 있습니다.');
   const hookSet = errors.length ? null : {
     hooks: ids.map(function (id) {
-      return { id: id, type: T[id].type, label: T[id].label, text: normalizeText(byId[id].text) };
+      const h = byId[id];
+      return {
+        id: id, type: T[id].type, label: T[id].label, text: normalizeText(h.text),
+        visual: normalizeText(h.visual), flow_prompt: normalizeText(h.flow_prompt),
+        emphasis: normalizeText(h.emphasis), sfx: normalizeText(h.sfx),
+      };
     }),
     recommended: { id: rec.id, reason: normalizeText(rec.reason) },
   };

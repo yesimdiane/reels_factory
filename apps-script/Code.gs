@@ -22,6 +22,7 @@ function addReelsFactoryMenu() {
     .addItem('렌더 키 보기 (Mac 렌더러 설정용)', 'showRenderSecret')
     .addItem('Gemini API 키 설정', 'promptForGeminiApiKey')
     .addItem('Gemini 모델 확인 (무료)', 'showGeminiModelCheck')
+    .addItem('코드 버전 확인 (대시보드와 비교)', 'showCodeVersion')
     .addSeparator()
     .addItem('테스트: PRD-001 오프라인 검증', 'runOfflineFixtureTest')
     .addItem('테스트: PRD-001 Gemini 실제 호출 (시트에 쓰지 않음)', 'runLiveGeminiTestPRD001')
@@ -94,6 +95,15 @@ function setupSheets() {
     logEvent_('ERROR', 'setupSheets', '', e.message, e.stack);
     ui.alert('시트 준비 실패\n\n' + report.concat([e.message]).join('\n'));
   }
+}
+
+/** Shows the pasted code's version; the dashboard header shows the deployed one. They must match. */
+function showCodeVersion() {
+  SpreadsheetApp.getUi().alert(
+    '코드 버전: ' + RF_CONFIG.CODE_VERSION + '\n\n' +
+      'iPhone 대시보드 맨 위에 같은 버전이 보여야 합니다. 다르면 웹 앱이 새 코드로 배포되지 않은 것입니다: ' +
+      'Apps Script → 배포 → 배포 관리 → ✏️ → 버전: 새 버전 → 배포.'
+  );
 }
 
 /** Stores the Gemini API key in Script Properties (never in the sheet or Git). */

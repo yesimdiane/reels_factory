@@ -142,7 +142,9 @@ test('generation stores five hooks and no selection; approval waits for the oper
   assert.deepEqual([sel.id, sel.label, sel.mode, sel.edited, sel.recommended, sel.scriptVersion, sel.by], ['H4', '상황 묘사형', 'kept', false, true, 1, 'owner@example.com']);
   assert.equal(env.state.fetches.length, 1);
   assert.ok(env.sheets.AUDIT.rows.some((a) => a[3] === 'SELECT_HOOK' && /훅 H4 \(상황 묘사형\) 선택/.test(a[9])));
-  const ap = act('APPROVE_SCRIPT');
+  // Approval also needs the explicit "reviewed the script with this hook" confirmation.
+  assert.match(act('APPROVE_SCRIPT').error, /확인했다고 체크한 뒤 승인하세요/);
+  const ap = act('APPROVE_SCRIPT', { hookReviewed: true });
   assert.equal(ap.ok, true, ap.error);
   assert.equal(ap.detail.flowScenePrompts.length, 6);
   assert.match(env.sheets.AUDIT.rows.filter((a) => a[3] === 'APPROVE_SCRIPT')[0][9], /훅 H4: "비 오는 날/);
@@ -203,7 +205,7 @@ test('"rewrite with this hook" asks Gemini once for a script that starts with ex
   assert.match(s.row()['자막'], /아침마다 허둥대잖아요/);
   assert.equal(JSON.parse(s.row()['선택한 훅']).mode, 'regenerated');
   assert.ok(env.sheets.AUDIT.rows.some((a) => a[3] === 'SELECT_HOOK' && /Gemini로 대본 다시 씀/.test(a[9]) && /owner@example\.com \+ Gemini/.test(a[8])));
-  assert.equal(s.act('APPROVE_SCRIPT').ok, true, 'the chosen hook is valid for approval');
+  assert.equal(s.act('APPROVE_SCRIPT', { hookReviewed: true }).ok, true, 'the chosen hook is valid for approval');
 });
 
 test('a rewrite that does not start with the chosen hook is retried once, then nothing changes', () => {
@@ -239,7 +241,7 @@ test('a regenerated script with a different hook needs the hook chosen again bef
   assert.equal(regen.detail.hooks.selectionValid, false);
   assert.match(s.act('APPROVE_SCRIPT').error, /선택한 훅 .*과 현재 대본의 훅이 다릅니다/);
   assert.equal(s.pick('H5', '좁은 현관 우산 정리, 문에 붙이면 돼요').ok, true);
-  assert.equal(s.act('APPROVE_SCRIPT').ok, true);
+  assert.equal(s.act('APPROVE_SCRIPT', { hookReviewed: true }).ok, true);
 });
 
 test('the prompt and schema ask for five hooks, a recommendation, the keyword, emphasis/SFX and 20–40 s', () => {
@@ -261,12 +263,99 @@ test('the prompt and schema ask for five hooks, a recommendation, the keyword, e
   assert.equal(env.gs('RF_CONFIG.REELS_PER_PRODUCT'), 1);
 });
 
-test('the hook columns are needed before paying for Gemini; older rows without hooks approve as before', () => {
-  const { env, call, act } = setup();
+test('choosing a hook swaps in its whole opening scene (line, caption, visual, Flow prompt, emphasis, SFX); later scenes stay', () => {
+  const { env, call, pick, row, act } = setup();
   call('apiGenerateScripts', 'PRD-001');
-  // Older row (no hook candidates) → no hook choice required.
-  env.sheets.REELS.set(2, '훅 후보(JSON)', '');
-  assert.equal(act('APPROVE_SCRIPT').ok, true);
+  const before = JSON.parse(row()['장면(JSON)']);
+  const h1 = JSON.parse(row()['훅 후보(JSON)']).hooks[0];
+  assert.ok(h1.visual && h1.flow_prompt.length > 30, 'each hook carries its opening scene');
+  const res = pick('H1', h1.text);
+  assert.equal(res.ok, true, res.error);
+  const after = JSON.parse(row()['장면(JSON)']);
+  assert.deepEqual(
+    [after[0].narration, after[0].visual, after[0].flow_prompt, after[0].emphasis, after[0].sfx],
+    [h1.text, h1.visual, h1.flow_prompt, h1.emphasis, h1.sfx]
+  );
+  assert.equal(row()['자막'].split('\n')[0], h1.text);
+  assert.match(row()['Flow 프롬프트'].split('\n')[0], new RegExp('^S1 \\(3s\\): ' + h1.flow_prompt.slice(0, 30).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.deepEqual(after.slice(1), before.slice(1), 'scenes 2+ unchanged (written to follow any hook)');
+  // The updated script is what the dashboard shows for review, as a new version.
+  assert.equal(res.detail.summary.scriptVersion, 2);
+  assert.equal(res.detail.reel.scenes[0].visual, h1.visual);
+  // A later edit that keeps the hook keeps the choice for the new version.
+  const ed = act('EDIT_SCRIPT', { edit: { concept: '출근길 버전' } });
+  assert.equal(ed.ok, true, ed.error);
+  assert.equal(ed.detail.hooks.selectionValid, true);
+  assert.equal(JSON.parse(row()['선택한 훅']).scriptVersion, 3);
+  assert.equal(act('APPROVE_SCRIPT', { hookReviewed: true }).ok, true);
+});
+
+test('a script written before the five-hook workflow: "훅 5개 만들기" (1 call), choose, review, then approve', () => {
+  // Gemini's answer for an existing script: five hooks with openings + recommendation (no script).
+  const hooksOnly = (env) => {
+    const f = fixture(env);
+    return { hooks: f.hooks, recommended_hook: f.recommended_hook };
+  };
+  let env;
+  const s = setup((n) => (n === 1 ? hooksOnly(env) : hooksOnly(env)));
+  env = s.env;
+  // An old row (like the live PRD-001-R01 v2): no hook candidates.
+  const recs = env.gs('prepareReelRecords')(s.product, JSON.stringify(fixture(env)), [], [], { model: 'old', generatedAt: 'g' }).records;
+  recs[0]['훅 후보(JSON)'] = '';
+  recs[0]['대본 버전'] = 2;
+  env.gs('appendRecords_')(env.sheets.REELS, recs, env.gs('RF_SCRIPT_FIELDS'));
+  const scriptBefore = s.row()['장면(JSON)'];
+  const d = s.detail();
+  assert.deepEqual([d.hooks.required, d.hooks.candidates.length, d.hooks.canGenerate, d.hooks.canSelect], [true, 0, true, false]);
+  assert.match(s.act('APPROVE_SCRIPT', { hookReviewed: true }).error, /훅 후보 5개가 없습니다[\s\S]*훅 5개 만들기/);
+  // Make hooks: one Gemini call, hooks-only schema, current script in the prompt, script unchanged.
+  const made = s.call('apiGenerateHooks', 'PRD-001-R01', { expectedStatus: d.summary.status, expectedScriptVersion: 2 });
+  assert.equal(made.ok, true, made.error);
+  assert.equal(env.state.fetches.length, 1);
+  const body = env.state.fetches[0];
+  assert.deepEqual(body.generationConfig.responseSchema.required, ['hooks', 'recommended_hook']);
+  const prompt = body.contents[0].parts[0].text;
+  assert.match(prompt, /"현재 대본"에 쓸 서로 다른 훅 5개/);
+  assert.match(prompt, /## 현재 대본 \(JSON\)/);
+  assert.match(prompt, /각 훅마다 그 훅으로 시작할 때의 첫 장면/);
+  assert.equal(s.row()['장면(JSON)'], scriptBefore, 'the script is not changed by making hooks');
+  assert.equal(made.detail.summary.scriptVersion, 2);
+  assert.equal(made.detail.hooks.candidates.length, 5);
+  assert.ok(env.sheets.AUDIT.rows.some((a) => a[3] === 'SET_HOOKS'));
+  // Choose H2, review, approve. No paid media before approval.
+  const h2 = made.detail.hooks.candidates[1];
+  const picked = s.pick('H2', h2.text);
+  assert.equal(picked.ok, true, picked.error);
+  assert.equal(picked.detail.summary.scriptVersion, 3);
+  assert.equal(picked.detail.reel.scenes[0].narration, h2.text);
+  assert.equal(picked.detail.reel.scenes[0].visual, h2.visual);
+  assert.equal(s.call('apiGetRenderJob', 'PRD-001-R01').ok, false);
+  assert.match(s.act('APPROVE_SCRIPT').error, /확인했다고 체크/);
+  const ok = s.act('APPROVE_SCRIPT', { hookReviewed: true });
+  assert.equal(ok.ok, true, ok.error);
+  assert.equal(ok.detail.flowScenePrompts[0].prompt.includes(h2.flow_prompt.slice(0, 40)), true, 'Flow prompt for scene 1 follows the chosen hook');
+});
+
+test('without the hook columns: making hooks stops before Gemini, and approval says to run 시트 준비', () => {
+  const env = createEnv({ autoSelectHook: false, gemini: () => fixture(env) });
+  env.sheets.PRODUCTS.rows.push(prd001Row(env.gs, { permission: '자체 제작', affiliateUrl: 'https://link.coupang.com/a/x' }));
+  const { MockSheet } = require('./helpers/apps-script-mock');
+  env.sheets.REELS = new MockSheet('REELS', [plain(env.gs('RF_CONFIG.REELS_HEADERS'))]);
+  env.props.RF_REVIEWERS = 'owner@example.com';
+  const recs = env.gs('prepareReelRecords')(plain(env.gs('FIXTURE_PRD_001_PRODUCT')), JSON.stringify(fixture(env)), [], [], { model: 'm', generatedAt: 'g' }).records;
+  env.gs('appendRecords_')(env.sheets.REELS, recs, env.gs('RF_SCRIPT_FIELDS'));
+  const call = (fn, ...a) => plain(env.gs(fn).apply(null, a));
+  const d = call('apiGetReel', 'PRD-001-R01').detail;
+  assert.equal(d.hooks.columnsMissing, true);
+  const made = call('apiGenerateHooks', 'PRD-001-R01', { expectedScriptVersion: 1 });
+  assert.match(made.error, /시트 준비/);
+  assert.equal(env.state.fetches.length, 0, 'no paid call');
+  const ap = call('apiAction', 'PRD-001-R01', 'APPROVE_SCRIPT', { expectedStatus: d.summary.status, expectedScriptVersion: 1, hookReviewed: true });
+  assert.match(ap.error, /시트 준비/);
+  const html = fs.readFileSync(path.join(__dirname, '..', 'apps-script', 'Dashboard.html'), 'utf8');
+  for (const k of ['훅 5개 만들기 (Gemini 1회)', "call('apiGenerateHooks'", "call('apiSelectHook'", 'hookReviewed: true', '끝까지 확인했습니다', '첫 장면: ', '시트 준비']) {
+    assert.ok(html.includes(k), k);
+  }
 });
 
 test('TTS timing: the real voice decides the scene lengths; a total beyond 40 s stops before rendering', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {
@@ -287,7 +376,7 @@ test('TTS timing: the real voice decides the scene lengths; a total beyond 40 s 
   const { env, call, act } = setup();
   call('apiGenerateScripts', 'PRD-001');
   call('apiSelectHook', 'PRD-001-R01', { hookId: 'H4', mode: 'keep', expectedScriptVersion: 1 });
-  act('APPROVE_SCRIPT');
+  act('APPROVE_SCRIPT', { hookReviewed: true });
   act('START_VIDEO');
   const jobFile = JSON.parse(call('apiGetRenderJob', 'PRD-001-R01').jobFile);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rf-5h-'));
@@ -305,4 +394,36 @@ test('TTS timing: the real voice decides the scene lengths; a total beyond 40 s 
   await assert.rejects(render(opts), qc.QcError);
   assert.equal(calls.length, 6);
   assert.ok(verifyJob(jobFile, { secret: env.props.RF_RENDER_SECRET }));
+});
+
+test('complete workflow: generate → five hooks shown → choose H3 → updated script reviewed → approve → only then Flow prompts and render job', () => {
+  const { env, call, detail, act, pick, row } = setup();
+  const dash0 = call('apiGetDashboard');
+  assert.equal(dash0.codeVersion, env.gs('RF_CONFIG.CODE_VERSION'), 'the dashboard shows the deployed code version');
+  assert.ok(fs.readFileSync(path.join(__dirname, '..', 'dist', 'ReelsFactory.gs'), 'utf8').includes(".addItem('코드 버전 확인 (대시보드와 비교)', 'showCodeVersion')"), 'menu: compare with the dashboard');
+  call('apiGenerateScripts', 'PRD-001');
+  const d = detail();
+  assert.deepEqual(d.hooks.candidates.map((c) => c.id + ' ' + c.label), ['H1 질문형', 'H2 숫자로 시작하는형', 'H3 통념을 뒤집는 단정형', 'H4 상황 묘사형', 'H5 결론 먼저 던지는형']);
+  assert.equal(d.hooks.recommended.id, 'H4');
+  assert.ok(d.hooks.candidates.every((c) => c.visual && c.flow_prompt));
+  assert.equal(d.hooks.selectionValid, false);
+  assert.match(act('APPROVE_SCRIPT', { hookReviewed: true }).error, /훅을 먼저 선택하세요/);
+  const h3 = d.hooks.candidates[2];
+  const chosen = pick('H3', h3.text);
+  assert.equal(chosen.ok, true, chosen.error);
+  assert.equal(chosen.detail.reel.hook, h3.text);
+  assert.equal(chosen.detail.reel.scenes[0].visual, h3.visual);
+  assert.equal(chosen.detail.hooks.selectionValid, true);
+  assert.equal(row()['Flow 장면 프롬프트'], '', 'no Flow prompts before approval');
+  assert.equal(call('apiGetRenderJob', 'PRD-001-R01').ok, false, 'no render job before approval');
+  assert.match(act('APPROVE_SCRIPT').error, /확인했다고 체크/);
+  const ap = act('APPROVE_SCRIPT', { hookReviewed: true });
+  assert.equal(ap.ok, true, ap.error);
+  assert.ok(ap.detail.flowScenePrompts[0].prompt.includes(h3.flow_prompt.slice(0, 40)));
+  assert.equal(call('apiGetRenderJob', 'PRD-001-R01').ok, false, 'approved but not in production → still no job');
+  assert.equal(act('START_VIDEO').ok, true);
+  assert.equal(call('apiGetRenderJob', 'PRD-001-R01').ok, true);
+  const actions = env.sheets.AUDIT.rows.slice(1).map((r) => r[3]);
+  assert.deepEqual(actions.filter((a) => /SCRIPT|HOOK/.test(a)), ['SCRIPTS_GENERATED', 'SELECT_HOOK', 'APPROVE_SCRIPT']);
+  assert.equal(env.state.fetches.length, 1, 'one Gemini call for the whole review');
 });

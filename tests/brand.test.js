@@ -163,7 +163,7 @@ test('dashboard data: pillar, problem hook, flags, brand, pillar mix; edits chan
   }
 });
 
-test('sheets without the new optional columns: existing scripts keep working; generation asks for 시트 준비 first', () => {
+test('sheets without the new columns: existing scripts stay reviewable and editable; generation and approval ask for 시트 준비', () => {
   const env = createEnv({ gemini: () => plain(env.gs('FIXTURE_PRD_001_GEMINI_RESPONSE')) });
   env.sheets.PRODUCTS.rows.push(prd001Row(env.gs, { permission: '자체 제작', affiliateUrl: 'https://link.coupang.com/a/x' }));
   env.sheets.REELS = new MockSheet('REELS', [plain(env.gs('RF_CONFIG.REELS_HEADERS'))]);
@@ -180,9 +180,9 @@ test('sheets without the new optional columns: existing scripts keep working; ge
   assert.match(res.error, /훅 저장 열이 없습니다[\s\S]*시트 준비/);
   assert.equal(env.state.fetches.length, 0);
   const dash = call('apiGetDashboard');
-  assert.match(dash.warnings.join('\n'), /"콘텐츠 기둥"·"확인 필요" 열이 없습니다/);
+  assert.match(dash.warnings.join('\n'), /REELS에 브랜드·훅 열\(콘텐츠 기둥, 확인 필요, 훅 후보\(JSON\), 선택한 훅\)이 없습니다[\s\S]*시트 준비/);
   const d = call('apiGetReel', 'PRD-001-R01').detail;
-  assert.equal(d.hooks.required, false, 'no stored hooks → no hook choice needed');
+  assert.equal(d.hooks.columnsMissing, true, 'the dashboard tells the operator to run 시트 준비');
   const act = (name, input = {}) => call('apiAction', 'PRD-001-R01', name, Object.assign({ expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion, expectedVideoVersion: 0 }, input));
   // Flags are computed from the script itself, so they still gate approval without the column.
   const edited = act('EDIT_SCRIPT', { edit: { hook: '우리 집 현관이 늘 이랬어요' } });
@@ -191,7 +191,8 @@ test('sheets without the new optional columns: existing scripts keep working; ge
   const d2 = edited.detail;
   const approve = (input) => call('apiAction', 'PRD-001-R01', 'APPROVE_SCRIPT', Object.assign({ expectedStatus: d2.summary.status, expectedScriptVersion: d2.summary.scriptVersion, expectedVideoVersion: 0 }, input));
   assert.equal(approve({}).ok, false);
-  assert.equal(approve({ flagsConfirmed: true }).ok, true);
+  // Approval now also needs a chosen hook, which needs the hook columns → 시트 준비 first.
+  assert.match(approve({ flagsConfirmed: true, hookReviewed: true }).error, /시트 준비/);
 });
 
 test('publishing caption keeps the Coupang Partners disclosure first and discloses AI visualization scenes', () => {

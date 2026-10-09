@@ -190,11 +190,12 @@ test('older scripts and reviewer edits keep working: old structure approves, hoo
     return call('apiAction', id, name, Object.assign({ expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion, expectedVideoVersion: d.summary.videoVersion }, input));
   };
   const before = JSON.stringify(env.sheets.REELS.rows.slice(0, 2));
-  // The older row has no hook candidates: no hook choice needed. Its "저는 …" line is flagged.
-  assert.equal(call('apiGetReel', 'PRD-001-R02').detail.hooks.required, false);
-  assert.match(act('PRD-001-R02', 'APPROVE_SCRIPT').error, /\[개인 경험\] 장면 2/);
-  const approved = act('PRD-001-R02', 'APPROVE_SCRIPT', { flagsConfirmed: true });
-  assert.equal(approved.ok, true, approved.error);
+  // The older row has no hook candidates: it is still shown and reviewable, its "저는 …" line is
+  // flagged, and approval waits for five hooks + a choice (see fivehooks.test.js for that flow).
+  const old2 = call('apiGetReel', 'PRD-001-R02').detail;
+  assert.deepEqual([old2.hooks.required, old2.hooks.candidates.length, old2.hooks.canGenerate], [true, 0, true]);
+  assert.match(old2.verificationFlags.join('\n'), /\[개인 경험\] 장면 2/);
+  assert.match(act('PRD-001-R02', 'APPROVE_SCRIPT', { flagsConfirmed: true }).error, /훅 후보 5개가 없습니다/);
   assert.equal(JSON.stringify(env.sheets.REELS.rows.slice(0, 2)), before, 'other rows untouched');
   // The reviewer may write any hook (only fact rules apply to edits); writing it counts as choosing it.
   const edited = act('PRD-001-R01', 'EDIT_SCRIPT', { edit: { hook: '현관 우산 정리, 어떻게 하시나요?' } });

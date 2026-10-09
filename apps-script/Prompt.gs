@@ -42,9 +42,14 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
           id: { type: 'STRING', enum: ['H1', 'H2', 'H3', 'H4', 'H5'] },
           type: { type: 'STRING', enum: ['QUESTION', 'NUMBER', 'MYTH', 'SITUATION', 'CONCLUSION'] },
           text: { type: 'STRING' },
+          // The opening scene (scene 1) for this hook: what the first 2–3 s show and how.
+          visual: { type: 'STRING' },
+          flow_prompt: { type: 'STRING' },
+          emphasis: { type: 'STRING' },
+          sfx: { type: 'STRING' },
         },
-        required: ['id', 'type', 'text'],
-        propertyOrdering: ['id', 'type', 'text'],
+        required: ['id', 'type', 'text', 'visual', 'flow_prompt', 'emphasis', 'sfx'],
+        propertyOrdering: ['id', 'type', 'text', 'visual', 'flow_prompt', 'emphasis', 'sfx'],
       },
     },
     recommended_hook: {
@@ -86,10 +91,17 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
 
 /**
  * Response schema for `count` scripts. withHooks false (rewriting one existing script): no new hooks,
- * no keyword — only the script.
+ * no keyword — only the script. withHooks 'only' (hooks for an existing script): hooks + recommendation.
  */
 function geminiResponseSchema(count, withHooks) {
   const schema = JSON.parse(JSON.stringify(RF_GEMINI_RESPONSE_SCHEMA));
+  if (withHooks === 'only') {
+    delete schema.properties.reels;
+    delete schema.properties.comment_keyword;
+    schema.required = ['hooks', 'recommended_hook'];
+    schema.propertyOrdering = ['hooks', 'recommended_hook'];
+    return schema;
+  }
   schema.properties.reels.minItems = count;
   schema.properties.reels.maxItems = count;
   if (withHooks === false) {
@@ -127,6 +139,14 @@ function buildHookScriptPrompt(product, currentReel, selectedHook, previousError
 }
 
 /**
+ * Prompt for five hooks (with their opening scenes) for a script that already exists — e.g. one
+ * written before the five-hook workflow. The script itself is not changed. Costs one Gemini call.
+ */
+function buildHooksForScriptPrompt(product, currentReel, avoidHooks, previousErrors, previousResponse) {
+  return buildGeminiPrompt(product, previousErrors, previousResponse, avoidHooks, { mode: 'hooks', currentReel: currentReel });
+}
+
+/**
  * Builds the Gemini prompt for one product.
  * `previousErrors` (optional) feeds validation failures back for a corrective retry, together with
  * the previous response (`previousResponse`, optional) so Gemini edits only what failed.
@@ -144,6 +164,7 @@ function buildGeminiPrompt(product, previousErrors, previousResponse, avoidHooks
     new: '아래 상품에 대해 ① 서로 다른 훅 5개(H1~H5)를 만들고, ② 그중 가장 좋은 훅 하나를 recommended_hook으로 고르고 이유를 쓰고, ③ 그 훅으로 시작하는 릴스 대본 ' + count + '개를 작성하세요. 최종 훅은 운영자가 고릅니다.',
     revise: '아래 "현재 대본"을 검토자 요청에 맞게 고쳐 릴스 대본을 정확히 1개 작성하세요. 훅은 바꾸라는 요청이 없으면 그대로 두세요.',
     hook: '운영자가 고른 훅으로 시작하는 릴스 대본을 정확히 1개 다시 작성하세요. 훅 문장은 한 글자도 바꾸지 마세요.',
+    hooks: '아래 "현재 대본"에 쓸 서로 다른 훅 5개(H1~H5)와 각 훅의 첫 장면을 만들고, 가장 좋은 훅 하나를 recommended_hook으로 고르고 이유를 쓰세요. 대본은 출력하지 마세요. 최종 훅은 운영자가 고릅니다.',
   }[mode];
   const lines = [
     '당신은 인스타그램 계정 "' + B.NAME + '"의 릴스(9:16 세로 숏폼) 대본 작가입니다.',
@@ -190,7 +211,7 @@ function buildGeminiPrompt(product, previousErrors, previousResponse, avoidHooks
     }).join('\n'),
     ''
   );
-  if (mode === 'new') {
+  if (mode === 'new' || mode === 'hooks') {
     lines.push(
       '## 훅 5개 (hooks — 첫 장면, 첫 0~3초)',
       '- 정확히 5개, 유형별로 하나씩. 모두 ' + RF_CONFIG.HOOK_STYLE.MAX_CHARS + '자 이내, 첫 2초 안에 "어, 나도 그래" 싶은 문제·상황 중심. 기능 나열 금지.'
@@ -205,12 +226,18 @@ function buildGeminiPrompt(product, previousErrors, previousResponse, avoidHooks
       '- 쓰지 말 것: "~니다" 광고 말투, "~다면?"·"~하시나요?" 같은 뻔한 질문, "~하세요" 권유, "하나로", "소개", "추천", "필수템", "꿀템", "~이 달라집니다".',
       '- 나쁜 예: "현관이 좁아 우산 둘 곳이 없다면?", "우산꽂이 하나로 현관이 달라집니다.", "자석형 2피스 우산꽂이" (기능 나열로 시작하지 마세요).',
       '- 좋은 예: "급하게 출근할 때마다 우산 깜빡하는 사람?", "원룸 살면 우산꽂이 둘 자리도 애매하잖아요.", "비 오는 날마다 현관이 지저분해지는 이유."',
-      '- recommended_hook: 첫 프레임에서 문제가 가장 잘 보이고 제품 해결책과 자연스럽게 이어지는 훅의 id와 짧은 이유. 대본의 hook과 첫 장면 narration은 이 훅과 똑같아야 합니다.',
-      '',
-      '## 댓글 키워드 (comment_keyword)',
-      '- 시청자가 댓글에 쉽게 쓸 수 있는 한 단어 (예: 우산). 공백·숫자·기호 없이 10자 이내. 상품ID 같은 내부 코드는 쓰지 마세요.',
+      '- 각 훅마다 그 훅으로 시작할 때의 첫 장면을 함께 쓰세요: visual(첫 프레임부터 보여 줄 장면 연출), flow_prompt(그 장면의 영어 Google Flow 프롬프트), emphasis(자막 강조), sfx(효과음, 없으면 빈 문자열). 운영자가 훅을 고르면 첫 장면이 이것으로 바뀝니다.',
+      '- 두 번째 장면(EMPATHY)부터는 다섯 훅 중 어떤 것으로 시작해도 자연스럽게 이어지도록 쓰세요.',
+      '- recommended_hook: 첫 프레임에서 문제가 가장 잘 보이고 제품 해결책과 자연스럽게 이어지는 훅의 id와 짧은 이유.' + (mode === 'new' ? ' 대본의 hook과 첫 장면(narration·visual·flow_prompt)은 이 훅과 똑같아야 합니다.' : ''),
       ''
     );
+    if (mode === 'new') {
+      lines.push(
+        '## 댓글 키워드 (comment_keyword)',
+        '- 시청자가 댓글에 쉽게 쓸 수 있는 한 단어 (예: 우산). 공백·숫자·기호 없이 10자 이내. 상품ID 같은 내부 코드는 쓰지 마세요.',
+        ''
+      );
+    }
   } else if (mode === 'hook') {
     lines.push(
       '## 운영자가 고른 훅 (그대로 사용)',

@@ -254,7 +254,15 @@ test('existing MVP REELS rows are preserved and become reviewable after 시트 �
   env.gs('setupSheets()');
   const header = env.sheets.REELS.rows[0];
   assert.deepEqual(header.slice(0, 20), mvpHeaders, 'existing headers untouched');
-  assert.ok(header.includes('상태') && header.includes('승인 대본 해시'));
+  assert.ok(header.includes('상태') && header.includes('승인 대본 해시') && header.includes('훅 후보(JSON)'));
+  // An old script has no hook candidates: approval waits until five hooks are made and one is chosen.
+  assert.match(action(env, 'PRD-001-R01', 'APPROVE_SCRIPT').error, /훅 후보 5개가 없습니다/);
+  const d = api(env, 'apiGetReel', 'PRD-001-R01').detail;
+  assert.equal(d.hooks.canGenerate, true);
+  const made = api(env, 'apiGenerateHooks', 'PRD-001-R01', { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion });
+  assert.equal(made.ok, true, made.error);
+  assert.equal(made.detail.hooks.candidates.length, 5);
+  assert.equal(made.detail.summary.scriptVersion, d.summary.scriptVersion, 'the script itself is unchanged');
   const ok = action(env, 'PRD-001-R01', 'APPROVE_SCRIPT');
   assert.equal(ok.ok, true, ok.error);
   const rec = reelRow(env, 'PRD-001-R01').rec;

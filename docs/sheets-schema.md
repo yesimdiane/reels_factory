@@ -79,8 +79,8 @@ One row per reel script. One row (five hooks + one script) is appended per gener
 | Header | Written by | Description |
 |---|---|---|
 | 콘텐츠 기둥 | Gemini / reviewer edit | `AI 공간 변신`, `생활 꿀템 발견`, `국제부부 한국살이` or `살까 말까 비교 연구소` (see [brand.md](brand.md)). Not part of the approved fingerprint. |
-| 훅 후보(JSON) | Gemini (validated) | The five hooks H1–H5 (질문형, 숫자로 시작하는형, 통념을 뒤집는 단정형, 상황 묘사형, 결론 먼저 던지는형) and the recommended hook with its reason. **Generation requires this column** (checked before any Gemini call). |
-| 선택한 훅 | operator (dashboard ②) | The operator's final hook: `{id, label, text, edited, recommended, scriptVersion, mode, by, at}`. Approval requires it whenever the row has hook candidates, and the script's 후킹 must equal its text. |
+| 훅 후보(JSON) | Gemini (validated) | The five hooks H1–H5 (질문형, 숫자로 시작하는형, 통념을 뒤집는 단정형, 상황 묘사형, 결론 먼저 던지는형), each with its opening scene (`visual`, `flow_prompt`, `emphasis`, `sfx`), and the recommended hook with its reason. Written at generation, or by **훅 5개 만들기** for an older script. **Generation and approval require this column.** |
+| 선택한 훅 | operator (dashboard ②) | The operator's final hook: `{id, label, text, edited, recommended, scriptVersion, mode, by, at}`. Approval requires it on the current script version (후킹 must equal its text), plus the operator's review confirmation. |
 | 확인 필요 | code | Verification flags, one per line, e.g. `[개인 경험] 장면 2: 실제 경험·구매인지 확인 — "…"`. They are recomputed from the script on every edit and approval, so a missing or outdated cell never hides a flag. On approval the reviewer confirms them, and AUDIT records the confirmation. |
 
 If `콘텐츠 기둥` / `확인 필요` are missing, the dashboard and approvals keep working, and the dashboard shows a warning. If the two hook columns are missing, **new generation** stops before calling Gemini and asks you to run 시트 준비. Existing rows keep working. `장면(JSON)` may also carry `ai_visualization: true` for AI interior-visualization scenes. Their `on_screen_text` then includes `AI 시뮬레이션`.
@@ -93,7 +93,7 @@ Script cells are written with plain-text number format, so Sheets never turns sc
 |---|---|
 | 일시 | Timestamp |
 | 릴스ID / 상품ID | |
-| 작업 | One of: `PRODUCT_SUBMITTED` (①), `SCRIPTS_GENERATED`, `SELECT_HOOK`, `APPROVE_SCRIPT`, `EDIT_SCRIPT`, `REQUEST_SCRIPT_CHANGES`, `REGENERATE_SCRIPT`, `REJECT_SCRIPT`, `REOPEN_SCRIPT`, `START_VIDEO`, `REGISTER_VIDEO`, `MARK_VIDEO_FAILED`, `APPROVE_VIDEO`, `REQUEST_VIDEO_CHANGES`, `REJECT_VIDEO`, `READY_TO_PUBLISH_BLOCKED`, `RENDER_JOB_ISSUED`, `MARK_READY_TO_PUBLISH`, `CONFIRM_PUBLISHED`, `CONFIRM_MANYCHAT` |
+| 작업 | One of: `PRODUCT_SUBMITTED` (①), `SCRIPTS_GENERATED`, `SET_HOOKS`, `SELECT_HOOK`, `APPROVE_SCRIPT`, `EDIT_SCRIPT`, `REQUEST_SCRIPT_CHANGES`, `REGENERATE_SCRIPT`, `REJECT_SCRIPT`, `REOPEN_SCRIPT`, `START_VIDEO`, `REGISTER_VIDEO`, `MARK_VIDEO_FAILED`, `APPROVE_VIDEO`, `REQUEST_VIDEO_CHANGES`, `REJECT_VIDEO`, `READY_TO_PUBLISH_BLOCKED`, `RENDER_JOB_ISSUED`, `MARK_READY_TO_PUBLISH`, `CONFIRM_PUBLISHED`, `CONFIRM_MANYCHAT` |
 | 이전 상태 / 새 상태 | Status codes |
 | 대본 버전 / 영상 버전 | Versions after the action |
 | 작업자 | Google account email, `Gemini (<model>)`, or `system` |

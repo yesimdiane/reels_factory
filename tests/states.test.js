@@ -34,6 +34,8 @@ function freshRow(p) {
 function run(row, p, action, input) {
   const status = gs('reelStatus')(row);
   const base = { expectedStatus: status, expectedScriptVersion: gs('scriptVersionOf')(row), expectedVideoVersion: gs('videoVersionOf')(row) };
+  // The operator's "reviewed the script with the chosen hook" confirmation (gate tested in fivehooks.test.js).
+  if (action === 'APPROVE_SCRIPT') base.hookReviewed = true;
   const out = plan(row, p, action, Object.assign(base, input || {}), T);
   Object.assign(row, out.updates);
   return out;
@@ -172,7 +174,7 @@ test('rejection is terminal', () => {
 test('double taps are no-ops; stale requests are refused', () => {
   const p = ok();
   const row = freshRow(p);
-  const first = { expectedStatus: 'SCRIPT_REVIEW_PENDING', expectedScriptVersion: 1 };
+  const first = { expectedStatus: 'SCRIPT_REVIEW_PENDING', expectedScriptVersion: 1, hookReviewed: true };
   Object.assign(row, plan(row, p, 'APPROVE_SCRIPT', first, T).updates);
   assert.equal(plan(row, p, 'APPROVE_SCRIPT', first, T).noop, true);
   assert.throws(() => plan(row, p, 'REJECT_SCRIPT', first, T), /이미 다른 곳에서 변경되었습니다/);

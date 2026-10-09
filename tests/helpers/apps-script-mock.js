@@ -131,9 +131,9 @@ function createEnv(opts = {}) {
   });
   vm.runInContext(fs.readFileSync(BUNDLE, 'utf8'), ctx, { filename: 'ReelsFactory.gs' });
   const gs = (expr) => vm.runInContext(expr, ctx);
-  // Approval requires the operator's hook choice. Most tests are about other steps, so by default the
-  // harness makes that choice first (the current script's hook, no script change), like an operator
-  // tapping a hook. Tests of the hook gate pass { autoSelectHook: false }.
+  // Approval requires the operator's hook choice and a "reviewed" confirmation. Most tests are about other
+  // steps, so by default the harness does both first (the current script's hook, no script change), like
+  // an operator tapping a hook and ticking the box. Tests of the hook gate pass { autoSelectHook: false }.
   if (opts.autoSelectHook !== false) {
     const approve = ctx.apiAction;
     ctx.apiAction = function (reelId, action, input) {
@@ -150,6 +150,8 @@ function createEnv(opts = {}) {
           });
         }
       }
+      // …and confirms having reviewed the script with that hook (the approve-screen checkbox).
+      if (action === 'APPROVE_SCRIPT') input = Object.assign({ hookReviewed: true }, input || {});
       return approve(reelId, action, input);
     };
   }

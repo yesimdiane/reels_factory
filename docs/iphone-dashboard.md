@@ -20,10 +20,12 @@ Google Sheets stays the system of record. Every button writes to the **REELS** r
 - **Verification flags:** if a script needs real-world checking (personal experience, product test, couple story, before/after, comparison, AI scene), a yellow **확인 필요** box lists the items. **승인** works only after ticking *모두 확인했습니다*.
 - **직접 수정:** you can change the pillar, the hook, each scene line, the scene descriptions and Flow prompts, and tick *AI 시뮬레이션 장면* before approving.
 
-- **훅 5개:** all five hooks with their types, Gemini's ★추천 and its reason.
-  - Pick one (or edit its wording), then tap *이 훅으로 정하기 (무료)* to swap it in, or *대본 다시 쓰기 (Gemini)* to rewrite the script around it.
-  - **승인** stays blocked until you have chosen.
-  - Your choice is saved in REELS `선택한 훅`, with the script version, and in AUDIT (`SELECT_HOOK`).
+- **① 훅 고르기** (shown first for every script under review): all five hooks with their types, each hook's opening scene, Gemini's ★추천 and its reason.
+  - Pick one (or edit its wording), then tap *이 훅으로 정하기 (무료)*. The first scene's line, caption, visual and Flow prompt become that hook's. Or tap *대본 다시 쓰기 (Gemini)* to rewrite the script around it. The updated script appears below as a new version.
+  - A script made before this feature shows **훅 5개 만들기 (Gemini 1회)** first. The script itself is not changed.
+  - **② 대본 검토 → 승인** works only after you have chosen a hook and ticked *선택한 훅이 반영된 대본 vN을 끝까지 확인했습니다*.
+  - Your choice is saved in REELS `선택한 훅`, with the script version, and in AUDIT (`SELECT_HOOK`, `SET_HOOKS`).
+- **Header:** shows the deployed code version (`코드 …`). Compare it with **릴스 팩토리 → 코드 버전 확인** in Sheets; a different version means the web app needs a redeploy.
 - **Scene view:** each scene shows its visual direction, subtitle emphasis and sound effect.
 
 Details: [brand.md](brand.md), [five-hook-workflow.md](five-hook-workflow.md).
