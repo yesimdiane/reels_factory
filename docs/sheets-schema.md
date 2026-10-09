@@ -91,11 +91,12 @@ One row per reel script. One row (five hooks + one script) is appended per gener
 | 제작 계획(JSON) | Gemini (validated), after `SCRIPT_APPROVED` | The production plan: product look (from the verified images), per-scene Flow description / continuity / what to verify, voice rate and pause per line, subtitle emphasis, cut framing, risks, plus `scriptVersion` and `approvedHash`. A plan whose hash is not the current approval is ignored; it is cleared when the approval is withdrawn or the script changes. AUDIT: `SET_PRODUCTION_PLAN`. |
 | 에셋 현황(JSON) | code (Drive sync) | Drive folder ID/URL and one row per Flow clip: `MISSING` / `UPLOADED` (+ Drive file ID, size, modified), unexpected files, last sync. Tracking only: no AUDIT rows. |
 
-### Media column (added by 시트 준비)
+### Media and storyboard columns (added by 시트 준비)
 
 | Header | Written by | Description |
 |---|---|---|
 | 장면 클립(JSON) | code (dashboard uploads and reviews) | Per Flow clip (`S1` …): every uploaded version with Drive file ID, MD5, size, uploader, rights confirmation, and its status (`PENDING_REVIEW` / `APPROVED` / `REJECTED` / `SUPERSEDED`), reviewer and note. An approval counts only for the approved-script fingerprint it was given under. Needed before any upload or review (checked before Drive is touched). AUDIT: `CLIP_UPLOADED`, `CLIP_APPROVED`, `CLIP_REJECTED`. See [media-workspace.md](media-workspace.md). |
+| 장면 이미지(JSON) | Gemini 2.5 Flash Image & operator reviews | Per scene (`S1` …): generated 9:16 vertical storyboard image versions with Drive file ID, prompt, motion prompt, mime, reviewer status (`PENDING_REVIEW` / `APPROVED` / `REJECTED` / `SUPERSEDED`), reviewer note. Modifying or regenerating an approved image invalidates dependent video clip approvals. AUDIT: `STORYBOARD_IMAGE_GENERATED`, `STORYBOARD_IMAGE_APPROVED`, `STORYBOARD_IMAGE_REJECTED`, `CLIP_APPROVAL_INVALIDATED`, `VIDEO_APPROVAL_INVALIDATED`. |
 
 Both production columns are needed before the production plan or the Drive folder (checked before any Gemini or Drive call). Existing scripts keep working without them. The `Flow 장면 프롬프트` cell is overwritten with the plan-based prompts when a plan is made (it is not part of the approved fingerprint).
 
@@ -109,7 +110,7 @@ Script cells are written with plain-text number format, so Sheets never turns sc
 |---|---|
 | 일시 | Timestamp |
 | 릴스ID / 상품ID | |
-| 작업 | One of: `PRODUCT_SUBMITTED` (①), `SCRIPTS_GENERATED`, `SET_HOOKS`, `SELECT_HOOK`, `APPROVE_SCRIPT`, `EDIT_SCRIPT`, `REQUEST_SCRIPT_CHANGES`, `REGENERATE_SCRIPT`, `REJECT_SCRIPT`, `REOPEN_SCRIPT`, `START_VIDEO`, `REGISTER_VIDEO`, `MARK_VIDEO_FAILED`, `APPROVE_VIDEO`, `REQUEST_VIDEO_CHANGES`, `REJECT_VIDEO`, `READY_TO_PUBLISH_BLOCKED`, `RENDER_JOB_ISSUED`, `MARK_READY_TO_PUBLISH`, `CONFIRM_PUBLISHED`, `CONFIRM_MANYCHAT` |
+| 작업 | One of: `PRODUCT_SUBMITTED` (①), `SCRIPTS_GENERATED`, `SET_HOOKS`, `SELECT_HOOK`, `APPROVE_SCRIPT`, `EDIT_SCRIPT`, `REQUEST_SCRIPT_CHANGES`, `REGENERATE_SCRIPT`, `REJECT_SCRIPT`, `REOPEN_SCRIPT`, `STORYBOARD_IMAGE_GENERATED`, `STORYBOARD_IMAGE_APPROVED`, `STORYBOARD_IMAGE_REJECTED`, `CLIP_APPROVAL_INVALIDATED`, `VIDEO_APPROVAL_INVALIDATED`, `START_VIDEO`, `REGISTER_VIDEO`, `MARK_VIDEO_FAILED`, `APPROVE_VIDEO`, `REQUEST_VIDEO_CHANGES`, `REJECT_VIDEO`, `READY_TO_PUBLISH_BLOCKED`, `RENDER_JOB_ISSUED`, `MARK_READY_TO_PUBLISH`, `CONFIRM_PUBLISHED`, `CONFIRM_MANYCHAT` |
 | 이전 상태 / 새 상태 | Status codes |
 | 대본 버전 / 영상 버전 | Versions after the action |
 | 작업자 | Google account email, `Gemini (<model>)`, or `system` |

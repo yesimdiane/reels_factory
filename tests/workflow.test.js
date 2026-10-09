@@ -239,7 +239,7 @@ test('setupSheets appends missing headers to an existing REELS sheet only after 
   const header = env2.sheets.REELS.rows[0];
   assert.deepEqual(header.slice(0, 2), ['릴스ID', '운영자 메모']);
   assert.equal(header.length, 2 + vm.runInContext('RF_CONFIG.REELS_HEADERS.length + RF_CONFIG.REELS_OPTIONAL_HEADERS.length', env2.ctx) - 1);
-  assert.deepEqual(header.slice(-7), ['콘텐츠 기둥', '확인 필요', '훅 후보(JSON)', '선택한 훅', '제작 계획(JSON)', '에셋 현황(JSON)', '장면 클립(JSON)'], 'optional brand, hook, production and media columns added last');
+  assert.deepEqual(header.slice(-8), ['콘텐츠 기둥', '확인 필요', '훅 후보(JSON)', '선택한 훅', '제작 계획(JSON)', '에셋 현황(JSON)', '장면 클립(JSON)', '장면 이미지(JSON)'], 'optional brand, hook, production and media columns added last');
   assert.deepEqual(env2.sheets.REELS.rows[1], ['OLD-1', '보존']);
   assert.ok(env2.sheets.PERFORMANCE && env2.sheets.LOG);
   assert.match(env2.alerts.at(-1), /✓ PRODUCTS/);

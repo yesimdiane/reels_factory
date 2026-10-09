@@ -8,7 +8,7 @@
 const RF_CONFIG = {
   // Shown in the dashboard header and in 릴스 팩토리 → 코드 버전 확인. If the two differ, the web app
   // was not redeployed after the code was replaced (Deploy → Manage deployments → New version).
-  CODE_VERSION: '2026-10-11 · flow-media-workspace 5',
+  CODE_VERSION: '2026-10-11 · image-first-reels-v2 2',
 
   // Instagram brand. Used in the Gemini prompt and shown in the dashboard; edit here to reuse the
   // factory for another account. See docs/brand.md.
@@ -106,11 +106,13 @@ const RF_CONFIG = {
   ],
 
   // Added by 시트 준비 when missing; never required, so older sheets and the live dashboard keep working.
-  REELS_OPTIONAL_HEADERS: ['콘텐츠 기둥', '확인 필요', '훅 후보(JSON)', '선택한 훅', '제작 계획(JSON)', '에셋 현황(JSON)', '장면 클립(JSON)'],
+  REELS_OPTIONAL_HEADERS: ['콘텐츠 기둥', '확인 필요', '훅 후보(JSON)', '선택한 훅', '제작 계획(JSON)', '에셋 현황(JSON)', '장면 클립(JSON)', '장면 이미지(JSON)'],
   // Production planning (after SCRIPT_APPROVED) needs these; checked before any Gemini call.
   REELS_PRODUCTION_HEADERS: ['제작 계획(JSON)', '에셋 현황(JSON)'],
   // Scene clip versions and per-clip approvals (Media.gs). Checked before any upload or review.
   REELS_MEDIA_HEADERS: ['장면 클립(JSON)'],
+  // 9:16 Storyboard image versions and approvals (StoryboardImages.gs).
+  REELS_IMAGE_HEADERS: ['장면 이미지(JSON)'],
   // New scripts need these to keep the five hooks and the operator's choice (checked before any Gemini call).
   REELS_HOOK_HEADERS: ['훅 후보(JSON)', '선택한 훅'],
 
@@ -155,6 +157,9 @@ const RF_CONFIG = {
   DEFAULT_GEMINI_MODEL: 'gemini-3.5-flash',
   // Used only if the configured model returns 404 (not found → nothing generated or billed).
   GEMINI_FALLBACK_MODELS: ['gemini-flash-latest'],
+  // 9:16 storyboard image generation model using actual product reference bytes.
+  DEFAULT_IMAGE_MODEL: 'gemini-2.5-flash-image',
+  GEMINI_IMAGE_FALLBACK_MODELS: ['gemini-2.5-flash-image'],
   MAX_GEMINI_ATTEMPTS: 2,
   // Upper bound on Gemini calls for one generation, including targeted hook revisions
   // (full generation + one hook revision + one full retry at most).
@@ -265,6 +270,19 @@ const RF_CONFIG = {
     UPLOAD_TTL_SEC: 6 * 60 * 60,
     DRIVE_API: 'https://www.googleapis.com/drive/v3/files/',
     DRIVE_UPLOAD_API: 'https://www.googleapis.com/upload/drive/v3/files',
+  },
+
+  // 9:16 Storyboard image generation (gemini-2.5-flash-image) and Google Flow handoff.
+  STORYBOARD: {
+    FOLDER_NAME: 'storyboard',
+    ASPECT_RATIO: '9:16',
+    MODEL: 'gemini-2.5-flash-image',
+    MAX_REVISION_NOTE_CHARS: 300,
+    // Configurable per-image estimate in USD. Defaults to null (no verified price configured).
+    // Operators can set via Script Property GEMINI_IMAGE_ESTIMATED_USD_PER_IMAGE or configure here.
+    // If null/unconfigured, the system reports "Cost estimate unavailable" instead of inventing a price.
+    ESTIMATED_USD_PER_IMAGE: null,
+    FLOW_NOTE: '생성된 9:16 이미지를 다운로드하여 Google Flow에 업로드하고, 모션 프롬프트를 입력하여 비디오 클립을 생성하세요.',
   },
 
   // Story structure. New scripts: HOOK → EMPATHY → SOLUTION → DEMO → CTA (BENEFIT optional before CTA).
