@@ -29,11 +29,14 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
                 visual: { type: 'STRING' },
                 on_screen_text: { type: 'STRING' },
                 flow_prompt: { type: 'STRING' },
+                // IDs (F1, F2 …) of the verified facts this scene says or shows.
+                fact_ids: { type: 'ARRAY', items: { type: 'STRING' } },
               },
-              required: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt'],
-              propertyOrdering: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt'],
+              required: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt', 'fact_ids'],
+              propertyOrdering: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt', 'fact_ids'],
             },
           },
+          // IDs (F1, F2 …) of every verified fact the reel relies on.
           facts_used: { type: 'ARRAY', items: { type: 'STRING' } },
         },
         required: ['concept', 'hook', 'narration', 'captions', 'scenes', 'facts_used'],
@@ -56,8 +59,8 @@ function geminiResponseSchema(count) {
  * Prompt to rewrite ONE script after the reviewer requested changes. Uses the same rules as
  * buildGeminiPrompt, the current script and the reviewer's note. Costs one Gemini call.
  */
-function buildRegenerationPrompt(product, currentReel, reviewerNote, previousErrors) {
-  const base = buildGeminiPrompt(product, previousErrors)
+function buildRegenerationPrompt(product, currentReel, reviewerNote, previousErrors, previousResponse) {
+  const base = buildGeminiPrompt(product, previousErrors, previousResponse)
     .replace(
       '서로 다른 컨셉의 릴스 대본을 정확히 ' + RF_CONFIG.REELS_PER_PRODUCT + '개 작성하세요.',
       '아래 "현재 대본"을 검토자 요청에 맞게 고쳐 릴스 대본을 정확히 1개 작성하세요.'
@@ -78,9 +81,10 @@ function buildRegenerationPrompt(product, currentReel, reviewerNote, previousErr
 
 /**
  * Builds the Gemini prompt for one product.
- * `previousErrors` (optional) feeds validation failures back for a corrective retry.
+ * `previousErrors` (optional) feeds validation failures back for a corrective retry, together with
+ * the previous response (`previousResponse`, optional) so Gemini edits only what failed.
  */
-function buildGeminiPrompt(product, previousErrors) {
+function buildGeminiPrompt(product, previousErrors, previousResponse) {
   const L = RF_CONFIG.LIMITS;
   const facts = parseConfirmedFeatures(product.features);
   const lines = [
@@ -93,21 +97,21 @@ function buildGeminiPrompt(product, previousErrors) {
     '- 카테고리: ' + (normalizeText(product.category) || '(미입력)'),
     '- 타깃: ' + (normalizeText(product.target) || '(미입력)'),
     '',
-    '## 확인된 기능 (이 목록만 사실로 사용)',
+    '## 확인된 기능 (이 목록만 사실로 사용, ID로 참조)',
   ];
-  facts.forEach(function (f) {
-    lines.push('- ' + f);
+  facts.forEach(function (f, i) {
+    lines.push('- ' + factId(i) + ': ' + f);
   });
   lines.push(
     '',
     '## 규칙',
-    '1. 위 "확인된 기능"에 없는 기능, 소재, 내구성, 가격, 할인, 순위, 후기, 수치를 절대 만들지 마세요.',
-    '2. 화면 문구·내레이션·자막에 들어가는 숫자는 확인된 기능에 적힌 숫자만 사용하세요.',
-    '3. facts_used에는 실제로 사용한 확인된 기능을 위 목록 문구 그대로(한 글자도 바꾸지 말고) 넣으세요.',
-    '4. 과장 표현(최저가, 100%, 무조건, 완벽, 평생, 1위, 품절 임박 등)을 쓰지 마세요.',
-    '5. URL, 가격, 광고 표기는 쓰지 마세요. 댓글 키워드는 CTA 장면에서 자리표시자 ' + RF_CONFIG.KEYWORD_PLACEHOLDER + ' 로만 쓰세요.',
-    '6. hook은 ' + L.HOOK_MAX_CHARS + '자 이내, narration은 ' + L.NARRATION_MAX_CHARS + '자 이내의 자연스러운 한국어 구어체.',
-    '7. captions는 화면 자막 줄 목록이며 각 ' + L.CAPTION_MAX_CHARS + '자 이내.',
+    '1. 제품에 대한 사실은 위 확인된 기능(' + factId(0) + '~' + factId(facts.length - 1) + ')만 사용하세요. 목록에 없는 기능, 소재, 내구성·강도, 호환 표면(냉장고·벽·타일 등), 설치 방식(무타공·공구 등), 수납 개수, 가격, 할인, 순위, 후기, 인증, 색상, 수치는 절대 만들지 마세요.',
+    '2. 확인된 기능을 자연스러운 한국어 구어체로 바꿔 말하세요. 기술 설명 문구를 그대로 읽지 마세요. 예: "자석 부착형 거치 방식" → "자석으로 붙여서 쓰는 우산꽂이", "철제 도어 부착" → "철제 현관문에 붙일 수 있어요". 뜻을 넓히거나 보태지는 마세요.',
+    '3. 숫자·치수·단위는 확인된 기능에 적힌 그대로만 쓰세요. 상단/하단 치수를 바꾸거나 반올림·환산하지 마세요. 가격·할인·퍼센트는 쓰지 마세요.',
+    '4. 각 장면의 fact_ids에는 그 장면이 말하거나 보여 주는 확인된 기능 ID를 넣으세요 (예: ["' + factId(0) + '"]). DEMO·BENEFIT 장면은 최소 1개, HOOK·PROBLEM·CTA는 해당 없으면 []. facts_used에는 릴스 전체에서 사용한 ID를 넣으세요. 기능 문장을 직접 쓰지 말고 ID만 쓰세요.',
+    '5. 과장 표현(최저가, 100%, 무조건, 완벽, 평생, 절대, 1위, 최고, 튼튼, 강력 등)과 후기·인기 표현(후기, 리뷰, 다들 사요, 품절 등)을 쓰지 마세요.',
+    '6. URL, 가격, 광고 표기는 쓰지 마세요. 댓글 키워드는 CTA 장면에서 자리표시자 ' + RF_CONFIG.KEYWORD_PLACEHOLDER + ' 로만 쓰세요.',
+    '7. hook은 ' + L.HOOK_MAX_CHARS + '자 이내, narration은 ' + L.NARRATION_MAX_CHARS + '자 이내의 자연스러운 한국어 구어체. captions는 화면 자막 줄 목록이며 각 ' + L.CAPTION_MAX_CHARS + '자 이내.',
     '8. scenes는 ' + L.MIN_SCENES + '~' + L.MAX_SCENES + '개, scene_no는 1부터 순서대로, duration_sec 합계는 ' + L.MIN_TOTAL_SEC + '~' + L.MAX_TOTAL_SEC + '초.',
     '9. 세 릴스는 concept과 hook이 서로 달라야 합니다 (예: 문제 해결, 설치 과정, 공간 비포/애프터).',
     '10. 시연은 실제로 가능한 사용 장면만 묘사하세요.',
@@ -130,10 +134,17 @@ function buildGeminiPrompt(product, previousErrors) {
     'JSON 스키마에 맞춰 JSON만 출력하세요.'
   );
   if (previousErrors && previousErrors.length) {
-    lines.push('', '## 이전 응답의 검증 오류 (반드시 수정)');
-    previousErrors.slice(0, 20).forEach(function (e) {
+    lines.push(
+      '',
+      '## 이전 응답의 검증 오류 (반드시 수정)',
+      '아래 문제만 고치세요. 지적된 문장은 확인된 기능만으로 다시 쓰거나 삭제하고, 문제가 없는 릴스와 장면은 그대로 두세요.'
+    );
+    previousErrors.slice(0, 25).forEach(function (e) {
       lines.push('- ' + e);
     });
+    if (previousResponse) {
+      lines.push('', '## 이전 응답 (JSON — 위 오류만 고쳐서 다시 출력)', String(previousResponse).slice(0, 12000));
+    }
   }
   return lines.join('\n');
 }

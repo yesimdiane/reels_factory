@@ -190,6 +190,23 @@ const RF_CONFIG = {
     '세상에서',
     '유일한',
   ],
+
+  // Product claims that need support in 확인된 기능 (checked in hook, narration, captions, scene lines).
+  // Group 1 is the claim term; it is allowed when the verified facts or product name contain it.
+  // Natural paraphrases of verified facts ("자석으로 붙여요", "철제 현관문에 붙일 수 있어요") pass.
+  CLAIM_RULES: [
+    { type: '호환성', pattern: /(냉장고|세탁기|벽면|벽|타일|유리|나무|원목|목문|방화문|알루미늄|스테인리스|대리석|콘크리트|화이트보드|자동차|차량)(?:에도|에|면|문에|문에도)?\s*(?:다|도|잘)?\s*(?:붙|부착|달|설치|고정|쓸 수|사용 가능)/ },
+    { type: '호환성', pattern: /((?:모든|어떤|어느|아무)\s*(?:문|현관|곳|표면|데|우산|사이즈))/ },
+    { type: '호환성', pattern: /(어디(?:든|에나|서나|에든))/ },
+    { type: '성능', pattern: /(튼튼|견고|단단|강력|강한\s*자석|자력|내구|하중|무게|버텨|버티|흔들림|안\s*떨어|떨어지지\s*않|미끄러지지|오래\s*(?:써|쓸|가))/ },
+    { type: '기능', pattern: /(방수|방청|배수|물받이|물빠짐|물\s*빠|습기|곰팡이|항균|위생|녹(?:이|슬| 안)|접이식\s*거치대|회전|각도\s*조절|높이\s*조절|잠금)/ },
+    { type: '설치', pattern: /(무타공|구멍|드릴|타공|나사|못\s*없이|공구\s*없이|설치\s*끝|\d+\s*초\s*만에)/ },
+    { type: '소재', pattern: /(스테인리스|스텐|알루미늄|원목|플라스틱|실리콘|ABS|소재|재질|철제|금속)/ },
+    { type: '수납 용량', pattern: /(대용량|여러\s*개|몇\s*개(?:든|라도)|가득|\d+\s*개까지)/ },
+    { type: '가격', pattern: /(가격|할인|세일|쿠폰|특가|무료\s*배송|로켓|가성비|저렴|(?<![가-힣])싸(?:요|다|게|고)|(?:만|천)\s*원|공짜|이벤트|혜택)/ },
+    { type: '후기·인기', pattern: /(후기|리뷰|별점|평점|구매평|만족도|재구매|판매량|인기|베스트|입소문|난리|품절|대박|핫한|다들\s*(?:사|쓰))/ },
+    { type: '인증', pattern: /(특허|인증|KC|FDA|친환경|무독성|국내산|국산|최고|최강)/ },
+  ],
 };
 
 // ===== Validation.gs =====
@@ -280,18 +297,193 @@ function viewerFacingTexts_(reel) {
   });
 }
 
-/** Facts and numbers a script may rely on, derived from PRODUCTS.확인된 기능 and 상품명. */
+/** Loose form for matching references and measurements: no spaces or punctuation, × → x, lower case. */
+function looseText_(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[×✕✖*]/g, 'x')
+    .replace(/[\s·.,:;()\[\]{}'"`~!?\/\\|_\-–—]+/g, '');
+}
+
+/** Stable reference for the i-th (0-based) verified fact, as shown to Gemini: F1, F2, … */
+function factId(i) {
+  return 'F' + (i + 1);
+}
+
+/**
+ * Measurements in text: tuples like 190x55x50mm (with an optional 상단/하단 label before them)
+ * and single numbers with a unit (82mm, 9,900원, 30%). Korean unit words after a number are normalised.
+ */
+function extractMeasures_(text) {
+  let t = String(text == null ? '' : text)
+    .replace(/[×✕✖*]/g, 'x')
+    .replace(/(\d)\s*(밀리미터|밀리|미리)/g, '$1mm')
+    .replace(/(\d)\s*(센티미터|센티|센치)/g, '$1cm')
+    .replace(/(\d)\s*(킬로그램|킬로|키로)/g, '$1kg')
+    .replace(/(\d)\s*그램/g, '$1g')
+    .replace(/(\d)\s*미터/g, '$1m')
+    .replace(/(\d)\s*퍼센트/g, '$1%')
+    .replace(/(\d),(\d{3})/g, '$1$2');
+  const tuples = [];
+  const tupleRe = /(상단|하단|윗부분|아랫부분|위쪽|아래쪽)?[\s:：]*(\d+(?:\.\d+)?(?:\s*[xX]\s*\d+(?:\.\d+)?){1,2})\s*(mm|cm|m(?![a-z])|kg|g(?![a-z]))?/g;
+  t = t.replace(tupleRe, function (all, label, nums, unit) {
+    tuples.push({ text: all.trim(), label: label ? label.charAt(0) : '', nums: nums.replace(/\s+/g, '').toLowerCase(), unit: (unit || '').toLowerCase() });
+    return ' ';
+  });
+  const singles = [];
+  const singleRe = /(\d+(?:\.\d+)?)\s*(mm|cm|kg|ml|원|%|m(?![a-z])|g(?![a-z])|l(?![a-z]))/gi;
+  let m;
+  while ((m = singleRe.exec(t))) singles.push({ text: m[0].trim(), num: m[1], unit: m[2].toLowerCase() });
+  return { tuples: tuples, singles: singles };
+}
+
+/** Facts, IDs, numbers and measurements a script may rely on, from PRODUCTS.확인된 기능 and 상품명. */
 function factContext_(product) {
   const facts = parseConfirmedFeatures(product.features);
   const factSet = {};
-  facts.forEach(function (f) {
+  const byLoose = {};
+  facts.forEach(function (f, i) {
     factSet[f] = true;
+    byLoose[looseText_(f)] = i;
   });
   const allowedNumbers = {};
   extractNumbers(facts.join(' ') + ' ' + product.name).forEach(function (n) {
     allowedNumbers[n] = true;
   });
-  return { facts: facts, factSet: factSet, allowedNumbers: allowedNumbers };
+  const measures = extractMeasures_(facts.join('\n') + '\n' + product.name);
+  const unitNumbers = {};
+  measures.singles.forEach(function (x) {
+    unitNumbers[x.num + x.unit] = true;
+  });
+  measures.tuples.forEach(function (x) {
+    if (x.unit) x.nums.split('x').forEach(function (n) {
+      unitNumbers[n + x.unit] = true;
+    });
+  });
+  return {
+    facts: facts,
+    factSet: factSet,
+    byLoose: byLoose,
+    allowedNumbers: allowedNumbers,
+    tuples: measures.tuples,
+    unitNumbers: unitNumbers,
+    looseAll: looseText_(facts.join(' ') + ' ' + product.name),
+  };
+}
+
+/**
+ * Resolves a fact reference from Gemini or the sheet to the index of a verified fact, or -1.
+ * Accepts the ID ("F2", "F2: …"), the exact sheet wording, or the same wording with different
+ * spacing/punctuation. A paraphrase is NOT a reference: unknown references are rejected.
+ */
+function resolveFactRef_(ref, ctx) {
+  const r = normalizeText(ref);
+  const id = r.match(/^\[?F\s*(\d+)\]?(?:$|[\s:：.)\]-])/i);
+  if (id) {
+    const i = Number(id[1]) - 1;
+    return i >= 0 && i < ctx.facts.length ? i : -1;
+  }
+  const loose = looseText_(r);
+  return loose && ctx.byLoose[loose] !== undefined ? ctx.byLoose[loose] : -1;
+}
+
+/** Fact references of a scene: Gemini's fact_ids (IDs) or the stored facts (sheet wording). */
+function sceneFactRefs_(scene) {
+  if (!scene) return [];
+  if (Array.isArray(scene.fact_ids)) return scene.fact_ids;
+  if (Array.isArray(scene.facts)) return scene.facts;
+  return [];
+}
+
+const RF_COLOR_GROUPS_ = [
+  ['화이트', '흰색', '흰', '하얀', '하양', '백색'],
+  ['그레이', '회색', '그레이색'],
+  ['다크그레이', '진회색', '짙은 회색', '차콜'],
+  ['블랙', '검정', '검은', '검은색', '흑색'],
+  ['베이지'], ['아이보리'], ['네이비', '남색'], ['핑크', '분홍'], ['민트'], ['실버', '은색'], ['골드', '금색'],
+  ['브라운', '갈색'], ['레드', '빨간', '빨강'], ['블루', '파란', '파랑'], ['그린', '초록'], ['옐로', '노란', '노랑'], ['퍼플', '보라'],
+];
+
+/**
+ * Product claims in viewer-facing text that need support in 확인된 기능: invented features,
+ * compatibility, performance, material, price, reviews, certifications, colours. A term that also
+ * appears in the verified facts (or product name) is allowed. Returns error strings.
+ */
+function unsupportedClaims_(text, ctx, where) {
+  const errors = [];
+  const t = normalizeText(text);
+  if (!t) return errors;
+  const hint = ' — "' + t + '". 확인된 기능(' + factId(0) + '~' + factId(Math.max(0, ctx.facts.length - 1)) + ')에 없는 내용이니 빼거나 확인된 기능만으로 다시 쓰세요.';
+  RF_CONFIG.CLAIM_RULES.forEach(function (rule) {
+    const re = new RegExp(rule.pattern.source, 'g');
+    let m;
+    while ((m = re.exec(t))) {
+      const term = m[1] || m[0];
+      if (ctx.looseAll.indexOf(looseText_(term)) !== -1) continue;
+      errors.push(where + '확인되지 않은 ' + rule.type + ' 주장 "' + term + '"' + hint);
+    }
+  });
+  RF_COLOR_GROUPS_.forEach(function (group) {
+    // Longest first, so "다크그레이" is not also read as "그레이".
+    const words = group.slice().sort(function (a, b) {
+      return b.length - a.length;
+    });
+    const hit = words.filter(function (w) {
+      return t.indexOf(w) !== -1;
+    })[0];
+    if (!hit) return;
+    if (hit === '그레이' && t.indexOf('다크그레이') !== -1 && t.replace(/다크그레이/g, '').indexOf('그레이') === -1) return;
+    const known = group.some(function (w) {
+      return ctx.looseAll.indexOf(looseText_(w)) !== -1;
+    });
+    if (!known) errors.push(where + '확인되지 않은 색상 "' + hit + '"' + hint);
+  });
+  return errors;
+}
+
+/** Dimensions, units, prices and percentages must match 확인된 기능 exactly (including 상단/하단). */
+function measurementErrors_(text, ctx, where) {
+  const errors = [];
+  const found = extractMeasures_(text);
+  found.tuples.forEach(function (x) {
+    const same = ctx.tuples.filter(function (f) {
+      return f.nums === x.nums;
+    });
+    if (!same.length) {
+      errors.push(where + '확인된 기능과 다른 치수입니다: "' + x.text + '". 치수는 확인된 기능에 적힌 그대로만 쓰세요.');
+      return;
+    }
+    if (x.unit && !same.some(function (f) { return !f.unit || f.unit === x.unit; })) {
+      errors.push(where + '치수 단위가 확인된 기능과 다릅니다: "' + x.text + '" (확인된 단위: ' + same[0].unit + ').');
+    }
+    if (x.label && !same.some(function (f) { return !f.label || f.label === x.label; })) {
+      errors.push(where + '상단/하단 치수가 바뀌었습니다: "' + x.text + '". 확인된 기능의 구분 그대로 쓰세요.');
+    }
+  });
+  found.singles.forEach(function (x) {
+    if (x.unit === '원') {
+      errors.push(where + '확인되지 않은 가격입니다: "' + x.text + '". 가격·할인은 쓰지 마세요.');
+    } else if (!ctx.unitNumbers[x.num + x.unit]) {
+      errors.push(where + '확인된 기능에 없는 수치/단위입니다: "' + x.text + '".');
+    }
+  });
+  return errors;
+}
+
+/** Viewer-facing texts with a label for error messages. */
+function labelledViewerTexts_(reel) {
+  const out = [{ where: 'hook', text: reel.hook }, { where: 'narration', text: reel.narration }];
+  (Array.isArray(reel.captions) ? reel.captions : []).forEach(function (c, i) {
+    out.push({ where: 'captions[' + i + ']', text: c });
+  });
+  (Array.isArray(reel.scenes) ? reel.scenes : []).forEach(function (s, i) {
+    if (!s) return;
+    out.push({ where: '장면 ' + (i + 1) + ' narration', text: s.narration });
+    out.push({ where: '장면 ' + (i + 1) + ' on_screen_text', text: s.on_screen_text });
+  });
+  return out.filter(function (x) {
+    return typeof x.text === 'string' && normalizeText(x.text);
+  });
 }
 
 /**
@@ -308,7 +500,6 @@ function validateReelContent(reel, product, label, options) {
     }));
   const L = RF_CONFIG.LIMITS;
   const ctx = factContext_(product);
-  const factSet = ctx.factSet;
   const allowedNumbers = ctx.allowedNumbers;
   const p = label + ': ';
   if (!reel || typeof reel !== 'object') {
@@ -381,15 +572,38 @@ function validateReelContent(reel, product, label, options) {
     }
   }
 
+  // Fact references: IDs (F1…) from Gemini or the sheet wording stored in REELS. Never free paraphrases.
+  const idRange = factId(0) + '~' + factId(Math.max(0, ctx.facts.length - 1));
   if (!Array.isArray(reel.facts_used) || reel.facts_used.length === 0) {
-    errors.push(p + '"facts_used"가 비어 있습니다. 확인된 기능 중 최소 1개를 사용해야 합니다.');
+    errors.push(p + '"facts_used"가 비어 있습니다. 확인된 기능 ID(' + idRange + ') 중 최소 1개를 넣으세요.');
   } else {
     reel.facts_used.forEach(function (fact) {
-      if (!factSet[normalizeText(fact)]) {
-        errors.push(p + '확인되지 않은 기능을 사용했습니다: "' + fact + '". "확인된 기능" 문구를 그대로 사용해야 합니다.');
+      if (resolveFactRef_(fact, ctx) === -1) {
+        errors.push(p + '확인되지 않은 기능을 참조했습니다: "' + fact + '". facts_used에는 확인된 기능 ID(' + idRange + ')만 넣으세요.');
       }
     });
   }
+  if (Array.isArray(reel.scenes)) {
+    reel.scenes.forEach(function (s, si) {
+      if (!s || typeof s !== 'object') return;
+      const refs = sceneFactRefs_(s);
+      refs.forEach(function (ref) {
+        if (resolveFactRef_(ref, ctx) === -1) {
+          errors.push(p + '장면 ' + (si + 1) + ': 확인되지 않은 기능을 참조했습니다: "' + ref + '". fact_ids에는 ' + idRange + '만 넣으세요.');
+        }
+      });
+      if (options && options.requireFactRefs && (s.beat === 'DEMO' || s.beat === 'BENEFIT') && !refs.length) {
+        errors.push(p + '장면 ' + (si + 1) + ' (' + s.beat + '): 이 장면이 근거로 삼는 확인된 기능 ID를 fact_ids에 넣으세요.');
+      }
+    });
+  }
+
+  labelledViewerTexts_(reel).forEach(function (x) {
+    const where = p + x.where + ': ';
+    unsupportedClaims_(x.text, ctx, where).concat(measurementErrors_(x.text, ctx, where)).forEach(function (e) {
+      errors.push(e);
+    });
+  });
 
   const viewerText = viewerFacingTexts_(reel).join('\n');
   extractNumbers(viewerText).forEach(function (n) {
@@ -416,14 +630,17 @@ function validateGeminiReels(payload, product, expectedCount) {
   const count = expectedCount || RF_CONFIG.REELS_PER_PRODUCT;
   const errors = [];
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.reels)) {
-    return { errors: ['응답에 "reels" 배열이 없습니다.'], reels: [] };
+    return { errors: ['응답에 "reels" 배열이 없습니다.'], reels: [], reelErrors: [] };
   }
   const reels = payload.reels;
   if (reels.length !== count) {
     errors.push('릴스 대본은 정확히 ' + count + '개여야 합니다 (받은 개수: ' + reels.length + ').');
   }
-  reels.forEach(function (reel, i) {
-    validateReelContent(reel, product, '릴스 ' + (i + 1), { requireStoryboard: true }).forEach(function (e) {
+  const reelErrors = reels.map(function (reel, i) {
+    return dedupe_(validateReelContent(reel, product, '릴스 ' + (i + 1), { requireStoryboard: true, requireFactRefs: true }));
+  });
+  reelErrors.forEach(function (list) {
+    list.forEach(function (e) {
       errors.push(e);
     });
   });
@@ -442,10 +659,76 @@ function validateGeminiReels(payload, product, expectedCount) {
   });
 
   // De-duplicate identical messages (e.g. the same number repeated).
-  const unique = errors.filter(function (e, idx) {
-    return errors.indexOf(e) === idx;
+  const unique = dedupe_(errors);
+  return {
+    errors: unique,
+    reels: unique.length ? [] : reels.map(function (r) {
+      return canonicalReel_(r, product);
+    }),
+    reelErrors: reelErrors,
+  };
+}
+
+function dedupe_(list) {
+  return list.filter(function (e, idx) {
+    return list.indexOf(e) === idx;
   });
-  return { errors: unique, reels: unique.length ? [] : reels };
+}
+
+/**
+ * A validated reel with fact references replaced by the exact PRODUCTS wording, so REELS keeps
+ * human-readable facts (and the same columns and fingerprint as before). Scene references go to
+ * scene.facts; facts_used also includes every fact a scene relies on.
+ */
+function canonicalReel_(reel, product) {
+  const ctx = factContext_(product);
+  const out = JSON.parse(JSON.stringify(reel));
+  const used = [];
+  const add = function (ref) {
+    const i = resolveFactRef_(ref, ctx);
+    if (i !== -1 && used.indexOf(i) === -1) used.push(i);
+    return i;
+  };
+  (out.facts_used || []).forEach(add);
+  (out.scenes || []).forEach(function (s) {
+    if (!s) return;
+    const idx = [];
+    sceneFactRefs_(s).forEach(function (ref) {
+      const i = add(ref);
+      if (i !== -1 && idx.indexOf(i) === -1) idx.push(i);
+    });
+    delete s.fact_ids;
+    s.facts = idx.map(function (i) {
+      return ctx.facts[i];
+    });
+  });
+  out.facts_used = used.sort(function (a, b) {
+    return a - b;
+  }).map(function (i) {
+    return ctx.facts[i];
+  });
+  return out;
+}
+
+/**
+ * Builds the best payload from several attempts without another paid call: for each position the
+ * latest reel that passed on its own. Returns { errors, reels } like validateGeminiReels, or null.
+ */
+function combineValidReels(attempts, product, expectedCount) {
+  const count = expectedCount || RF_CONFIG.REELS_PER_PRODUCT;
+  const picked = [];
+  for (let i = 0; i < count; i++) {
+    for (let a = attempts.length - 1; a >= 0; a--) {
+      const at = attempts[a];
+      if (at && at.reels && at.reels[i] && at.reelErrors && at.reelErrors[i] && !at.reelErrors[i].length) {
+        picked[i] = at.reels[i];
+        break;
+      }
+    }
+    if (!picked[i]) return null;
+  }
+  const res = validateGeminiReels({ reels: picked }, product, count);
+  return res.errors.length ? null : res;
 }
 
 /** HOOK first, CTA last, DEMO and BENEFIT present, beats in story order, keyword placeholder in the CTA. */
@@ -1158,12 +1441,15 @@ function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
  */
 function prepareReelRecords(product, rawText, existingIds, existingKeywords, meta) {
   const parsed = parseModelJson(rawText);
-  if (parsed.error) return { errors: [parsed.error], records: [] };
+  if (parsed.error) return { errors: [parsed.error], records: [], attempt: null };
   const result = validateGeminiReels(parsed.value, product);
-  if (result.errors.length) return { errors: result.errors, records: [] };
+  // Kept so a later attempt can be combined with this one's valid reels (no extra paid call).
+  const attempt = { reels: parsed.value && parsed.value.reels, reelErrors: result.reelErrors };
+  if (result.errors.length) return { errors: result.errors, records: [], attempt: attempt };
   return {
     errors: [],
     records: buildReelRecords(product, result.reels, existingIds, existingKeywords, meta),
+    attempt: attempt,
   };
 }
 
@@ -1199,11 +1485,14 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
                 visual: { type: 'STRING' },
                 on_screen_text: { type: 'STRING' },
                 flow_prompt: { type: 'STRING' },
+                // IDs (F1, F2 …) of the verified facts this scene says or shows.
+                fact_ids: { type: 'ARRAY', items: { type: 'STRING' } },
               },
-              required: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt'],
-              propertyOrdering: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt'],
+              required: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt', 'fact_ids'],
+              propertyOrdering: ['scene_no', 'beat', 'narration', 'duration_sec', 'visual', 'on_screen_text', 'flow_prompt', 'fact_ids'],
             },
           },
+          // IDs (F1, F2 …) of every verified fact the reel relies on.
           facts_used: { type: 'ARRAY', items: { type: 'STRING' } },
         },
         required: ['concept', 'hook', 'narration', 'captions', 'scenes', 'facts_used'],
@@ -1226,8 +1515,8 @@ function geminiResponseSchema(count) {
  * Prompt to rewrite ONE script after the reviewer requested changes. Uses the same rules as
  * buildGeminiPrompt, the current script and the reviewer's note. Costs one Gemini call.
  */
-function buildRegenerationPrompt(product, currentReel, reviewerNote, previousErrors) {
-  const base = buildGeminiPrompt(product, previousErrors)
+function buildRegenerationPrompt(product, currentReel, reviewerNote, previousErrors, previousResponse) {
+  const base = buildGeminiPrompt(product, previousErrors, previousResponse)
     .replace(
       '서로 다른 컨셉의 릴스 대본을 정확히 ' + RF_CONFIG.REELS_PER_PRODUCT + '개 작성하세요.',
       '아래 "현재 대본"을 검토자 요청에 맞게 고쳐 릴스 대본을 정확히 1개 작성하세요.'
@@ -1248,9 +1537,10 @@ function buildRegenerationPrompt(product, currentReel, reviewerNote, previousErr
 
 /**
  * Builds the Gemini prompt for one product.
- * `previousErrors` (optional) feeds validation failures back for a corrective retry.
+ * `previousErrors` (optional) feeds validation failures back for a corrective retry, together with
+ * the previous response (`previousResponse`, optional) so Gemini edits only what failed.
  */
-function buildGeminiPrompt(product, previousErrors) {
+function buildGeminiPrompt(product, previousErrors, previousResponse) {
   const L = RF_CONFIG.LIMITS;
   const facts = parseConfirmedFeatures(product.features);
   const lines = [
@@ -1263,21 +1553,21 @@ function buildGeminiPrompt(product, previousErrors) {
     '- 카테고리: ' + (normalizeText(product.category) || '(미입력)'),
     '- 타깃: ' + (normalizeText(product.target) || '(미입력)'),
     '',
-    '## 확인된 기능 (이 목록만 사실로 사용)',
+    '## 확인된 기능 (이 목록만 사실로 사용, ID로 참조)',
   ];
-  facts.forEach(function (f) {
-    lines.push('- ' + f);
+  facts.forEach(function (f, i) {
+    lines.push('- ' + factId(i) + ': ' + f);
   });
   lines.push(
     '',
     '## 규칙',
-    '1. 위 "확인된 기능"에 없는 기능, 소재, 내구성, 가격, 할인, 순위, 후기, 수치를 절대 만들지 마세요.',
-    '2. 화면 문구·내레이션·자막에 들어가는 숫자는 확인된 기능에 적힌 숫자만 사용하세요.',
-    '3. facts_used에는 실제로 사용한 확인된 기능을 위 목록 문구 그대로(한 글자도 바꾸지 말고) 넣으세요.',
-    '4. 과장 표현(최저가, 100%, 무조건, 완벽, 평생, 1위, 품절 임박 등)을 쓰지 마세요.',
-    '5. URL, 가격, 광고 표기는 쓰지 마세요. 댓글 키워드는 CTA 장면에서 자리표시자 ' + RF_CONFIG.KEYWORD_PLACEHOLDER + ' 로만 쓰세요.',
-    '6. hook은 ' + L.HOOK_MAX_CHARS + '자 이내, narration은 ' + L.NARRATION_MAX_CHARS + '자 이내의 자연스러운 한국어 구어체.',
-    '7. captions는 화면 자막 줄 목록이며 각 ' + L.CAPTION_MAX_CHARS + '자 이내.',
+    '1. 제품에 대한 사실은 위 확인된 기능(' + factId(0) + '~' + factId(facts.length - 1) + ')만 사용하세요. 목록에 없는 기능, 소재, 내구성·강도, 호환 표면(냉장고·벽·타일 등), 설치 방식(무타공·공구 등), 수납 개수, 가격, 할인, 순위, 후기, 인증, 색상, 수치는 절대 만들지 마세요.',
+    '2. 확인된 기능을 자연스러운 한국어 구어체로 바꿔 말하세요. 기술 설명 문구를 그대로 읽지 마세요. 예: "자석 부착형 거치 방식" → "자석으로 붙여서 쓰는 우산꽂이", "철제 도어 부착" → "철제 현관문에 붙일 수 있어요". 뜻을 넓히거나 보태지는 마세요.',
+    '3. 숫자·치수·단위는 확인된 기능에 적힌 그대로만 쓰세요. 상단/하단 치수를 바꾸거나 반올림·환산하지 마세요. 가격·할인·퍼센트는 쓰지 마세요.',
+    '4. 각 장면의 fact_ids에는 그 장면이 말하거나 보여 주는 확인된 기능 ID를 넣으세요 (예: ["' + factId(0) + '"]). DEMO·BENEFIT 장면은 최소 1개, HOOK·PROBLEM·CTA는 해당 없으면 []. facts_used에는 릴스 전체에서 사용한 ID를 넣으세요. 기능 문장을 직접 쓰지 말고 ID만 쓰세요.',
+    '5. 과장 표현(최저가, 100%, 무조건, 완벽, 평생, 절대, 1위, 최고, 튼튼, 강력 등)과 후기·인기 표현(후기, 리뷰, 다들 사요, 품절 등)을 쓰지 마세요.',
+    '6. URL, 가격, 광고 표기는 쓰지 마세요. 댓글 키워드는 CTA 장면에서 자리표시자 ' + RF_CONFIG.KEYWORD_PLACEHOLDER + ' 로만 쓰세요.',
+    '7. hook은 ' + L.HOOK_MAX_CHARS + '자 이내, narration은 ' + L.NARRATION_MAX_CHARS + '자 이내의 자연스러운 한국어 구어체. captions는 화면 자막 줄 목록이며 각 ' + L.CAPTION_MAX_CHARS + '자 이내.',
     '8. scenes는 ' + L.MIN_SCENES + '~' + L.MAX_SCENES + '개, scene_no는 1부터 순서대로, duration_sec 합계는 ' + L.MIN_TOTAL_SEC + '~' + L.MAX_TOTAL_SEC + '초.',
     '9. 세 릴스는 concept과 hook이 서로 달라야 합니다 (예: 문제 해결, 설치 과정, 공간 비포/애프터).',
     '10. 시연은 실제로 가능한 사용 장면만 묘사하세요.',
@@ -1300,10 +1590,17 @@ function buildGeminiPrompt(product, previousErrors) {
     'JSON 스키마에 맞춰 JSON만 출력하세요.'
   );
   if (previousErrors && previousErrors.length) {
-    lines.push('', '## 이전 응답의 검증 오류 (반드시 수정)');
-    previousErrors.slice(0, 20).forEach(function (e) {
+    lines.push(
+      '',
+      '## 이전 응답의 검증 오류 (반드시 수정)',
+      '아래 문제만 고치세요. 지적된 문장은 확인된 기능만으로 다시 쓰거나 삭제하고, 문제가 없는 릴스와 장면은 그대로 두세요.'
+    );
+    previousErrors.slice(0, 25).forEach(function (e) {
       lines.push('- ' + e);
     });
+    if (previousResponse) {
+      lines.push('', '## 이전 응답 (JSON — 위 오류만 고쳐서 다시 출력)', String(previousResponse).slice(0, 12000));
+    }
   }
   return lines.join('\n');
 }
@@ -1725,8 +2022,20 @@ function logEvent_(level, action, productId, message, detail) {
  *
  * FIXTURE_PRD_001_GEMINI_RESPONSE is a hand-written sample in the expected schema,
  * NOT a recorded Gemini response. Reel 1 is the operator's approved PRD-001 storyboard
- * (HOOK → DEMO → DEMO → BENEFIT → CTA, 23 s).
+ * (HOOK → DEMO → DEMO → BENEFIT → CTA, 23 s). Facts are referenced by ID (F1 = first line of
+ * 확인된 기능 …), as Gemini returns them; REELS stores the matching sheet wording.
+ *
+ * FIXTURE_PRD_001_SHEET_FEATURES is the operator's real PRODUCTS wording for PRD-001 (regression
+ * test for natural paraphrases).
  */
+
+const FIXTURE_PRD_001_SHEET_FEATURES = [
+  '자석 부착형 거치 방식',
+  '상·하단 분리형 2피스 구조 (상단 190x55x50mm, 하단 188x55x82mm)',
+  '장우산/접이식 우산 분할 거치',
+  '철제 도어 부착',
+  '색상 옵션(다크그레이/그레이/화이트)',
+].join('\n');
 
 const FIXTURE_PRD_001_PRODUCT = {
   id: 'PRD-001',
@@ -1752,7 +2061,7 @@ function fixtureReel_(concept, scenes, factsUsed) {
     narration: scenes.map(function (s) { return s[2]; }).join(' '),
     captions: scenes.map(function (s) { return s[2]; }),
     scenes: scenes.map(function (s, i) {
-      return { scene_no: i + 1, beat: s[0], duration_sec: s[1], narration: s[2], visual: s[3], on_screen_text: '', flow_prompt: s[4] };
+      return { scene_no: i + 1, beat: s[0], duration_sec: s[1], narration: s[2], visual: s[3], on_screen_text: '', flow_prompt: s[4], fact_ids: s[5] || [] };
     }),
     facts_used: factsUsed,
   };
@@ -1764,38 +2073,38 @@ const FIXTURE_PRD_001_GEMINI_RESPONSE = {
       ['HOOK', 3, '현관 좁은 집은 우산 어디 둬요?', '좁은 현관 바닥에 젖은 장우산과 접이식 우산이 어지럽게 놓인 모습',
         'Vertical 9:16 handheld phone footage, narrow Korean apartment entryway, several wet umbrellas lying messily on the floor tiles, soft daylight, realistic, no text, no logos.'],
       ['DEMO', 4, '저는 그냥 문에 붙였어요.', '손으로 자석 우산꽂이를 철제 현관문 아래쪽에 붙이는 클로즈업',
-        'Vertical 9:16 close-up, a hand placing a slim dark gray magnetic umbrella holder onto the lower part of a steel apartment front door, natural light, realistic, no text.'],
+        'Vertical 9:16 close-up, a hand placing a slim dark gray magnetic umbrella holder onto the lower part of a steel apartment front door, natural light, realistic, no text.', ['F1']],
       ['DEMO', 6, '바닥 공간을 안 차지하니까', '문에 붙은 우산꽂이에 장우산과 접이식 우산을 차례로 꽂는 모습',
-        'Vertical 9:16 medium shot, a person sliding a long umbrella and then a folding umbrella into a slim dark gray holder attached to a steel front door, natural light, no text.'],
+        'Vertical 9:16 medium shot, a person sliding a long umbrella and then a folding umbrella into a slim dark gray holder attached to a steel front door, natural light, no text.', ['F3', 'F1']],
       ['BENEFIT', 6, '현관이 훨씬 깔끔해져요.', '우산이 문에 정리되고 바닥이 비어 있는 깔끔한 현관 전체 모습',
-        'Vertical 9:16 wide shot, tidy small Korean apartment entryway, umbrellas neatly held by a holder on the steel front door, clear floor, warm daylight, no text.'],
+        'Vertical 9:16 wide shot, tidy small Korean apartment entryway, umbrellas neatly held by a holder on the steel front door, clear floor, warm daylight, no text.', ['F1', 'F3']],
       ['CTA', 4, "제품 정보는 댓글에 '{키워드}' ☂️", '현관문에 붙은 우산꽂이 제품 클로즈업',
         'Vertical 9:16 slow close-up of a slim dark gray umbrella holder mounted on a steel door with one umbrella inside, soft light, shallow depth of field, no text.'],
-    ], ['호환되는 철제 표면에 자석으로 부착 가능', '장우산과 접이식 우산 모두 수납 가능']),
+    ], ['F1', 'F3']),
     fixtureReel_('구성 소개: 상단·하단 분리형', [
       ['HOOK', 3, '우산꽂이가 두 조각인 이유', '두 조각으로 된 우산꽂이 부품을 양손에 하나씩 든 모습',
         'Vertical 9:16 close-up, two hands each holding one piece of a two-piece dark gray umbrella holder in a bright entryway, realistic, no text.'],
       ['DEMO', 5, '상단 190×55×50mm,', '상단 부품을 철제 문 위쪽에 붙이는 손',
-        'Vertical 9:16 close-up, a hand attaching the upper piece of a dark gray umbrella holder to a steel door, natural light, no text.'],
+        'Vertical 9:16 close-up, a hand attaching the upper piece of a dark gray umbrella holder to a steel door, natural light, no text.', ['F2']],
       ['DEMO', 5, '하단 188×55×82mm, 따로 분리돼요.', '하단 부품을 철제 문 아래쪽에 붙이는 손',
-        'Vertical 9:16 close-up, a hand attaching the lower tray piece of a dark gray umbrella holder near the bottom of a steel door, natural light, no text.'],
+        'Vertical 9:16 close-up, a hand attaching the lower tray piece of a dark gray umbrella holder near the bottom of a steel door, natural light, no text.', ['F2']],
       ['BENEFIT', 5, '철제 문에 자석으로 착.', '위아래 부품이 붙은 문에 장우산 하나가 서 있는 모습',
-        'Vertical 9:16 medium shot, steel apartment door with a two-piece umbrella holder, a long umbrella standing in it, tidy floor, daylight, no text.'],
+        'Vertical 9:16 medium shot, steel apartment door with a two-piece umbrella holder, a long umbrella standing in it, tidy floor, daylight, no text.', ['F1']],
       ['CTA', 4, "제품 정보는 댓글에 '{키워드}'", '문에 붙은 다크그레이 우산꽂이 클로즈업',
         'Vertical 9:16 slow close-up of a dark gray two-piece umbrella holder on a steel door, soft light, no text.'],
-    ], ['상단·하단 분리형 (상단 190×55×50mm, 하단 188×55×82mm)', '호환되는 철제 표면에 자석으로 부착 가능']),
+    ], ['F2', 'F1']),
     fixtureReel_('인테리어: 현관 색에 맞춰 고르기', [
       ['HOOK', 3, '현관 분위기에 맞는 우산꽂이?', '밝은 현관 문 앞에서 우산꽂이 색상을 고민하는 손',
         'Vertical 9:16 close-up, a hand holding a small umbrella holder against a light-colored steel front door, bright natural light, no text.'],
       ['PROBLEM', 4, '기대 세운 우산, 자꾸 쓰러지죠.', '벽에 기대 세워 둔 우산이 미끄러져 쓰러지는 모습',
         'Vertical 9:16 medium shot, an umbrella leaning on an entryway wall slowly sliding and falling to the floor, realistic, no text.'],
       ['DEMO', 5, '다크그레이, 그레이, 화이트 중에', '다크그레이·그레이·화이트 우산꽂이 세 개를 나란히 보여 주는 손',
-        'Vertical 9:16 top-down shot, three plain umbrella holders in dark gray, gray and white side by side on a wooden shoe bench, soft light, no text.'],
+        'Vertical 9:16 top-down shot, three plain umbrella holders in dark gray, gray and white side by side on a wooden shoe bench, soft light, no text.', ['F4']],
       ['BENEFIT', 5, '문 색에 맞춰 골라 붙이면 돼요.', '흰 철제 문에 흰색 우산꽂이가 붙어 정돈된 현관',
-        'Vertical 9:16 wide shot, white steel apartment door with a white umbrella holder holding umbrellas, tidy floor, warm light, no text.'],
+        'Vertical 9:16 wide shot, white steel apartment door with a white umbrella holder holding umbrellas, tidy floor, warm light, no text.', ['F4', 'F1']],
       ['CTA', 4, "제품 정보는 댓글에 '{키워드}'", '문에 붙은 흰색 우산꽂이 클로즈업',
         'Vertical 9:16 slow close-up of a white umbrella holder on a white steel door, one umbrella inside, soft light, no text.'],
-    ], ['색상: 다크그레이, 그레이, 화이트', '호환되는 철제 표면에 자석으로 부착 가능']),
+    ], ['F4', 'F1']),
   ],
 };
 
@@ -2085,14 +2394,19 @@ function promptForGeminiApiKey() {
  */
 function generateValidatedRecords_(product, existingIds, existingKeywords) {
   let lastErrors = [];
+  let lastRaw = '';
+  const attempts = [];
+  const meta = function () {
+    return { model: RF_GEMINI_STATE.lastModel || getGeminiModel(), generatedAt: new Date() };
+  };
   for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
-    const raw = callGemini_(buildGeminiPrompt(product, lastErrors));
-    const result = prepareReelRecords(product, raw, existingIds, existingKeywords, {
-      model: RF_GEMINI_STATE.lastModel || getGeminiModel(),
-      generatedAt: new Date(),
-    });
+    // A retry gets the exact failing claims and the previous response, so Gemini fixes only those.
+    const raw = callGemini_(buildGeminiPrompt(product, lastErrors, lastRaw));
+    const result = prepareReelRecords(product, raw, existingIds, existingKeywords, meta());
     if (!result.errors.length) return { records: result.records, attempts: attempt };
+    attempts.push(result.attempt);
     lastErrors = result.errors;
+    lastRaw = raw;
     logEvent_(
       attempt < RF_CONFIG.MAX_GEMINI_ATTEMPTS ? 'WARN' : 'ERROR',
       'validateGemini',
@@ -2100,6 +2414,12 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
       '검증 실패 (시도 ' + attempt + '/' + RF_CONFIG.MAX_GEMINI_ATTEMPTS + '): ' + result.errors.length + '건',
       result.errors.join('\n') + '\n\n--- 원본 응답 ---\n' + raw
     );
+    // Free rescue: if every position has a reel that passed in some attempt, use those.
+    const combined = attempts.length > 1 ? combineValidReels(attempts, product) : null;
+    if (combined) {
+      logEvent_('INFO', 'validateGemini', product.id, '시도별로 검증을 통과한 대본을 합쳐 사용합니다 (추가 호출 없음).', '');
+      return { records: buildReelRecords(product, combined.reels, existingIds, existingKeywords, meta()), attempts: attempt };
+    }
   }
   throw new Error(
     'Gemini 응답이 ' + RF_CONFIG.MAX_GEMINI_ATTEMPTS + '회 모두 검증에 실패했습니다. REELS에는 아무것도 기록하지 않았습니다.\n' +
@@ -2721,13 +3041,15 @@ function apiRegenerateScript(reelId, input) {
       const current = rowToReel(found.row);
       const note = cellText_(found.row['대본 검토 메모']);
       let lastErrors = [];
+      let lastRaw = '';
       let newReel = null;
       for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS && !newReel; attempt++) {
-        const raw = callGemini_(buildRegenerationPrompt(found.product, current, note, lastErrors), geminiResponseSchema(1));
+        const raw = callGemini_(buildRegenerationPrompt(found.product, current, note, lastErrors, lastRaw), geminiResponseSchema(1));
         const parsed = parseModelJson(raw);
         const result = parsed.error ? { errors: [parsed.error] } : validateGeminiReels(parsed.value, found.product, 1);
         if (result.errors.length) {
           lastErrors = result.errors;
+          lastRaw = raw;
           logEvent_('WARN', 'regenerateScript', found.product.id, id + ' 재생성 검증 실패 (시도 ' + attempt + ')',
             result.errors.join('\n') + '\n\n--- 원본 응답 ---\n' + raw);
         } else {

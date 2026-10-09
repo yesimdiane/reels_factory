@@ -399,13 +399,15 @@ function apiRegenerateScript(reelId, input) {
       const current = rowToReel(found.row);
       const note = cellText_(found.row['대본 검토 메모']);
       let lastErrors = [];
+      let lastRaw = '';
       let newReel = null;
       for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS && !newReel; attempt++) {
-        const raw = callGemini_(buildRegenerationPrompt(found.product, current, note, lastErrors), geminiResponseSchema(1));
+        const raw = callGemini_(buildRegenerationPrompt(found.product, current, note, lastErrors, lastRaw), geminiResponseSchema(1));
         const parsed = parseModelJson(raw);
         const result = parsed.error ? { errors: [parsed.error] } : validateGeminiReels(parsed.value, found.product, 1);
         if (result.errors.length) {
           lastErrors = result.errors;
+          lastRaw = raw;
           logEvent_('WARN', 'regenerateScript', found.product.id, id + ' 재생성 검증 실패 (시도 ' + attempt + ')',
             result.errors.join('\n') + '\n\n--- 원본 응답 ---\n' + raw);
         } else {

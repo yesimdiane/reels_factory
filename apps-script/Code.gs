@@ -120,14 +120,19 @@ function promptForGeminiApiKey() {
  */
 function generateValidatedRecords_(product, existingIds, existingKeywords) {
   let lastErrors = [];
+  let lastRaw = '';
+  const attempts = [];
+  const meta = function () {
+    return { model: RF_GEMINI_STATE.lastModel || getGeminiModel(), generatedAt: new Date() };
+  };
   for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
-    const raw = callGemini_(buildGeminiPrompt(product, lastErrors));
-    const result = prepareReelRecords(product, raw, existingIds, existingKeywords, {
-      model: RF_GEMINI_STATE.lastModel || getGeminiModel(),
-      generatedAt: new Date(),
-    });
+    // A retry gets the exact failing claims and the previous response, so Gemini fixes only those.
+    const raw = callGemini_(buildGeminiPrompt(product, lastErrors, lastRaw));
+    const result = prepareReelRecords(product, raw, existingIds, existingKeywords, meta());
     if (!result.errors.length) return { records: result.records, attempts: attempt };
+    attempts.push(result.attempt);
     lastErrors = result.errors;
+    lastRaw = raw;
     logEvent_(
       attempt < RF_CONFIG.MAX_GEMINI_ATTEMPTS ? 'WARN' : 'ERROR',
       'validateGemini',
@@ -135,6 +140,12 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
       '검증 실패 (시도 ' + attempt + '/' + RF_CONFIG.MAX_GEMINI_ATTEMPTS + '): ' + result.errors.length + '건',
       result.errors.join('\n') + '\n\n--- 원본 응답 ---\n' + raw
     );
+    // Free rescue: if every position has a reel that passed in some attempt, use those.
+    const combined = attempts.length > 1 ? combineValidReels(attempts, product) : null;
+    if (combined) {
+      logEvent_('INFO', 'validateGemini', product.id, '시도별로 검증을 통과한 대본을 합쳐 사용합니다 (추가 호출 없음).', '');
+      return { records: buildReelRecords(product, combined.reels, existingIds, existingKeywords, meta()), attempts: attempt };
+    }
   }
   throw new Error(
     'Gemini 응답이 ' + RF_CONFIG.MAX_GEMINI_ATTEMPTS + '회 모두 검증에 실패했습니다. REELS에는 아무것도 기록하지 않았습니다.\n' +

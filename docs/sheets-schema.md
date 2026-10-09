@@ -44,13 +44,13 @@ One row per reel script. Three rows are appended per generation run, in a single
 | 후킹 | Gemini | ≤ 40 chars. Distinct per reel. |
 | 내레이션 | Gemini | ≤ 300 chars voiceover. |
 | 자막 | Gemini | On-screen caption lines, newline separated, each ≤ 40 chars. |
-| 장면(JSON) | Gemini | JSON array of `{scene_no, duration_sec, visual, on_screen_text, flow_prompt}`; 3–6 scenes, 10–40 s total. |
+| 장면(JSON) | Gemini | JSON array of `{scene_no, beat, narration, duration_sec, visual, on_screen_text, flow_prompt, facts}`; 3–6 scenes, 10–40 s total. `facts` holds the exact 확인된 기능 lines the scene relies on (Gemini sends IDs such as `F1`; they are converted before writing). Rows written before this change have no `facts` and remain valid. |
 | Flow 프롬프트 | Gemini | `S{n} ({sec}s): <English prompt>` per line, for pasting into Google Flow. |
 | Flow 생성 | code | Always `수동 생성 필요 …`. Google Flow is **not** called through the Gemini API; an operator generates clips manually. |
 | CTA | code | `댓글에 "{키워드}" 남기면 상품 링크를 DM으로 보내드려요.` |
 | ManyChat 키워드 | code | Post-specific keyword, `{릴스ID without dashes}` e.g. `PRD001R01`. Must be unique across REELS (checked case-insensitively). The operator may change it before publishing but must keep it unique and update ManyChat to match. |
 | 광고 표기 | code | Fixed Coupang Partners disclosure: `이 게시물은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.` |
-| 사용한 확인 기능 | Gemini (validated) | Exact lines from PRODUCTS.확인된 기능 the reel relies on. |
+| 사용한 확인 기능 | Gemini (validated) | Exact lines from PRODUCTS.확인된 기능 the reel relies on. Gemini refers to facts by ID (`F1` = first line …), and the script writes the matching sheet wording here, so the column reads as before. |
 | 영상 사용 허가 상태 | PRODUCTS | Snapshot of column H at generation time (`미확인` if blank). |
 | 제작 상태 | code | Korean label of 상태 (e.g. `대본 검토 대기`). MVP-era rows with only this column are read as `SCRIPT_REVIEW_PENDING`. |
 | 검토 메모 | code | Permission warning (if unverified) and the human-review reminder. |
@@ -116,13 +116,55 @@ Script cells are written with plain-text number format, so Sheets never turns sc
 
 ## Validation rules applied to Gemini output
 
-A run writes nothing to REELS unless **all** of these pass (one corrective retry is made, with the errors fed back to Gemini):
+A run writes nothing to REELS unless **all** of these pass. On failure, one corrective retry is made. That retry sends Gemini the exact failing sentences and its previous response, and asks it to change only those.
 
+### Structure
 - Valid JSON with exactly 3 reels and all required fields.
-- Length limits for hook, narration, captions; 3–6 scenes numbered 1..n; total duration 10–40 s; every scene has a Flow prompt (≥ 30 chars).
-- `facts_used` is non-empty and each entry exactly matches a line of 확인된 기능.
-- Every number in viewer-facing text (hook, narration, captions, on-screen text) appears in 확인된 기능 or 상품명 — blocks invented specs, prices, ratings.
-- No exaggerated phrases (`최저가`, `100%`, `무조건`, `완벽`, `1위`, `품절 임박`, … see `CONFIG.BANNED_PHRASES`).
-- No URLs in viewer-facing text (links go via ManyChat DM only).
+- Length limits for hook, narration and captions.
+- 3–6 scenes numbered 1..n, with a total duration of 10–40 s. Every scene has a Flow prompt (≥ 30 chars).
 - Concepts and hooks are distinct across the three reels.
-- New 릴스ID / ManyChat 키워드 do not collide with existing rows; existing duplicates in REELS or duplicate 상품ID in PRODUCTS stop the run.
+- New 릴스ID / ManyChat 키워드 do not collide with existing rows. Existing duplicates in REELS, or a duplicate 상품ID in PRODUCTS, stop the run.
+
+### Facts: references, not wording
+- Gemini sees 확인된 기능 as `F1: …`, `F2: …` (one ID per line of the cell).
+- It returns `facts_used` (IDs for the whole reel) and `fact_ids` per scene. Every DEMO and BENEFIT scene must cite at least one ID.
+- References must resolve to a verified fact. Accepted forms:
+  - an ID;
+  - the exact sheet wording;
+  - the same wording with different spacing or punctuation (for rows written before this change).
+
+  Anything else is rejected, e.g. `F9` or `방수 기능`.
+- **Viewer-facing text may paraphrase freely.** For example, `자석 부착형 거치 방식` can be said as *자석으로 붙여서 사용하는 우산꽂이*, and `철제 도어 부착` as *철제 현관문에 부착할 수 있어요*.
+
+### Claims (hook, narration, captions and every scene line)
+Each of these needs support in 확인된 기능. A term that also appears in the facts or the product name is allowed. Rules are in `CONFIG.CLAIM_RULES`.
+
+| Kind | Examples rejected for PRD-001 |
+|---|---|
+| Invented features | 방수, 물받이, 항균, 회전, 각도 조절 |
+| Compatibility | 냉장고에도 붙어요, 벽·타일·유리, 어떤 문이든, 어디든 |
+| Performance | 튼튼, 강력한 자석, 자력, 하중, 안 떨어져요 |
+| Installation | 무타공, 구멍, 드릴, 공구 없이, 3초 만에 |
+| Material | 스테인리스, 알루미늄, 플라스틱, 소재 |
+| Capacity | 대용량, 여러 개 |
+| Price | 가격, 할인, 쿠폰, 가성비, 만 원 |
+| Reviews / popularity | 후기, 리뷰, 별점, 인기, 품절, 다들 사요 |
+| Certification | 특허, 인증, KC, 친환경, 최고 |
+| Colours | any colour not in the facts (synonyms count: 흰색 = 화이트, 회색 = 그레이) |
+
+### Numbers and measurements (strict)
+- Every number must appear in 확인된 기능 or 상품명.
+- Dimension tuples must match a verified tuple exactly. `190x55x50mm` and `190×55×50mm` are the same tuple.
+- 상단 and 하단 values must not be swapped.
+- Units must match: `82cm` is rejected when the fact says `82mm`. Korean unit words such as 센치 and 밀리 are read as units.
+- Any amount in 원 is rejected.
+
+### Wording
+- No exaggerated phrases (`최저가`, `100%`, `무조건`, `완벽`, `1위`, `품절 임박`, …). See `CONFIG.BANNED_PHRASES`.
+- No URLs in viewer-facing text (links go via ManyChat DM only).
+
+### Same rules everywhere
+The same rules apply when a reviewer edits a script, when a script is regenerated and when it is approved.
+
+### Avoiding extra paid calls
+If neither attempt is fully valid, but every position has a reel that passed in one of the attempts, those reels are combined and used. This needs no third call.
