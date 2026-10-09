@@ -286,3 +286,59 @@ test('dashboard HTML renders data without innerHTML', () => {
   const script = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'));
   assert.doesNotThrow(() => new (require('node:vm').Script)(script));
 });
+
+test('apiAction supports storyboard actions with full safeguards (billing, approval, rights)', () => {
+  const env = createEnv({
+    autoSelectHook: true,
+    gemini: (n, body) => {
+      const isImg = body.generationConfig &&
+        Array.isArray(body.generationConfig.responseModalities) &&
+        body.generationConfig.responseModalities.includes('IMAGE');
+      if (isImg) {
+        return {
+          inlineData: {
+            mimeType: 'image/png',
+            data: Buffer.from('mock-bytes').toString('base64'),
+          },
+        };
+      }
+      return plain(env.gs('FIXTURE_PRD_001_GEMINI_RESPONSE'));
+    },
+  });
+  env.sheets.PRODUCTS.rows.push(prd001Row(env.gs, { permission: '자체 제작' }));
+  const imgId = env.drive.addImage('product-ref-1.png');
+  env.sheets.PRODUCTS.rows[0].push('검증된 제품 이미지');
+  env.sheets.PRODUCTS.rows[1].push('https://drive.google.com/file/d/' + imgId + '/view');
+  env.gs('setupSheets()');
+  api(env, 'apiGenerateScripts', 'PRD-001');
+
+  // 1. Refused before script approval
+  const resBefore = api(env, 'apiAction', 'PRD-001-R01', 'GENERATE_STORYBOARD_IMAGES', { scene: 1, confirmedBilling: true });
+  assert.equal(resBefore.ok, false);
+  assert.match(resBefore.error, /대본 승인 후에만/);
+
+  // Approve script
+  const ap = action(env, 'PRD-001-R01', 'APPROVE_SCRIPT');
+  assert.equal(ap.ok, true);
+
+  // 2. Refused if billing is not confirmed
+  const noBilling = api(env, 'apiAction', 'PRD-001-R01', 'GENERATE_STORYBOARD_IMAGES', { scene: 1, confirmedBilling: false });
+  assert.equal(noBilling.ok, false);
+  assert.match(noBilling.error, /유료 API 호출/);
+
+  // 3. Generation succeeds via apiAction when billing is confirmed
+  const gen = api(env, 'apiAction', 'PRD-001-R01', 'GENERATE_STORYBOARD_IMAGES', { scene: 1, confirmedBilling: true });
+  assert.equal(gen.ok, true, gen.error);
+  assert.ok(gen.detail.storyboard);
+
+  // 4. Review succeeds via apiAction
+  const rev = api(env, 'apiAction', 'PRD-001-R01', 'REVIEW_STORYBOARD_IMAGE', { scene: 1, version: 1, decision: 'APPROVE' });
+  assert.equal(rev.ok, true, rev.error);
+  assert.equal(rev.detail.storyboard.images[0].status, 'APPROVED');
+
+  // 5. Regeneration succeeds via apiAction
+  const regen = api(env, 'apiAction', 'PRD-001-R01', 'REGENERATE_STORYBOARD_IMAGE', { scene: 1, confirmedBilling: true });
+  assert.equal(regen.ok, true, regen.error);
+  assert.equal(regen.detail.storyboard.images[0].current.v, 2);
+});
+

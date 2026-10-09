@@ -136,7 +136,42 @@ function call(name) {
     const runner = google.script.run
       .withSuccessHandler(function (res) { resolve(res || { ok: false, error: '빈 응답' }); })
       .withFailureHandler(function (err) { resolve({ ok: false, error: (err && err.message) || String(err) }); });
-    runner[name].apply(runner, args);
+    if (!runner) {
+      resolve({ ok: false, error: 'google.script.run 객체를 초기화할 수 없습니다.' });
+      return;
+    }
+    if (typeof runner[name] === 'function') {
+      try {
+        runner[name].apply(runner, args);
+      } catch (err) {
+        resolve({ ok: false, error: (err && err.message) || String(err) });
+      }
+      return;
+    }
+    // Fallback: If direct runner method is missing on client proxy, route storyboard actions via apiAction
+    if (typeof runner.apiAction === 'function') {
+      try {
+        if (name === 'apiGenerateStoryboardImages') {
+          runner.apiAction(args[0], 'GENERATE_STORYBOARD_IMAGES', args[1]);
+          return;
+        }
+        if (name === 'apiReviewStoryboardImage') {
+          runner.apiAction(args[0], 'REVIEW_STORYBOARD_IMAGE', args[1]);
+          return;
+        }
+        if (name === 'apiRegenerateStoryboardImage') {
+          runner.apiAction(args[0], 'REGENERATE_STORYBOARD_IMAGE', args[1]);
+          return;
+        }
+      } catch (err) {
+        resolve({ ok: false, error: (err && err.message) || String(err) });
+        return;
+      }
+    }
+    resolve({
+      ok: false,
+      error: 'Apps Script 함수 "' + name + '"를 실행할 수 없습니다. 대시보드를 새로고침하거나 최신 버전으로 다시 배포하세요.'
+    });
   });
 }
 function copyText(text) {
