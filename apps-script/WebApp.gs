@@ -28,6 +28,7 @@ const RF_CLIENT_ACTIONS = [
   'GENERATE_STORYBOARD_IMAGES',
   'REVIEW_STORYBOARD_IMAGE',
   'REGENERATE_STORYBOARD_IMAGE',
+  'RECOVER_STORYBOARD_IMAGE',
 ];
 
 function doGet() {
@@ -125,6 +126,9 @@ function api_(fn) {
     const result = fn(user);
     return JSON.parse(JSON.stringify(Object.assign({ ok: true, user: user }, result || {})));
   } catch (e) {
+    const errText = (e && e.stack) ? e.stack : (e && e.message ? e.message : String(e));
+    console.error('[API Error] ' + errText);
+    logEvent_('ERROR', 'api', '', (e && e.message) || String(e), errText);
     return { ok: false, error: e.message };
   }
 }
@@ -446,6 +450,11 @@ function apiAction(reelId, action, input) {
     }
     if (action === 'REGENERATE_STORYBOARD_IMAGE') {
       const res = apiRegenerateStoryboardImage(reelId, input);
+      if (!res.ok) throw new Error(res.error);
+      return { detail: res.detail };
+    }
+    if (action === 'RECOVER_STORYBOARD_IMAGE') {
+      const res = apiRecoverStoryboardImage(reelId, input);
       if (!res.ok) throw new Error(res.error);
       return { detail: res.detail };
     }

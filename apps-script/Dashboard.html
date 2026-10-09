@@ -163,6 +163,10 @@ function call(name) {
           runner.apiAction(args[0], 'REGENERATE_STORYBOARD_IMAGE', args[1]);
           return;
         }
+        if (name === 'apiRecoverStoryboardImage') {
+          runner.apiAction(args[0], 'RECOVER_STORYBOARD_IMAGE', args[1]);
+          return;
+        }
       } catch (err) {
         resolve({ ok: false, error: (err && err.message) || String(err) });
         return;
@@ -845,7 +849,14 @@ function generateStoryboard(sceneNo) {
   }).then(function (res) {
     S.generatingStoryboard = false;
     busy(false);
-    if (!res.ok) { toast(res.error, 9000); return; }
+    if (!res.ok) {
+      if (res.error && (res.error.indexOf('HTTP 0') !== -1 || res.error.indexOf('NetworkError') !== -1)) {
+        toast('네트워크 연결 끊김 (HTTP 0). 백엔드에서 생성되었을 수 있으니 화면을 새로고침하여 복구 이미지를 확인하세요. (중복 과금 방지를 위해 즉시 재시도하지 마세요)', 10000);
+      } else {
+        toast(res.error, 9000);
+      }
+      return;
+    }
     S.detail = res.detail; renderDetail();
     toast('스토리보드 이미지를 생성했습니다.');
     refreshAround();
@@ -908,6 +919,22 @@ function regenerateStoryboard(c) {
     refreshAround();
   }).catch(function (err) {
     S.generatingStoryboard = false;
+    busy(false);
+    toast(String(err), 9000);
+  });
+}
+
+function recoverStoryboard(sceneNo, fileId) {
+  const d = S.detail;
+  if (!d) return;
+  busy(true, '장면 S' + sceneNo + ' Drive 이미지 복구 중… (과금 없음)');
+  call('apiRecoverStoryboardImage', d.summary.reelId, { scene: sceneNo, fileId: fileId }).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 9000); return; }
+    S.detail = res.detail; renderDetail();
+    toast('Drive 이미지를 복구했습니다 (Gemini API 호출 없음).');
+    refreshAround();
+  }).catch(function (err) {
     busy(false);
     toast(String(err), 9000);
   });
@@ -1005,6 +1032,18 @@ function renderStoryboard(main) {
         }).join('\n') }),
       ]));
     } else {
+      if (c.recoverable && c.recoverable.length) {
+        c.recoverable.forEach(function (rec) {
+          box.appendChild(h('div', { class: 'banner info', style: 'margin-top:8px' }, [
+            h('div', { text: '💾 Drive에 생성된 이미지(' + rec.fileName + ')가 발견되었습니다.' }),
+            h('button', {
+              class: 'b ok', type: 'button', style: 'margin-top:6px;width:100%',
+              onclick: function () { recoverStoryboard(c.scene, rec.fileId); },
+              text: 'Drive 이미지 복구 (API 호출 없음)',
+            }),
+          ]));
+        });
+      }
       box.appendChild(h('div', { class: 'btns one', style: 'margin-top:8px' }, [
         h('button', {
           class: 'b', type: 'button', disabled: !sb.canGenerate || !!S.generatingStoryboard,

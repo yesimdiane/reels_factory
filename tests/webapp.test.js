@@ -340,5 +340,36 @@ test('apiAction supports storyboard actions with full safeguards (billing, appro
   const regen = api(env, 'apiAction', 'PRD-001-R01', 'REGENERATE_STORYBOARD_IMAGE', { scene: 1, confirmedBilling: true });
   assert.equal(regen.ok, true, regen.error);
   assert.equal(regen.detail.storyboard.images[0].current.v, 2);
+
+  // 6. Recovery succeeds via apiAction without Gemini API call
+  const sbFolder = env.drive.folderByPath('Reels Factory', 'PRD-001', 'PRD-001-R01', 'storyboard');
+  const orphanId = env.drive.addFile(sbFolder.id, 'S2_v1.png', 'orphan-bytes', 'image/png');
+  const recover = api(env, 'apiAction', 'PRD-001-R01', 'RECOVER_STORYBOARD_IMAGE', { scene: 2, fileId: orphanId });
+  assert.equal(recover.ok, true, recover.error);
+  assert.equal(recover.detail.storyboard.images[1].current.fileId, orphanId);
+  assert.equal(recover.detail.storyboard.images[1].status, 'PENDING_REVIEW');
+});
+
+test('api_ catches errors, logs to console.error and LOG sheet, and returns clean error object', () => {
+  const env = createEnv({ reviewers: 'owner@example.com' });
+  const loggedErrors = [];
+  const origConsoleError = console.error;
+  console.error = (msg) => { loggedErrors.push(msg); };
+
+  try {
+    // Calling an invalid action triggers an error inside api_
+    const res = api(env, 'apiAction', 'PRD-001-R01', 'INVALID_ACTION_TEST', {});
+    assert.equal(res.ok, false);
+    assert.match(res.error, /허용되지 않은 작업/);
+
+    // Verify error was logged to console.error
+    assert.ok(loggedErrors.some((e) => String(e).includes('[API Error]') && String(e).includes('허용되지 않은 작업')));
+
+    // Verify error was logged to LOG sheet
+    const logRows = env.sheets.LOG ? env.sheets.LOG.rows.slice(1) : [];
+    assert.ok(logRows.some((r) => r.includes('ERROR') && r.some((c) => String(c).includes('허용되지 않은 작업'))));
+  } finally {
+    console.error = origConsoleError;
+  }
 });
 
