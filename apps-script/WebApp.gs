@@ -211,7 +211,7 @@ function reelSummary_(row, data) {
   };
 }
 
-function hookView_(row, status, columnsMissing) {
+function hookView_(row, status, columnsMissing, product, avoidHooks) {
   const set = parseHookSet(row['훅 후보(JSON)']);
   const selected = parseSelectedHook(row['선택한 훅']);
   const current = normalizeText(row['후킹']);
@@ -229,6 +229,13 @@ function hookView_(row, status, columnsMissing) {
     canSelect: reviewing && !columnsMissing && set.hooks.length > 0,
     scriptVersion: scriptVersionOf(row),
     types: RF_CONFIG.HOOK_TYPES,
+    // Style warnings per hook id (never block; the operator may edit, select, or ask Gemini to improve one).
+    warnings: product ? hookSetWarnings(set, product, avoidHooks || []) : {},
+    // Warnings for the chosen wording when the operator edited it.
+    selectedWarnings: product && selected && selected.id && RF_CONFIG.HOOK_TYPES[selected.id] && selected.edited
+      ? hookWarnings(selected.id, selected.text, product, [])
+      : [],
+    canRevise: reviewing && !columnsMissing && set.hooks.length > 0,
   };
 }
 
@@ -337,7 +344,7 @@ function reelDetail_(ss, reelId) {
     canRegenerate: status === 'SCRIPT_CHANGES_REQUESTED',
     pillar: { id: reel.pillar, label: pillarLabel(reel.pillar) },
     // Five hooks (H1–H5), Gemini's recommendation, and the operator's choice (with script version).
-    hooks: hookView_(row, status, data.hookColumnsMissing),
+    hooks: hookView_(row, status, data.hookColumnsMissing, product, productHooksExcept_(data, product.id, normalizeText(row['릴스ID']))),
     pillars: brandSummary_().pillars,
     // Gemini's production plan (after approval), Drive folder and clip tracker.
     production: productionView_(row, product, data.productionColumnsMissing),
@@ -588,21 +595,30 @@ function apiGenerateHooks(reelId, input) {
       const current = rowToReel(found.row);
       if (!current.scenes) throw new Error('"장면(JSON)" 셀이 올바른 JSON이 아닙니다. "수정 요청" 후 재생성하세요.');
       // Hooks already used for this product (other reels) are avoided; this script's own hook may return.
-      const avoid = [];
-      data.reels.forEach(function (r) {
-        if (normalizeText(r['상품ID']) !== found.product.id || normalizeText(r['릴스ID']) === id) return;
-        if (normalizeText(r['후킹'])) avoid.push(normalizeText(r['후킹']));
-        parseHookSet(r['훅 후보(JSON)']).hooks.forEach(function (h) {
-          avoid.push(h.text);
-        });
-      });
+      const avoid = productHooksExcept_(data, found.product.id, id);
       let lastErrors = [];
       let lastRaw = '';
       let hookSet = null;
-      for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS && !hookSet; attempt++) {
-        const raw = callGemini_(buildHooksForScriptPrompt(found.product, current, avoid, lastErrors, lastRaw), geminiResponseSchema(1, 'only'));
+      let calls = 0;
+      const maxCalls = RF_CONFIG.MAX_GEMINI_CALLS_PER_RUN || RF_CONFIG.MAX_GEMINI_ATTEMPTS;
+      for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS && !hookSet && calls < maxCalls; attempt++) {
+        let raw = callGemini_(buildHooksForScriptPrompt(found.product, current, avoid, lastErrors, lastRaw), geminiResponseSchema(1, 'only'));
+        calls++;
         const parsed = parseModelJson(raw);
-        const result = parsed.error ? { errors: [parsed.error] } : validateHookSet(parsed.value, found.product, avoid);
+        let result = parsed.error ? { errors: [parsed.error] } : validateHookSet(parsed.value, found.product, avoid);
+        // Only some hooks need work → rewrite just those (one call) instead of all five.
+        const plan = parsed.error ? null : hookRevisionPlan(result, RF_CONFIG.HOOK_STYLE.AUTO_REVISE_WEAK);
+        if (plan && plan.ids.length && calls < maxCalls) {
+          calls++;
+          const merged = reviseHooks_(found.product, parsed.value, plan, avoid, 'generateHooks');
+          if (merged && merged.revised.length) {
+            const again = validateHookSet(merged.payload, found.product, avoid);
+            if (!again.errors.length || result.errors.length) {
+              result = again;
+              raw = JSON.stringify(merged.payload);
+            }
+          }
+        }
         if (result.errors.length) {
           lastErrors = result.errors;
           lastRaw = raw;
@@ -621,6 +637,71 @@ function apiGenerateHooks(reelId, input) {
     });
     return { detail: reelDetail_(ss, id) };
   });
+}
+
+/**
+ * Touchpoint 2: the operator asks Gemini to improve ONE hook (e.g. one with a style warning). One Gemini
+ * call, no retry; only that hook (and its opening scene) changes, the other four hooks and the script do
+ * not. The rewrite is kept only if it passes the hard checks and has no more warnings than before.
+ * If the operator had chosen that hook, the choice is cleared so they confirm the new wording.
+ */
+function apiReviseHook(reelId, input) {
+  return api_(function (user) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const id = normalizeText(reelId);
+    input = input || {};
+    let notice = '';
+    withLock_(function () {
+      const data = loadData_(ss);
+      if (data.hookColumnsMissing) throw new Error('REELS에 훅 저장 열이 없습니다. "릴스 팩토리 → 시트 준비"를 먼저 실행하세요. Gemini는 호출하지 않았습니다.');
+      const found = findReel_(data, id);
+      const status = reelStatus(found.row);
+      if ((input.expectedStatus && input.expectedStatus !== status) || Number(input.expectedScriptVersion) !== scriptVersionOf(found.row)) {
+        throw staleError_(found.row, status);
+      }
+      if (RF_ACTIONS.SET_HOOKS.from.indexOf(status) === -1) {
+        throw new Error('훅은 대본 검토 중에만 다듬을 수 있습니다 (현재: ' + (RF_STATUS_LABELS[status] || status) + ').');
+      }
+      const set = parseHookSet(found.row['훅 후보(JSON)']);
+      const hookId = normalizeText(input.hookId);
+      if (!set.hooks.some(function (h) { return h.id === hookId; })) throw new Error('이 대본의 훅 후보에서 ' + (hookId || '훅') + '을(를) 찾을 수 없습니다.');
+      const avoid = productHooksExcept_(data, found.product.id, id);
+      const payload = { hooks: set.hooks, recommended_hook: set.recommended };
+      const v = validateHookSet(payload, found.product, avoid);
+      const problems = (v.hookErrors[hookId] || []).concat(v.warnings[hookId] || []);
+      const plan = { ids: [hookId], problems: {}, hard: false };
+      plan.problems[hookId] = problems.length ? problems : ['문제 상황이 첫 2초에 더 또렷하게 들리도록 다듬기'];
+      const merged = reviseHooks_(found.product, payload, plan, avoid, 'reviseHook', { operator: true });
+      if (!merged) throw new Error('Gemini 호출에 실패했습니다. 훅은 바뀌지 않았습니다. LOG 시트를 확인하세요.');
+      if (!merged.revised.length) {
+        notice = 'Gemini가 더 나은 ' + hookId + '를 만들지 못해 기존 훅을 그대로 두었습니다 (Gemini 1회 사용).';
+        return;
+      }
+      const result = validateHookSet(merged.payload, found.product, avoid);
+      if (!result.hookSet) throw new Error('다듬은 훅이 검증을 통과하지 못했습니다. 훅은 바뀌지 않았습니다.\n- ' + result.errors.slice(0, 6).join('\n- '));
+      applyTransition_(ss, id, 'SET_HOOKS', {
+        expectedStatus: status,
+        expectedScriptVersion: scriptVersionOf(found.row),
+        hookSet: result.hookSet,
+        revisedIds: [hookId],
+      }, user + ' + Gemini (' + (RF_GEMINI_STATE.lastModel || getGeminiModel()) + ')');
+      notice = hookId + ' 훅을 다듬었습니다. 대본은 바뀌지 않았습니다 — 이 훅을 쓰려면 "이 훅으로 정하기"를 누르세요.';
+    });
+    return { notice: notice, detail: reelDetail_(ss, id) };
+  });
+}
+
+/** Hooks already used by this product's other reels (the given reel's own hooks may return). */
+function productHooksExcept_(data, productId, reelId) {
+  const avoid = [];
+  data.reels.forEach(function (r) {
+    if (normalizeText(r['상품ID']) !== productId || normalizeText(r['릴스ID']) === reelId) return;
+    if (normalizeText(r['후킹'])) avoid.push(normalizeText(r['후킹']));
+    parseHookSet(r['훅 후보(JSON)']).hooks.forEach(function (h) {
+      avoid.push(h.text);
+    });
+  });
+  return avoid;
 }
 
 /** Touchpoint 1 from the phone: generate 3 scripts for a product already entered in PRODUCTS. */

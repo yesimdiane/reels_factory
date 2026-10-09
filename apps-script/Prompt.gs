@@ -222,13 +222,14 @@ function buildGeminiPrompt(product, previousErrors, previousResponse, avoidHooks
     lines.push(
       '- 예시 (PRD-001 우산꽂이, 형식 참고용 — 다른 상품에 그대로 쓰지 말 것):',
       '  H1 "급하게 출근할 때마다 우산 깜빡하는 사람?" / H2 "두 조각만 문에 붙이면 바닥이 비어요" (2피스 → 두 조각) / H3 "현관 우산 자리, 바닥이 아니에요" / H4 "비 오는 날, 현관에 젖은 우산이 굴러다녀요" / H5 "좁은 현관 우산 정리, 문에 붙이면 돼요"',
+      '- 유형은 뜻으로 판단합니다. 위 예시 말투("~아니에요", "~하면 돼요")를 꼭 쓸 필요는 없습니다 — 예: H3 "좁은 현관 바닥엔 원래 우산 자리 없어요", H5 "정리 안 되는 우산은 그냥 문에 붙여요"도 좋습니다.',
       '- 다섯 훅은 첫마디가 서로 달라야 합니다. 제품 이름으로 시작하지 마세요.',
       '- 쓰지 말 것: "~니다" 광고 말투, "~다면?"·"~하시나요?" 같은 뻔한 질문, "~하세요" 권유, "하나로", "소개", "추천", "필수템", "꿀템", "~이 달라집니다".',
       '- 나쁜 예: "현관이 좁아 우산 둘 곳이 없다면?", "우산꽂이 하나로 현관이 달라집니다.", "자석형 2피스 우산꽂이" (기능 나열로 시작하지 마세요).',
       '- 좋은 예: "급하게 출근할 때마다 우산 깜빡하는 사람?", "원룸 살면 우산꽂이 둘 자리도 애매하잖아요.", "비 오는 날마다 현관이 지저분해지는 이유."',
       '- 각 훅마다 그 훅으로 시작할 때의 첫 장면을 함께 쓰세요: visual(첫 프레임부터 보여 줄 장면 연출), flow_prompt(그 장면의 영어 Google Flow 프롬프트), emphasis(자막 강조), sfx(효과음, 없으면 빈 문자열). 운영자가 훅을 고르면 첫 장면이 이것으로 바뀝니다.',
       '- 두 번째 장면(EMPATHY)부터는 다섯 훅 중 어떤 것으로 시작해도 자연스럽게 이어지도록 쓰세요.',
-      '- recommended_hook: 첫 프레임에서 문제가 가장 잘 보이고 제품 해결책과 자연스럽게 이어지는 훅의 id와 짧은 이유.' + (mode === 'new' ? ' 대본의 hook과 첫 장면(narration·visual·flow_prompt)은 이 훅과 똑같아야 합니다.' : ''),
+      '- recommended_hook: 문제를 먼저 보여 주는(problem-first) 가장 강한 훅 — 첫 프레임에서 문제가 가장 잘 보이고 제품 해결책과 자연스럽게 이어지는 훅의 id와 짧은 이유.' + (mode === 'new' ? ' 대본의 hook과 첫 장면(narration·visual·flow_prompt)은 이 훅과 똑같아야 합니다.' : ''),
       ''
     );
     if (mode === 'new') {
@@ -299,5 +300,72 @@ function buildGeminiPrompt(product, previousErrors, previousResponse, avoidHooks
       lines.push('', '## 이전 응답 (JSON — 위 오류만 고쳐서 다시 출력)', String(previousResponse).slice(0, 12000));
     }
   }
+  return lines.join('\n');
+}
+
+/** Response schema for a targeted hook rewrite: exactly the hooks in `ids`, nothing else. */
+function hookRevisionSchema(ids) {
+  const item = JSON.parse(JSON.stringify(RF_GEMINI_RESPONSE_SCHEMA.properties.hooks.items));
+  item.properties.id = { type: 'STRING', enum: ids.slice() };
+  return {
+    type: 'OBJECT',
+    properties: { hooks: { type: 'ARRAY', minItems: ids.length, maxItems: ids.length, items: item } },
+    required: ['hooks'],
+    propertyOrdering: ['hooks'],
+  };
+}
+
+/**
+ * Prompt to rewrite only some of the five hooks (plan.ids, with their problems in plan.problems), keeping
+ * the other hooks, the recommendation and the script as they are. One Gemini call, text only.
+ * payload: { hooks: [...5], recommended_hook } — the current set, so the rewrites stay distinct.
+ */
+function buildHookRevisionPrompt(product, payload, plan, avoidHooks) {
+  const B = RF_CONFIG.BRAND;
+  const H = RF_CONFIG.HOOK_TYPES;
+  const facts = parseConfirmedFeatures(product.features);
+  const hooks = (payload && payload.hooks) || [];
+  const lines = [
+    '당신은 인스타그램 계정 "' + B.NAME + '"의 릴스 훅 작가입니다. 말투: ' + B.PERSONALITY,
+    '아래 훅 5개 중 ' + plan.ids.join(', ') + '만 다시 쓰세요. 다른 훅·추천 훅·대본은 바꾸지 않습니다.',
+    '광고 문구가 아니라 친구에게 말하듯, 유치원생도 알아들을 쉬운 생활 언어로 쓰세요.',
+    '',
+    '## 상품',
+    '- 상품명: ' + normalizeText(product.name),
+    '- 타깃: ' + (normalizeText(product.target) || '(미입력)'),
+    '',
+    '## 확인된 기능 (이 목록만 사실로 사용)',
+  ];
+  facts.forEach(function (f, i) {
+    lines.push('- ' + factId(i) + ': ' + f);
+  });
+  lines.push(
+    '',
+    '## 규칙',
+    '- 확인된 기능에 없는 기능·소재·호환·수치·가격·후기·통계를 만들지 마세요. 과장 표현(최고, 완벽, 무조건, 튼튼 등)과 "~이 달라집니다" 같은 결과 약속도 쓰지 마세요.',
+    '- 각 훅은 ' + RF_CONFIG.HOOK_STYLE.MAX_CHARS + '자 이내, 시청자가 겪는 문제·상황이 첫 2초에 들리게. 제품 이름으로 시작하지 마세요. "~니다" 광고 말투, "~하시나요?" 같은 뻔한 질문, "~하세요" 권유, "추천·소개·필수템·꿀템"은 쓰지 마세요.',
+    '- 유형의 뜻만 지키면 되고 정해진 말투는 없습니다.',
+    '- 다른 훅과 첫마디가 겹치지 않게 쓰세요.',
+    '- 각 훅마다 그 훅으로 시작할 때의 첫 장면도 쓰세요: visual(장면 연출), flow_prompt(영어 Google Flow 프롬프트, 9:16 vertical, photorealistic, Korean apartment, natural light, 로고·글자·실존 인물 얼굴 없이), emphasis(자막 강조), sfx(효과음, 없으면 빈 문자열).',
+    '',
+    '## 현재 훅 5개'
+  );
+  hooks.forEach(function (h) {
+    if (h && H[h.id]) lines.push('- ' + h.id + ' (' + H[h.id].label + '): "' + normalizeText(h.text) + '"');
+  });
+  lines.push('', '## 다시 쓸 훅과 고칠 점');
+  plan.ids.forEach(function (id) {
+    lines.push('- ' + id + ' ' + H[id].type + ' (' + H[id].label + '): ' + H[id].rule);
+    (plan.problems[id] || []).forEach(function (p) {
+      lines.push('  · ' + p);
+    });
+  });
+  if (avoidHooks && avoidHooks.length) {
+    lines.push('', '## 이 상품에 이미 쓴 훅 (비슷하게 쓰지 마세요)');
+    avoidHooks.slice(-15).forEach(function (h) {
+      lines.push('- ' + normalizeText(h));
+    });
+  }
+  lines.push('', 'JSON 스키마에 맞춰 hooks 배열에 ' + plan.ids.join(', ') + '만 넣어 JSON만 출력하세요.');
   return lines.join('\n');
 }

@@ -8,7 +8,7 @@
 const RF_CONFIG = {
   // Shown in the dashboard header and in 릴스 팩토리 → 코드 버전 확인. If the two differ, the web app
   // was not redeployed after the code was replaced (Deploy → Manage deployments → New version).
-  CODE_VERSION: '2026-10-09 · five-hooks 2',
+  CODE_VERSION: '2026-10-10 · gemini-orchestrator 4',
 
   // Instagram brand. Used in the Gemini prompt and shown in the dashboard; edit here to reuse the
   // factory for another account. See docs/brand.md.
@@ -142,9 +142,9 @@ const RF_CONFIG = {
   HOOK_TYPES: {
     H1: { type: 'QUESTION', label: '질문형', rule: '시청자에게 묻는 질문으로 끝남 (?). "~하시나요?"·"~다면?" 같은 뻔한 질문은 금지.' },
     H2: { type: 'NUMBER', label: '숫자로 시작하는형', rule: '확인된 기능에 근거한 숫자로 시작 (예: 2피스 → "두 조각"). 통계·수량·퍼센트를 지어내지 말 것.' },
-    H3: { type: 'MYTH', label: '통념을 뒤집는 단정형', rule: '흔한 생각을 뒤집는 단정 ("~아니에요", "~말고"). 질문 아님.' },
+    H3: { type: 'MYTH', label: '통념을 뒤집는 단정형', rule: '흔한 생각·습관을 뒤집는 단정. 정해진 말투는 없고 뜻이 중요 (예: "~아니에요", "원래 ~없어요", "굳이 ~안 해도 돼요"). 질문 아님.' },
     H4: { type: 'SITUATION', label: '상황 묘사형', rule: '시청자가 겪는 구체적인 순간을 묘사 (언제·어디서). 질문 아님.' },
-    H5: { type: 'CONCLUSION', label: '결론 먼저 던지는형', rule: '해결책을 먼저 말함 ("~하면 돼요"). 질문 아님.' },
+    H5: { type: 'CONCLUSION', label: '결론 먼저 던지는형', rule: '해결책을 먼저 단정. 정해진 말투는 없고 뜻이 중요 (예: "~하면 돼요", "그냥 문에 붙여요"). 질문 아님.' },
   },
 
   GEMINI_API_BASE: 'https://generativelanguage.googleapis.com/v1beta/models/',
@@ -154,6 +154,9 @@ const RF_CONFIG = {
   // Used only if the configured model returns 404 (not found → nothing generated or billed).
   GEMINI_FALLBACK_MODELS: ['gemini-flash-latest'],
   MAX_GEMINI_ATTEMPTS: 2,
+  // Upper bound on Gemini calls for one generation, including targeted hook revisions
+  // (full generation + one hook revision + one full retry at most).
+  MAX_GEMINI_CALLS_PER_RUN: 3,
 
   // Coupang Partners required disclosure wording. Inserted by code, never by the model.
   AFFILIATE_DISCLOSURE:
@@ -266,15 +269,23 @@ const RF_CONFIG = {
 
   // Hook style for new Gemini scripts (not applied to reviewer edits): a relatable problem, spoken in
   // the first ~2–3 seconds — not an ad. Each pattern is a common ad-style hook.
+  // Hook checks are split in two (Validation.gs):
+  //  - hard errors (never stored): invalid structure, empty text, unsupported claims/numbers, invented
+  //    statistics, banned or misleading phrases (rules marked hard: true);
+  //  - style warnings (stored, shown in the dashboard, the operator decides): length, product name
+  //    first, ad tone, weak fit to the hook type. Types are judged by meaning cues, not exact phrases.
   HOOK_STYLE: {
     MAX_CHARS: 25,
+    // After generation, one extra Gemini call may rewrite only the non-recommended hooks that have
+    // style warnings (the recommended hook is never changed: the script starts with it).
+    AUTO_REVISE_WEAK: true,
     AD_PATTERNS: [
       { pattern: /니다[.!?~…]*$/, why: '광고 문구 같은 "~니다" 말투' },
       { pattern: /(다면|라면|이라면)\s*[?？]*[.!~…]*$/, why: '"~다면?" 같은 뻔한 질문형' },
       { pattern: /(하시나요|시나요|신가요|있나요|아시나요|어떨까요|어떠세요|궁금하지\s*않|해\s*보셨나요)\s*[?？]*[.!~…]*$/, why: '"~하시나요?" 같은 뻔한 질문형' },
       { pattern: /(하세요|해\s*보세요|만나\s*보세요|확인하세요)[.!~…]*$/, why: '광고 같은 권유형' },
       { pattern: /(하나로|소개|추천|필수템|꿀템|신박템|강추|이것만|역대)/, why: '광고 문구' },
-      { pattern: /달라(집니다|져요|졌어요|지는)/, why: '"~이 달라집니다" 같은 결과 약속' },
+      { pattern: /달라(집니다|져요|졌어요|지는)/, why: '"~이 달라집니다" 같은 결과 약속', hard: true },
       { pattern: /\d+(?:\.\d+)?\s*(?:mm|cm|kg|[x×])|[x×]\s*\d/i, why: '치수·사양을 늘어놓는 기능 나열' },
     ],
   },

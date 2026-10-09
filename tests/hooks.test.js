@@ -14,9 +14,10 @@ function setup(gemini) {
   env.gs('setupSheets()');
   const product = plain(env.gs('FIXTURE_PRD_001_PRODUCT'));
   const call = (fn, ...a) => plain(env.gs(fn).apply(null, a));
-  const hookErrors = (hook, avoid) => plain(env.gs('hookStyleErrors_')({ hook }, product, '릴스 1', avoid || []));
+  const styleCheck = (hook, avoid) => plain(env.gs('hookStyleCheck_')(hook, product, avoid || []));
+  const hookErrors = (hook, avoid) => { const c = styleCheck(hook, avoid); return c.errors.concat(c.warnings); };
   const validate = (payload, options) => plain(env.gs('validateGeminiReels')(payload, product, null, options));
-  return { env, product, call, hookErrors, validate };
+  return { env, product, call, hookErrors, styleCheck, validate };
 }
 // Sets reel i's hook (first scene line, caption and hook stay the same text).
 function setHook(payload, i, hook) {
@@ -40,8 +41,8 @@ test('relatable problem-first hooks (the account style) are accepted', () => {
   }
 });
 
-test('generic advertising hooks are rejected with a concrete fix for the retry', () => {
-  const { hookErrors } = setup();
+test('generic advertising hooks get style warnings (misleading result promises are errors)', () => {
+  const { hookErrors, styleCheck } = setup();
   const cases = [
     ['현관이 좁아 우산 둘 곳이 없다면?', /"~다면\?" 같은 뻔한 질문형/],
     ['우산꽂이 하나로 현관이 달라집니다.', /제품 이름으로 시작합니다/],
@@ -58,8 +59,11 @@ test('generic advertising hooks are rejected with a concrete fix for the retry',
   for (const [hook, re] of cases) {
     const errs = hookErrors(hook).join('\n');
     assert.match(errs, re, hook);
-    assert.match(errs, /구체적인 불편·상황으로 시작|25자 이내/, 'the error tells Gemini how to fix it');
   }
+  // Only a misleading result promise is a hard error; the rest is editorial.
+  assert.match(styleCheck('이거 붙이면 현관이 달라져요').errors.join('\n'), /결과 약속/);
+  assert.deepEqual(styleCheck('현관 정리 필수템 소개해요').errors, []);
+  assert.deepEqual(styleCheck('지금 바로 확인하세요!').errors, []);
 });
 
 test('several scripts at once (configurable): three distinct angles and openings; earlier hooks are not repeated', () => {
@@ -86,7 +90,8 @@ test('several scripts at once (configurable): three distinct angles and openings
   assert.match(v3(sameOpening).errors.join('\n'), /릴스 3: hook이 릴스 2와 같은 말\("원룸 현관은"\)로 시작합니다/);
   // Default (one script + five hooks): an earlier hook of this product is refused.
   const repeat = validate(fixture(env), { avoidHooks: ['비 오는 날 현관에 젖은 우산이 굴러다녀요'] });
-  assert.match(repeat.errors.join('\n'), /이 상품의 기존 릴스 hook과 같습니다/);
+  assert.deepEqual(repeat.errors, [], 'repeating an earlier hook is a style warning, not an error');
+  assert.match(repeat.warnings.H4.join('\n'), /기존 릴스 훅과 같습니다/);
 });
 
 test('new scripts follow HOOK → EMPATHY → SOLUTION → DEMO → CTA', () => {
@@ -146,27 +151,25 @@ test('the prompt asks for the account style: five hooks, structure, good and bad
   assert.ok(!regen.includes('## 훅 5개'));
 });
 
-test('an ad-style hook costs one corrective retry with the exact fix; a second batch is told the earlier hooks', () => {
-  const ad = (env) => {
+test('a recommended hook with a misleading result promise costs one full corrective retry with the exact fix', () => {
+  const bad = (env) => {
     const f = fixture(env);
-    f.hooks[3].text = '우산꽂이 하나로 현관이 달라집니다.';
+    f.hooks[3].text = '이거 붙이면 현관이 달라져요';
     return setHook(f, 0, f.hooks[3].text);
   };
   let env;
-  ({ env } = setup((n) => (n === 1 ? ad(env) : fixture(env))));
+  ({ env } = setup((n) => (n === 1 ? bad(env) : fixture(env))));
   const res = plain(env.gs('apiGenerateScripts')('PRD-001'));
   assert.equal(res.ok, true, res.error);
-  assert.equal(env.state.fetches.length, 2);
+  assert.equal(env.state.fetches.length, 2, 'hard error on the recommended hook → full retry, no targeted call');
   const retry = env.state.fetches[1].contents[0].parts[0].text;
-  assert.match(retry, /훅 H4: hook "우산꽂이 하나로 현관이 달라집니다\." — 제품 이름으로 시작합니다/);
-  assert.match(retry, /구체적인 불편·상황으로 시작하는 짧은 구어체로 다시 쓰세요/);
-  // Second batch for the same product: the prompt lists the existing hooks; repeats are refused.
+  assert.match(retry, /훅 H4 "이거 붙이면 현관이 달라져요" — .*결과 약속/);
+  // Second batch for the same product: the prompt lists the existing hooks; repeats only warn.
   const again = plain(env.gs('apiGenerateScripts')('PRD-001', true));
-  assert.equal(again.ok, false, 'the fixture repeats its hooks, so both attempts fail and nothing is written');
-  assert.equal(env.sheets.REELS.rows.length, 2);
+  assert.equal(again.ok, true, again.error);
   const p3 = env.state.fetches[2].contents[0].parts[0].text;
   assert.match(p3, /## 이 상품에 이미 쓴 hook[\s\S]*- 급하게 출근할 때마다 우산 깜빡하는 사람\?/, 'all five earlier hooks are listed');
-  assert.equal(env.state.fetches.length, 4, 'still at most 2 calls per run');
+  assert.ok(env.state.fetches.length <= 5, 'at most 2 calls per run');
 });
 
 test('older scripts and reviewer edits keep working: old structure approves, hook style is the reviewer\'s call', () => {

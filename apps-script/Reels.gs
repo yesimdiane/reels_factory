@@ -157,10 +157,13 @@ function prepareReelRecords(product, rawText, existingIds, existingKeywords, met
   meta = Object.assign({}, meta, { hookSet: result.hookSet, commentKeyword: result.commentKeyword });
   // Kept so a later attempt can be combined with this one's valid reels (no extra paid call).
   const attempt = { reels: parsed.value && parsed.value.reels, reelErrors: result.reelErrors };
-  if (result.errors.length) return { errors: result.errors, records: [], attempt: attempt };
+  // validation and payload let the caller rewrite only the hooks that need it (hookRevisionPlan).
+  if (result.errors.length) return { errors: result.errors, records: [], attempt: attempt, validation: result, payload: parsed.value };
   return {
     errors: [],
     records: buildReelRecords(product, result.reels, existingIds, existingKeywords, meta),
     attempt: attempt,
+    validation: result,
+    payload: parsed.value,
   };
 }

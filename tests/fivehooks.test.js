@@ -46,11 +46,15 @@ function setup(gemini, extra = {}) {
   };
   const row = () => env.sheets.REELS.record(2);
   const hookErrs = (payload) => plain(env.gs('validateGeminiReels')(payload, product)).errors.join('\n');
-  return { env, product, call, detail, act, pick, row, hookErrs };
+  // Style warnings of one hook in the set (never block saving).
+  const hookWarns = (payload, id) => (plain(env.gs('validateGeminiReels')(payload, product)).warnings[id] || []).join('\n');
+  return { env, product, call, detail, act, pick, row, hookErrs, hookWarns };
 }
 function withHook(env, id, text) {
   const f = fixture(env);
   f.hooks.find((h) => h.id === id).text = text;
+  // The script starts with the recommended hook (H4 in the fixture).
+  if (f.recommended_hook.id === id) f.reels[0].hook = f.reels[0].scenes[0].narration = text;
   return f;
 }
 
@@ -68,35 +72,79 @@ test('the reference output passes: five hook types, recommended hook with a reas
   assert.ok(v.reels[0].scenes.every((s) => s.visual && typeof s.emphasis === 'string' && typeof s.sfx === 'string'));
 });
 
-test('each hook type is checked: question, genuine number, myth-busting, situation, conclusion', () => {
-  const { env, hookErrs } = setup();
-  const cases = [
-    ['H1', '급하게 출근할 때마다 우산 깜빡하는 사람', /질문형은 시청자에게 묻는 질문\(\?\)으로 끝나야/],
+test('each hook type is checked by meaning: weak fit is a warning, invented numbers are errors', () => {
+  const { env, hookErrs, hookWarns } = setup();
+  // Style / type fit → warning only (the hook is still safe to save, show and select).
+  const soft = [
+    ['H1', '급하게 출근할 때마다 우산 깜빡하는 사람', /질문처럼 들리지 않습니다/],
     ['H1', '현관 우산 정리, 어떻게 하시나요?', /뻔한 질문형/],
-    ['H2', '문에 붙이면 바닥이 비어요', /확인된 기능에 근거한 숫자가 있어야/],
-    ['H2', '10명 중 9명이 모르는 정리법', /통계·비율처럼 보이는 "10명"/],
-    ['H2', '다섯 가지 색 중에 고르는 법', /"다섯 가지"의 숫자 5는 확인된 기능에 없습니다/],
-    ['H3', '현관 우산 자리, 바닥이 좋아요', /흔한 생각을 뒤집는 말/],
-    ['H3', '현관 우산 자리, 바닥이 아닐까요?', /질문이 아니어야/],
+    ['H2', '문에 붙이면 바닥이 비어요', /숫자가 없습니다/],
+    ['H3', '현관 우산 자리, 바닥이 좋아요', /흔한 생각을 뒤집는 느낌이 약합니다/],
+    ['H3', '현관 우산 자리, 바닥이 아닐까요?', /질문처럼 들립니다/],
     ['H4', '우산꽂이 색이 세 가지예요', /제품 이름으로 시작합니다|언제·어디서/],
-    ['H4', '깔끔한 정리가 최고예요', /언제·어디서/],
-    ['H5', '좁은 현관 우산 정리가 고민이에요', /해결책을 먼저 말해야/],
+    ['H4', '정리가 깔끔해 보여요', /언제·어디서/],
+    ['H5', '좁은 현관 우산 정리가 고민이에요', /해결책이 먼저 들리지 않습니다/],
   ];
-  for (const [id, text, re] of cases) assert.match(hookErrs(withHook(env, id, text)), re, id + ' ' + text);
+  for (const [id, text, re] of soft) {
+    const f = withHook(env, id, text);
+    assert.equal(hookErrs(f), '', id + ' ' + text + ' must not be a hard error');
+    assert.match(hookWarns(f, id), re, id + ' ' + text);
+  }
+  // Invented statistics and numbers not in the facts → hard errors.
+  assert.match(hookErrs(withHook(env, 'H2', '10명 중 9명이 모르는 정리법')), /통계·비율처럼 보이는 "10명"/);
+  assert.match(hookErrs(withHook(env, 'H2', '다섯 가지 색 중에 고르는 법')), /"다섯 가지"의 숫자 5는 확인된 기능에 없습니다/);
   // Genuine numbers from the facts are fine: "두 조각" (상단·하단), "세 가지 색" (다크그레이, 그레이, 화이트).
-  assert.equal(hookErrs(withHook(env, 'H2', '세 가지 색 중에 문 색 맞추기')), '');
-  assert.equal(hookErrs(withHook(env, 'H2', '두 조각만 문에 붙이면 바닥이 비어요')), '');
+  for (const t of ['세 가지 색 중에 문 색 맞추기', '두 조각만 문에 붙이면 바닥이 비어요']) {
+    assert.equal(hookErrs(withHook(env, 'H2', t)), '');
+    assert.equal(hookWarns(withHook(env, 'H2', t), 'H2'), '');
+  }
+});
+
+// Regression: the live PRD-001 run. Gemini returned five valid hooks, but H3 and H5 were rejected because
+// the validator required the exact phrases "~아니에요"/"~말고" and "~하면 돼요".
+test('regression (live PRD-001): H3 "원래 … 없어요" and H5 "그냥 문에 붙여요" pass without errors or warnings', () => {
+  const { env, product, hookErrs, hookWarns } = setup();
+  const f = fixture(env);
+  f.hooks[2].text = '좁은 현관 바닥엔 원래 우산 자리 없어요';
+  f.hooks[4].text = '정리 안 되는 우산은 그냥 문에 붙여요';
+  assert.equal(hookErrs(f), '');
+  assert.equal(hookWarns(f, 'H3'), '');
+  assert.equal(hookWarns(f, 'H5'), '');
+  const v = plain(env.gs('validateGeminiReels')(f, product));
+  assert.deepEqual(v.hookSet.hooks.map((h) => h.id + ':' + h.type), ['H1:QUESTION', 'H2:NUMBER', 'H3:MYTH', 'H4:SITUATION', 'H5:CONCLUSION']);
+  assert.equal(v.hookSet.hooks[2].text, '좁은 현관 바닥엔 원래 우산 자리 없어요');
+  assert.equal(v.hookSet.hooks[4].text, '정리 안 되는 우산은 그냥 문에 붙여요');
+  // Also with the operator's real PRODUCTS wording.
+  const sheetProduct = Object.assign({}, product, { features: plain(env.gs('FIXTURE_PRD_001_SHEET_FEATURES')) });
+  assert.deepEqual(plain(env.gs('validateGeminiReels')(f, sheetProduct)).errors, []);
+  // Other natural wordings of the same meaning.
+  for (const t of ['굳이 바닥에 우산꽂이 둘 필요 없어요', '우산 자리는 바닥 말고 문이에요', '사실 우산은 문에 두는 게 편해요']) {
+    assert.equal(hookWarns(withHook(env, 'H3', t), 'H3'), '', t);
+  }
+  for (const t of ['우산은 문에 붙이면 끝이에요', '젖은 우산, 바로 문에 꽂아요', '우산 정리는 문에 걸어 두세요']) {
+    assert.equal(hookWarns(withHook(env, 'H5', t), 'H5'), '', t);
+  }
 });
 
 test('hook set rules: exactly five, distinct, facts only, recommended hook opens the script, simple keyword', () => {
-  const { env, hookErrs } = setup();
+  const { env, hookErrs, hookWarns } = setup();
   const four = fixture(env);
   four.hooks.pop();
   assert.match(hookErrs(four), /hooks는 정확히 5개\(H1~H5\)/);
   const dup = withHook(env, 'H5', '현관 우산 자리, 바닥이 아니에요');
   assert.match(hookErrs(dup), /훅 H5가 H3와 같습니다/);
   const sameOpen = withHook(env, 'H5', '비 오는 날 문에 붙이면 돼요');
-  assert.match(hookErrs(sameOpen), /훅 H5가 H4와 같은 말\("비 오는"\)로 시작합니다/);
+  assert.equal(hookErrs(sameOpen), '', 'the same first words is a style warning');
+  assert.match(hookWarns(sameOpen, 'H5'), /H4와 같은 말\("비 오는"\)로 시작합니다/);
+  assert.match(hookErrs(withHook(env, 'H5', '')), /훅 H5의 text가 비어 있습니다/);
+  assert.match(hookErrs(withHook(env, 'H5', '문에 붙이면 현관이 달라져요')), /결과 약속/);
+  assert.match(hookErrs(withHook(env, 'H5', '최고의 우산 정리, 문에 붙여요')), /"최고"/);
+  const badType = fixture(env);
+  badType.hooks[2].type = 'QUESTION';
+  assert.match(hookErrs(badType), /훅 H3의 type은 MYTH이어야 합니다/);
+  const badId = fixture(env);
+  badId.hooks[2].id = 'H9';
+  assert.match(hookErrs(badId), /hooks의 id는 H1, H2, H3, H4, H5 중 하나/);
   assert.match(hookErrs(withHook(env, 'H5', '냉장고에도 붙이면 돼요')), /훅 H5: 확인되지 않은 호환성 주장 "냉장고"/);
   assert.match(hookErrs(withHook(env, 'H5', '문에 붙이면 30초면 돼요')), /수치/);
   const noRec = fixture(env);

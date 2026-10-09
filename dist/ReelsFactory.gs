@@ -16,7 +16,7 @@
 const RF_CONFIG = {
   // Shown in the dashboard header and in 릴스 팩토리 → 코드 버전 확인. If the two differ, the web app
   // was not redeployed after the code was replaced (Deploy → Manage deployments → New version).
-  CODE_VERSION: '2026-10-09 · five-hooks 2',
+  CODE_VERSION: '2026-10-10 · gemini-orchestrator 4',
 
   // Instagram brand. Used in the Gemini prompt and shown in the dashboard; edit here to reuse the
   // factory for another account. See docs/brand.md.
@@ -150,9 +150,9 @@ const RF_CONFIG = {
   HOOK_TYPES: {
     H1: { type: 'QUESTION', label: '질문형', rule: '시청자에게 묻는 질문으로 끝남 (?). "~하시나요?"·"~다면?" 같은 뻔한 질문은 금지.' },
     H2: { type: 'NUMBER', label: '숫자로 시작하는형', rule: '확인된 기능에 근거한 숫자로 시작 (예: 2피스 → "두 조각"). 통계·수량·퍼센트를 지어내지 말 것.' },
-    H3: { type: 'MYTH', label: '통념을 뒤집는 단정형', rule: '흔한 생각을 뒤집는 단정 ("~아니에요", "~말고"). 질문 아님.' },
+    H3: { type: 'MYTH', label: '통념을 뒤집는 단정형', rule: '흔한 생각·습관을 뒤집는 단정. 정해진 말투는 없고 뜻이 중요 (예: "~아니에요", "원래 ~없어요", "굳이 ~안 해도 돼요"). 질문 아님.' },
     H4: { type: 'SITUATION', label: '상황 묘사형', rule: '시청자가 겪는 구체적인 순간을 묘사 (언제·어디서). 질문 아님.' },
-    H5: { type: 'CONCLUSION', label: '결론 먼저 던지는형', rule: '해결책을 먼저 말함 ("~하면 돼요"). 질문 아님.' },
+    H5: { type: 'CONCLUSION', label: '결론 먼저 던지는형', rule: '해결책을 먼저 단정. 정해진 말투는 없고 뜻이 중요 (예: "~하면 돼요", "그냥 문에 붙여요"). 질문 아님.' },
   },
 
   GEMINI_API_BASE: 'https://generativelanguage.googleapis.com/v1beta/models/',
@@ -162,6 +162,9 @@ const RF_CONFIG = {
   // Used only if the configured model returns 404 (not found → nothing generated or billed).
   GEMINI_FALLBACK_MODELS: ['gemini-flash-latest'],
   MAX_GEMINI_ATTEMPTS: 2,
+  // Upper bound on Gemini calls for one generation, including targeted hook revisions
+  // (full generation + one hook revision + one full retry at most).
+  MAX_GEMINI_CALLS_PER_RUN: 3,
 
   // Coupang Partners required disclosure wording. Inserted by code, never by the model.
   AFFILIATE_DISCLOSURE:
@@ -274,15 +277,23 @@ const RF_CONFIG = {
 
   // Hook style for new Gemini scripts (not applied to reviewer edits): a relatable problem, spoken in
   // the first ~2–3 seconds — not an ad. Each pattern is a common ad-style hook.
+  // Hook checks are split in two (Validation.gs):
+  //  - hard errors (never stored): invalid structure, empty text, unsupported claims/numbers, invented
+  //    statistics, banned or misleading phrases (rules marked hard: true);
+  //  - style warnings (stored, shown in the dashboard, the operator decides): length, product name
+  //    first, ad tone, weak fit to the hook type. Types are judged by meaning cues, not exact phrases.
   HOOK_STYLE: {
     MAX_CHARS: 25,
+    // After generation, one extra Gemini call may rewrite only the non-recommended hooks that have
+    // style warnings (the recommended hook is never changed: the script starts with it).
+    AUTO_REVISE_WEAK: true,
     AD_PATTERNS: [
       { pattern: /니다[.!?~…]*$/, why: '광고 문구 같은 "~니다" 말투' },
       { pattern: /(다면|라면|이라면)\s*[?？]*[.!~…]*$/, why: '"~다면?" 같은 뻔한 질문형' },
       { pattern: /(하시나요|시나요|신가요|있나요|아시나요|어떨까요|어떠세요|궁금하지\s*않|해\s*보셨나요)\s*[?？]*[.!~…]*$/, why: '"~하시나요?" 같은 뻔한 질문형' },
       { pattern: /(하세요|해\s*보세요|만나\s*보세요|확인하세요)[.!~…]*$/, why: '광고 같은 권유형' },
       { pattern: /(하나로|소개|추천|필수템|꿀템|신박템|강추|이것만|역대)/, why: '광고 문구' },
-      { pattern: /달라(집니다|져요|졌어요|지는)/, why: '"~이 달라집니다" 같은 결과 약속' },
+      { pattern: /달라(집니다|져요|졌어요|지는)/, why: '"~이 달라집니다" 같은 결과 약속', hard: true },
       { pattern: /\d+(?:\.\d+)?\s*(?:mm|cm|kg|[x×])|[x×]\s*\d/i, why: '치수·사양을 늘어놓는 기능 나열' },
     ],
   },
@@ -749,7 +760,9 @@ function validateReelContent(reel, product, label, options) {
  * the recommended hook the script is built on, and the comment keyword.
  * options.fixedHook: the operator's selected hook — the script must start with exactly this text
  * (hook-style rules are not re-applied to the operator's own wording).
- * Returns { errors, reels, reelErrors, hookSet, commentKeyword }.
+ * Hook style is a warning, not an error (see validateHookSet); only hard problems fail validation.
+ * Returns { errors, reels, reelErrors, hookSet, commentKeyword, setErrors, hookErrors, warnings,
+ * otherErrors (errors not tied to one hook), recommendedId, reelWarnings }.
  */
 function validateGeminiReels(payload, product, expectedCount, options) {
   const count = expectedCount || RF_CONFIG.REELS_PER_PRODUCT;
@@ -762,23 +775,30 @@ function validateGeminiReels(payload, product, expectedCount, options) {
   const requireHooks = !options || options.requireHooks !== false;
   const fixedHook = options && options.fixedHook ? normalizeText(options.fixedHook) : '';
   let hookSet = null;
+  let hs = null;
   if (requireHooks) {
-    const hs = validateHookSet(payload, product, avoidHooks);
-    hs.errors.forEach(function (e) {
-      errors.push(e);
-    });
+    hs = validateHookSet(payload, product, avoidHooks);
     hookSet = hs.errors.length ? null : hs.hookSet;
   }
+  const otherErrors = [];
+  const reelWarnings = [];
   const keywordError = commentKeywordError(payload.comment_keyword);
-  if (keywordError) errors.push(keywordError);
+  if (keywordError) otherErrors.push(keywordError);
   if (reels.length !== count) {
-    errors.push('릴스 대본은 정확히 ' + count + '개여야 합니다 (받은 개수: ' + reels.length + ').');
+    otherErrors.push('릴스 대본은 정확히 ' + count + '개여야 합니다 (받은 개수: ' + reels.length + ').');
   }
   const reelErrors = reels.map(function (reel, i) {
     const label = '릴스 ' + (i + 1);
     const opts = { requireStoryboard: true, requireFactRefs: true, newStructure: true, generated: true };
     let errs = validateReelContent(reel, product, label, opts);
-    if (!fixedHook) errs = errs.concat(hookStyleErrors_(reel, product, label, avoidHooks));
+    // With five hooks the script's hook is the recommended one, already checked in the hook set.
+    // Without (a rewritten script), its style is checked here: misleading wording fails, style warns.
+    if (!fixedHook && !requireHooks && reel && normalizeText(reel.hook)) {
+      const st = hookStyleCheck_(reel.hook, product, avoidHooks);
+      const p = label + ': hook "' + normalizeText(reel.hook) + '" — ';
+      errs = errs.concat(st.errors.map(function (e) { return p + e; }));
+      st.warnings.forEach(function (w) { reelWarnings.push(p + w); });
+    }
     errs = errs.concat(hookLinkErrors_(reel, label, fixedHook, requireHooks ? payload : null));
     if (reel && !RF_CONFIG.BRAND.PILLARS[reel.pillar]) {
       errs.push(label + ': pillar는 ' + Object.keys(RF_CONFIG.BRAND.PILLARS).join(', ') + ' 중 하나여야 합니다.');
@@ -790,7 +810,7 @@ function validateGeminiReels(payload, product, expectedCount, options) {
   });
   reelErrors.forEach(function (list) {
     list.forEach(function (e) {
-      errors.push(e);
+      otherErrors.push(e);
     });
   });
 
@@ -801,8 +821,8 @@ function validateGeminiReels(payload, product, expectedCount, options) {
     if (!reel) return;
     const h = normalizeText(reel.hook).toLowerCase();
     const c = normalizeText(reel.concept).toLowerCase();
-    if (h && seenHooks[h]) errors.push('릴스 ' + (i + 1) + ': hook이 릴스 ' + seenHooks[h] + '와 중복됩니다.');
-    if (c && seenConcepts[c]) errors.push('릴스 ' + (i + 1) + ': concept이 릴스 ' + seenConcepts[c] + '와 중복됩니다.');
+    if (h && seenHooks[h]) otherErrors.push('릴스 ' + (i + 1) + ': hook이 릴스 ' + seenHooks[h] + '와 중복됩니다.');
+    if (c && seenConcepts[c]) otherErrors.push('릴스 ' + (i + 1) + ': concept이 릴스 ' + seenConcepts[c] + '와 중복됩니다.');
     if (h) seenHooks[h] = i + 1;
     if (c) seenConcepts[c] = i + 1;
   });
@@ -813,19 +833,19 @@ function validateGeminiReels(payload, product, expectedCount, options) {
     reels.forEach(function (reel, i) {
       if (!reel) return;
       if (RF_CONFIG.ANGLES[reel.angle] && seenAngles[reel.angle]) {
-        errors.push('릴스 ' + (i + 1) + ': angle ' + reel.angle + '이 릴스 ' + seenAngles[reel.angle] + '와 같습니다. 세 릴스는 A·B·C 각도를 하나씩 써야 합니다.');
+        otherErrors.push('릴스 ' + (i + 1) + ': angle ' + reel.angle + '이 릴스 ' + seenAngles[reel.angle] + '와 같습니다. 세 릴스는 A·B·C 각도를 하나씩 써야 합니다.');
       }
       if (reel.angle) seenAngles[reel.angle] = i + 1;
       const o = hookOpening_(reel.hook);
       if (o && seenOpenings[o]) {
-        errors.push('릴스 ' + (i + 1) + ': hook이 릴스 ' + seenOpenings[o] + '와 같은 말("' + o + '")로 시작합니다. 서로 다른 첫마디로 쓰세요.');
+        otherErrors.push('릴스 ' + (i + 1) + ': hook이 릴스 ' + seenOpenings[o] + '와 같은 말("' + o + '")로 시작합니다. 서로 다른 첫마디로 쓰세요.');
       }
       if (o) seenOpenings[o] = i + 1;
     });
   }
 
   // De-duplicate identical messages (e.g. the same number repeated).
-  const unique = dedupe_(errors);
+  const unique = dedupe_(errors.concat(hs ? hs.errors : [], otherErrors));
   // The script's own first scene is the recommended hook's opening (so "keep" changes nothing).
   if (!unique.length && hookSet && reels[0] && reels[0].scenes && reels[0].scenes[0]) {
     const first = reels[0].scenes[0];
@@ -845,6 +865,12 @@ function validateGeminiReels(payload, product, expectedCount, options) {
     reelErrors: reelErrors,
     hookSet: unique.length ? null : hookSet,
     commentKeyword: normalizeText(payload.comment_keyword),
+    setErrors: hs ? hs.setErrors : [],
+    hookErrors: hs ? hs.hookErrors : {},
+    warnings: hs ? hs.warnings : {},
+    recommendedId: hs ? hs.recommendedId : '',
+    otherErrors: dedupe_(otherErrors),
+    reelWarnings: dedupe_(reelWarnings),
   };
 }
 
@@ -962,101 +988,202 @@ function supportedNumbers_(ctx) {
   return set;
 }
 
-/** Type rules for H1–H5. Returns error strings. */
-function hookTypeErrors_(id, text, ctx) {
+// Meaning cues per hook type. Any one cue is enough; a hook without one gets a style warning (never an
+// error), so Gemini and the operator are free to word a hook naturally.
+const RF_HOOK_CUES_ = {
+  // Ends like a question: "?" or an interrogative ending.
+  QUESTION: /([?？]|(까요|나요|니|냐|을까|를까|할까|는지)[.!~…]*)\s*$/,
+  // Overturns a common belief: negation, contrast, "원래/사실/굳이…".
+  MYTH: /(아니|않|안\s|없|말고|대신|오히려|사실|원래|굳이|틀렸|틀린|착각|의외|반대|보통|흔히|당연|오해|잘못|그게\s*아니|필요\s*없)/,
+  // A concrete moment: when / where / what happens.
+  SITUATION: /(때|날|마다|매일|맨날|항상|늘\s|순간|하면|살면|하는데|는데|하다가|면서|잖아요|아침|저녁|밤|주말|출근|퇴근|비\s|비가|장마|이사|손님|집에|현관|원룸|자취|방|부엌|주방|욕실|화장실|베란다|거실|들어오|나가|굴러|젖은)/,
+  // States the fix first: "~면 돼요", "그냥/바로 …", or a declarative/suggestive action verb at the end.
+  CONCLUSION_WORD: /(면\s*(돼|되|끝|해결|충분)|이\s*답|답이|정답|해결|결론|그냥|바로|이거면|하나면|이렇게|딱\s)/,
+  CONCLUSION_END: /(붙여|붙이|걸어|걸면|꽂아|꽂으|둬|두세|두면|놔|놓아|놓으|넣어|넣으|세워|달아|바꿔|바꾸|써요|쓰세|쓰면|치워|정리해|옮겨|올려|매달아|끼워|모아)(요|요\.|세요|주세요|봐요|면\s*돼요)?[.!~…]*\s*$/,
+};
+
+function isQuestionHook_(text) {
+  return RF_HOOK_CUES_.QUESTION.test(normalizeText(text));
+}
+
+/**
+ * Style warnings for the meaning of each hook type (never errors): H1 asks, H2 has a number, H3 overturns
+ * a common belief, H4 shows a concrete moment, H5 states the fix first. Judged by meaning cues, not by
+ * exact phrases ("원래 우산 자리 없어요" overturns a belief as well as "~아니에요" does).
+ */
+function hookTypeWarnings_(id, text) {
+  const t = normalizeText(text);
+  const T = RF_CONFIG.HOOK_TYPES[id];
+  const warnings = [];
+  if (!T) return warnings;
+  const q = isQuestionHook_(t);
+  if (id === 'H1') {
+    if (!q) warnings.push('질문형인데 질문처럼 들리지 않습니다. 시청자에게 묻는 말로 끝내 보세요.');
+  } else if (q) {
+    warnings.push(T.label + '인데 질문처럼 들립니다. 질문은 H1이 맡습니다.');
+  }
+  if (id === 'H2' && !hookNumbers_(t).length) warnings.push('숫자로 시작하는형인데 숫자가 없습니다 (확인된 기능의 숫자, 예: "두 조각").');
+  if (id === 'H3' && !RF_HOOK_CUES_.MYTH.test(t)) warnings.push('흔한 생각을 뒤집는 느낌이 약합니다 (예: "~아니에요", "원래 ~없어요", "굳이 ~안 해도 돼요").');
+  if (id === 'H4' && !RF_HOOK_CUES_.SITUATION.test(t)) warnings.push('언제·어디서 겪는 순간인지 잘 보이지 않습니다.');
+  if (id === 'H5' && !RF_HOOK_CUES_.CONCLUSION_WORD.test(t) && !RF_HOOK_CUES_.CONCLUSION_END.test(t)) {
+    warnings.push('해결책이 먼저 들리지 않습니다 (예: "~하면 돼요", "그냥 문에 붙여요").');
+  }
+  return warnings;
+}
+
+/**
+ * Hook style, split in two. errors: misleading wording (HOOK_STYLE.AD_PATTERNS marked hard), banned
+ * phrases and URLs — never stored. warnings: length, product name first, ad tone, repeating an earlier
+ * hook of this product — stored, shown to the operator, and may be improved by one targeted Gemini call.
+ * Messages carry no prefix. Returns { errors, warnings }.
+ */
+function hookStyleCheck_(text, product, avoidHooks) {
+  const errors = [];
+  const warnings = [];
+  const hook = normalizeText(text);
+  if (!hook) return { errors: errors, warnings: warnings };
+  const H = RF_CONFIG.HOOK_STYLE;
+  if ([...hook].length > H.MAX_CHARS) {
+    warnings.push('첫 2~3초에 말하기엔 깁니다 (' + [...hook].length + '자). ' + H.MAX_CHARS + '자 이내로 줄여 보세요.');
+  }
+  // Problem first: the hook should not open with the product.
+  const nameTokens = normalizeText(product && product.name).split(' ').filter(function (t) {
+    return [...t].length >= 2;
+  });
+  const first = hook.split(' ')[0];
+  if (nameTokens.some(function (t) { return first.indexOf(t) === 0; })) {
+    warnings.push('제품 이름으로 시작합니다. 시청자가 겪는 상황·불편으로 시작해 보세요.');
+  }
+  H.AD_PATTERNS.forEach(function (rule) {
+    if (!rule.pattern.test(hook)) return;
+    if (rule.hard) errors.push(rule.why + '은(는) 쓸 수 없습니다 (확인되지 않은 결과를 약속합니다).');
+    else warnings.push(rule.why + '입니다. 친구에게 말하듯 짧은 구어체로 바꿔 보세요.');
+  });
+  RF_CONFIG.BANNED_PHRASES.forEach(function (phrase) {
+    if (hook.indexOf(phrase) !== -1) errors.push('과장/검증 불가 표현이 포함되어 있습니다: "' + phrase + '".');
+  });
+  if (/https?:\/\/|www\.|coupang\.com|link\.coupang/i.test(hook)) errors.push('훅에 URL이 있습니다.');
+  (avoidHooks || []).forEach(function (old) {
+    if (normalizeText(old) && looseText_(old) === looseText_(hook)) {
+      warnings.push('이 상품의 기존 릴스 훅과 같습니다. 새로운 표현이면 더 좋습니다.');
+    }
+  });
+  return { errors: dedupe_(errors), warnings: dedupe_(warnings) };
+}
+
+/**
+ * Hard checks for one hook (errors block saving): verified facts and claims, numbers (H2: only numbers
+ * backed by the facts, never invented statistics), banned or misleading phrases.
+ */
+function hookHardErrors_(id, text, ctx, product) {
   const t = normalizeText(text);
   const p = '훅 ' + id + ' "' + t + '" — ';
-  const isQuestion = /[?？]\s*$/.test(t);
-  const errors = [];
-  if (id === 'H1') {
-    if (!isQuestion) errors.push(p + '질문형은 시청자에게 묻는 질문(?)으로 끝나야 합니다.');
-  } else if (isQuestion) {
-    errors.push(p + RF_CONFIG.HOOK_TYPES[id].label + '은 질문이 아니어야 합니다.');
-  }
+  const where = '훅 ' + id + ': ';
+  const errors = unsupportedClaims_(t, ctx, where, true).concat(measurementErrors_(t, ctx, where));
   if (id === 'H2') {
-    const nums = hookNumbers_(t);
     const ok = supportedNumbers_(ctx);
-    if (!nums.length) errors.push(p + '숫자로 시작하는형은 확인된 기능에 근거한 숫자가 있어야 합니다 (예: "두 조각").');
-    nums.forEach(function (n) {
+    hookNumbers_(t).forEach(function (n) {
       if (n.counter === '명' || n.counter === '%' || n.counter === '배') {
         errors.push(p + '통계·비율처럼 보이는 "' + n.token + '"는 지어낸 수치일 수 있어 쓸 수 없습니다.');
       } else if (!ok[n.value]) {
         errors.push(p + '"' + n.token + '"의 숫자 ' + n.value + '는 확인된 기능에 없습니다. 확인된 기능의 숫자만 쓰세요.');
       }
     });
+  } else {
+    extractNumbers(t).forEach(function (n) {
+      if (!ctx.allowedNumbers[n]) errors.push(where + '확인된 기능에 없는 수치가 포함되어 있습니다: "' + n + '".');
+    });
   }
-  if (id === 'H3' && !/(아니에요|아니라|아닙니다|아니죠|말고|오히려|사실은|착각|필요\s*없|안\s*해도|틀렸)/.test(t)) {
-    errors.push(p + '통념을 뒤집는 단정형은 흔한 생각을 뒤집는 말("~아니에요", "~말고")이 있어야 합니다.');
-  }
-  if (id === 'H4' && !/(때|날|마다|하면|하는데|하다가|면서|아침|저녁|밤|출근|퇴근|비\s|이사|손님|집에|현관|원룸|자취|방|부엌|욕실|베란다)/.test(t)) {
-    errors.push(p + '상황 묘사형은 언제·어디서 겪는 순간인지 보여야 합니다.');
-  }
-  if (id === 'H5' && !/(면\s*돼요|면\s*끝|면\s*돼|이\s*답|정답|해결|두면|붙이면|쓰면|바꾸면|결론)/.test(t)) {
-    errors.push(p + '결론 먼저 던지는형은 해결책을 먼저 말해야 합니다 ("~하면 돼요").');
-  }
+  hookStyleCheck_(t, product, []).errors.forEach(function (e) {
+    errors.push(p + e);
+  });
   return errors;
 }
 
 /**
- * The five hooks: exactly H1–H5 once each, type rules, hook style (≤ 25 chars, problem-first, no ad
- * tone), verified facts/numbers only, distinct, not repeating this product's earlier hooks, and a
- * recommended hook with a reason. Returns { errors, hookSet }.
+ * Style warnings for one hook text (type meaning + style), e.g. for a hook the operator edited.
+ * Never blocks anything. Returns warning strings without prefix.
+ */
+function hookWarnings(id, text, product, avoidHooks) {
+  if (!normalizeText(text)) return [];
+  return dedupe_(hookTypeWarnings_(id, text).concat(hookStyleCheck_(text, product, avoidHooks).warnings));
+}
+
+/**
+ * The five hooks. Hard errors (block saving): exactly H1–H5 once each with the right type, non-empty
+ * text, verified facts / numbers / claims only, no banned or misleading phrases, each with its opening
+ * scene, no two hooks identical, a recommended hook with a reason. Style warnings (do not block): length,
+ * ad tone, product name first, weak fit to the hook type, the same first words as another hook, repeating
+ * an earlier hook of this product.
+ * Returns { errors, setErrors, hookErrors: {id: [...]}, warnings: {id: [...]}, recommendedId, hookSet }
+ * (errors = setErrors + every hookErrors entry; hookSet only when there are no errors).
  */
 function validateHookSet(payload, product, avoidHooks) {
-  const errors = [];
+  const setErrors = [];
+  const hookErrors = {};
+  const warnings = {};
   const ctx = factContext_(product);
   const T = RF_CONFIG.HOOK_TYPES;
   const ids = Object.keys(T);
   const hooks = Array.isArray(payload && payload.hooks) ? payload.hooks : [];
-  if (hooks.length !== ids.length) errors.push('hooks는 정확히 ' + ids.length + '개(H1~H5)여야 합니다 (받은 개수: ' + hooks.length + ').');
+  if (hooks.length !== ids.length) setErrors.push('hooks는 정확히 ' + ids.length + '개(H1~H5)여야 합니다 (받은 개수: ' + hooks.length + ').');
   const byId = {};
   hooks.forEach(function (h) {
     if (!h || !T[h.id]) {
-      errors.push('hooks의 id는 ' + ids.join(', ') + ' 중 하나여야 합니다: ' + JSON.stringify(h && h.id));
+      setErrors.push('hooks의 id는 ' + ids.join(', ') + ' 중 하나여야 합니다: ' + JSON.stringify(h && h.id));
       return;
     }
-    if (byId[h.id]) errors.push('훅 ' + h.id + '가 두 번 있습니다.');
+    if (byId[h.id]) setErrors.push('훅 ' + h.id + '가 두 번 있습니다.');
     byId[h.id] = h;
-    if (h.type && h.type !== T[h.id].type) errors.push('훅 ' + h.id + '의 type은 ' + T[h.id].type + '이어야 합니다.');
+    if (h.type && h.type !== T[h.id].type) setErrors.push('훅 ' + h.id + '의 type은 ' + T[h.id].type + '이어야 합니다.');
   });
   const seenText = {};
   const seenOpen = {};
   ids.forEach(function (id) {
     const h = byId[id];
     if (!h) {
-      if (hooks.length === ids.length) errors.push('훅 ' + id + ' (' + T[id].label + ')이 없습니다.');
+      if (hooks.length === ids.length) setErrors.push('훅 ' + id + ' (' + T[id].label + ')이 없습니다.');
       return;
     }
+    const errs = (hookErrors[id] = []);
+    const warns = (warnings[id] = []);
     const text = normalizeText(h.text);
-    if (!text) return errors.push('훅 ' + id + '의 text가 비어 있습니다.');
-    hookStyleErrors_({ hook: text }, product, '훅 ' + id, avoidHooks).forEach(function (e) {
-      errors.push(e);
+    if (!text) {
+      errs.push('훅 ' + id + '의 text가 비어 있습니다.');
+      return;
+    }
+    hookHardErrors_(id, text, ctx, product).forEach(function (e) {
+      errs.push(e);
     });
-    hookTypeErrors_(id, text, ctx).forEach(function (e) {
-      errors.push(e);
-    });
-    const where = '훅 ' + id + ': ';
-    unsupportedClaims_(text, ctx, where, true).concat(measurementErrors_(text, ctx, where)).forEach(function (e) {
-      errors.push(e);
-    });
-    extractNumbers(text).forEach(function (n) {
-      if (!ctx.allowedNumbers[n] && id !== 'H2') errors.push(where + '확인된 기능에 없는 수치가 포함되어 있습니다: "' + n + '".');
+    hookWarnings(id, text, product, avoidHooks).forEach(function (w) {
+      warns.push(w);
     });
     // Its opening scene (scene 1 when this hook is chosen).
-    if (!normalizeText(h.visual)) errors.push('훅 ' + id + ': visual(이 훅으로 시작할 때 첫 장면 연출)이 비어 있습니다.');
+    if (!normalizeText(h.visual)) errs.push('훅 ' + id + ': visual(이 훅으로 시작할 때 첫 장면 연출)이 비어 있습니다.');
     if (normalizeText(h.flow_prompt).length < RF_CONFIG.LIMITS.MIN_FLOW_PROMPT_CHARS) {
-      errors.push('훅 ' + id + ': flow_prompt(첫 장면 Google Flow 프롬프트)가 비어 있거나 너무 짧습니다.');
+      errs.push('훅 ' + id + ': flow_prompt(첫 장면 Google Flow 프롬프트)가 비어 있거나 너무 짧습니다.');
     }
     const key = looseText_(text);
-    if (seenText[key]) errors.push('훅 ' + id + '가 ' + seenText[key] + '와 같습니다.');
-    seenText[key] = id;
+    if (seenText[key]) errs.push('훅 ' + id + '가 ' + seenText[key] + '와 같습니다. 다섯 훅은 서로 달라야 합니다.');
+    else seenText[key] = id;
     const o = hookOpening_(text);
-    if (o && seenOpen[o]) errors.push('훅 ' + id + '가 ' + seenOpen[o] + '와 같은 말("' + o + '")로 시작합니다. 다섯 훅은 서로 달라야 합니다.');
-    if (o) seenOpen[o] = id;
+    if (o && seenOpen[o]) warns.push(seenOpen[o] + '와 같은 말("' + o + '")로 시작합니다. 첫마디를 다르게 하면 더 좋습니다.');
+    if (o && !seenOpen[o]) seenOpen[o] = id;
   });
   const rec = payload && payload.recommended_hook;
-  if (!rec || !byId[rec.id]) errors.push('recommended_hook.id는 H1~H5 중 하나여야 합니다.');
-  else if (!normalizeText(rec.reason)) errors.push('recommended_hook.reason(추천 이유)이 비어 있습니다.');
+  if (!rec || !byId[rec.id]) setErrors.push('recommended_hook.id는 H1~H5 중 하나여야 합니다.');
+  else if (!normalizeText(rec.reason)) setErrors.push('recommended_hook.reason(추천 이유)이 비어 있습니다.');
+  Object.keys(hookErrors).forEach(function (id) {
+    hookErrors[id] = dedupe_(hookErrors[id]);
+  });
+  Object.keys(warnings).forEach(function (id) {
+    warnings[id] = dedupe_(warnings[id]);
+  });
+  let errors = setErrors.slice();
+  ids.forEach(function (id) {
+    errors = errors.concat(hookErrors[id] || []);
+  });
+  errors = dedupe_(errors);
   const hookSet = errors.length ? null : {
     hooks: ids.map(function (id) {
       const h = byId[id];
@@ -1068,7 +1195,100 @@ function validateHookSet(payload, product, avoidHooks) {
     }),
     recommended: { id: rec.id, reason: normalizeText(rec.reason) },
   };
-  return { errors: dedupe_(errors), hookSet: hookSet };
+  return {
+    errors: errors,
+    setErrors: dedupe_(setErrors),
+    hookErrors: hookErrors,
+    warnings: warnings,
+    recommendedId: rec && byId[rec.id] ? rec.id : '',
+    hookSet: hookSet,
+  };
+}
+
+/** Style warnings of a stored hook set (REELS "훅 후보(JSON)"), per hook id, for the dashboard. */
+function hookSetWarnings(set, product, avoidHooks) {
+  if (!set || !Array.isArray(set.hooks) || !set.hooks.length) return {};
+  return validateHookSet({ hooks: set.hooks, recommended_hook: set.recommended }, product, avoidHooks).warnings;
+}
+
+function warningCount_(v, id) {
+  return ((v.warnings && v.warnings[id]) || []).length;
+}
+
+/**
+ * Which hooks one targeted Gemini call should rewrite, instead of regenerating everything:
+ * hooks with hard errors, plus (includeWeak) hooks with style warnings. The recommended hook is never
+ * rewritten automatically (the script starts with it). Returns null when a targeted rewrite cannot
+ * help: a set-level or script error, or a hard error on the recommended hook (→ full retry).
+ * v: validateHookSet / validateGeminiReels result. Returns { ids, problems: {id: [...]}, hard } or null.
+ */
+function hookRevisionPlan(v, includeWeak) {
+  if (!v || !v.hookErrors || (v.setErrors || []).length || (v.otherErrors || []).length) return null;
+  const rec = v.recommendedId;
+  if (!rec || (v.hookErrors[rec] || []).length) return null;
+  const ids = [];
+  const problems = {};
+  let hard = false;
+  Object.keys(RF_CONFIG.HOOK_TYPES).forEach(function (id) {
+    if (id === rec) return;
+    const errs = v.hookErrors[id] || [];
+    const warns = includeWeak ? (v.warnings && v.warnings[id]) || [] : [];
+    if (!errs.length && !warns.length) return;
+    if (errs.length) hard = true;
+    ids.push(id);
+    problems[id] = errs.concat(warns);
+  });
+  return { ids: ids, problems: problems, hard: hard };
+}
+
+/**
+ * Merges rewritten hooks (revised.hooks, ids in targetIds only) into payload, one hook at a time. A
+ * rewrite is taken when it has no hard errors and (the old hook had hard errors, or it has fewer style
+ * warnings — opts.operator: no more warnings) without adding errors elsewhere in the set. Everything
+ * else (other hooks, recommendation, script) is unchanged.
+ * Returns { payload, revised: [ids], kept: [ids] }.
+ */
+function mergeHookRevisions(payload, revised, product, avoidHooks, targetIds, opts) {
+  let base = JSON.parse(JSON.stringify(payload || {}));
+  let before = validateHookSet(base, product, avoidHooks);
+  const out = { payload: base, revised: [], kept: [] };
+  const list = Array.isArray(revised && revised.hooks) ? revised.hooks : [];
+  (targetIds || []).forEach(function (id) {
+    const r = list.filter(function (h) {
+      return h && h.id === id;
+    })[0];
+    const idx = (base.hooks || []).map(function (h) { return h && h.id; }).indexOf(id);
+    if (!r || idx === -1 || !normalizeText(r.text)) {
+      out.kept.push(id);
+      return;
+    }
+    const old = base.hooks[idx];
+    const cand = JSON.parse(JSON.stringify(base));
+    cand.hooks[idx] = {
+      id: id,
+      type: RF_CONFIG.HOOK_TYPES[id].type,
+      text: normalizeText(r.text),
+      visual: normalizeText(r.visual) || old.visual,
+      flow_prompt: normalizeText(r.flow_prompt) || old.flow_prompt,
+      emphasis: normalizeText(r.emphasis) || old.emphasis || '',
+      sfx: r.sfx == null ? old.sfx || '' : normalizeText(r.sfx),
+    };
+    const after = validateHookSet(cand, product, avoidHooks);
+    const hadErrors = (before.hookErrors[id] || []).length > 0;
+    const clean = !(after.hookErrors[id] || []).length &&
+      after.errors.length <= before.errors.length - (before.hookErrors[id] || []).length;
+    const better = hadErrors ||
+      (opts && opts.operator ? warningCount_(after, id) <= warningCount_(before, id) : warningCount_(after, id) < warningCount_(before, id));
+    if (clean && better && normalizeText(r.text) !== normalizeText(old.text)) {
+      base = cand;
+      before = after;
+      out.revised.push(id);
+    } else {
+      out.kept.push(id);
+    }
+  });
+  out.payload = base;
+  return out;
 }
 
 function dedupe_(list) {
@@ -1257,39 +1477,6 @@ function formatVerificationFlags(flags) {
 /** The first two words of a hook, for spotting three reels that open the same way. */
 function hookOpening_(hook) {
   return normalizeText(hook).replace(/[^\s가-힣A-Za-z0-9]/g, '').split(' ').slice(0, 2).join(' ');
-}
-
-/**
- * Hook style for new Gemini scripts: short, starts from a relatable problem, not an ad.
- * Not applied to reviewer edits (the reviewer decides). Returns error strings with a fix.
- */
-function hookStyleErrors_(reel, product, label, avoidHooks) {
-  const errors = [];
-  const hook = normalizeText(reel && reel.hook);
-  if (!hook) return errors;
-  const H = RF_CONFIG.HOOK_STYLE;
-  const p = label + ': hook "' + hook + '" — ';
-  const fix = ' 시청자가 겪는 구체적인 불편·상황으로 시작하는 짧은 구어체로 다시 쓰세요 (예: "급하게 출근하면 꼭 까먹는 우산!").';
-  if ([...hook].length > H.MAX_CHARS) {
-    errors.push(p + '첫 2~3초에 말할 수 있게 ' + H.MAX_CHARS + '자 이내여야 합니다.');
-  }
-  // Problem first: the hook must not open with the product.
-  const nameTokens = normalizeText(product && product.name).split(' ').filter(function (t) {
-    return [...t].length >= 2;
-  });
-  const first = hook.split(' ')[0];
-  if (nameTokens.some(function (t) { return first.indexOf(t) === 0; })) {
-    errors.push(p + '제품 이름으로 시작합니다. 제품이 아니라 상황·불편으로 시작하세요.' + fix);
-  }
-  H.AD_PATTERNS.forEach(function (rule) {
-    if (rule.pattern.test(hook)) errors.push(p + rule.why + '입니다.' + fix);
-  });
-  (avoidHooks || []).forEach(function (old) {
-    if (normalizeText(old) && looseText_(old) === looseText_(hook)) {
-      errors.push(p + '이 상품의 기존 릴스 hook과 같습니다. 새로운 hook을 쓰세요.');
-    }
-  });
-  return errors;
 }
 
 /** Finds duplicate values in a list (ignoring blanks). */
@@ -1857,8 +2044,17 @@ function planTransition(row, product, action, input, ctx) {
         throw new Error('훅 5개가 올바르지 않습니다.');
       }
       updates['훅 후보(JSON)'] = JSON.stringify(hs);
-      updates['선택한 훅'] = '';
-      note = (note ? note + ' · ' : '') + '훅 5개 생성 (추천 ' + (hs.recommended ? hs.recommended.id : '-') + '). 대본은 바뀌지 않았습니다.';
+      if (Array.isArray(input.revisedIds)) {
+        // Some hooks improved (apiReviseHook): the choice stays unless the chosen hook was rewritten.
+        const sel = parseSelectedHook(row['선택한 훅']);
+        if (sel && input.revisedIds.indexOf(sel.id) !== -1) updates['선택한 훅'] = '';
+        note = (note ? note + ' · ' : '') + '훅 ' + input.revisedIds.join(', ') + ' 다듬기 (Gemini): ' +
+          hs.hooks.filter(function (h) { return input.revisedIds.indexOf(h.id) !== -1; }).map(function (h) { return '"' + h.text + '"'; }).join(', ') +
+          '. 대본은 바뀌지 않았습니다.';
+      } else {
+        updates['선택한 훅'] = '';
+        note = (note ? note + ' · ' : '') + '훅 5개 생성 (추천 ' + (hs.recommended ? hs.recommended.id : '-') + '). 대본은 바뀌지 않았습니다.';
+      }
       to = status;
       snapshot = { '훅 후보(JSON)': updates['훅 후보(JSON)'] };
       break;
@@ -2211,11 +2407,14 @@ function prepareReelRecords(product, rawText, existingIds, existingKeywords, met
   meta = Object.assign({}, meta, { hookSet: result.hookSet, commentKeyword: result.commentKeyword });
   // Kept so a later attempt can be combined with this one's valid reels (no extra paid call).
   const attempt = { reels: parsed.value && parsed.value.reels, reelErrors: result.reelErrors };
-  if (result.errors.length) return { errors: result.errors, records: [], attempt: attempt };
+  // validation and payload let the caller rewrite only the hooks that need it (hookRevisionPlan).
+  if (result.errors.length) return { errors: result.errors, records: [], attempt: attempt, validation: result, payload: parsed.value };
   return {
     errors: [],
     records: buildReelRecords(product, result.reels, existingIds, existingKeywords, meta),
     attempt: attempt,
+    validation: result,
+    payload: parsed.value,
   };
 }
 
@@ -2444,13 +2643,14 @@ function buildGeminiPrompt(product, previousErrors, previousResponse, avoidHooks
     lines.push(
       '- 예시 (PRD-001 우산꽂이, 형식 참고용 — 다른 상품에 그대로 쓰지 말 것):',
       '  H1 "급하게 출근할 때마다 우산 깜빡하는 사람?" / H2 "두 조각만 문에 붙이면 바닥이 비어요" (2피스 → 두 조각) / H3 "현관 우산 자리, 바닥이 아니에요" / H4 "비 오는 날, 현관에 젖은 우산이 굴러다녀요" / H5 "좁은 현관 우산 정리, 문에 붙이면 돼요"',
+      '- 유형은 뜻으로 판단합니다. 위 예시 말투("~아니에요", "~하면 돼요")를 꼭 쓸 필요는 없습니다 — 예: H3 "좁은 현관 바닥엔 원래 우산 자리 없어요", H5 "정리 안 되는 우산은 그냥 문에 붙여요"도 좋습니다.',
       '- 다섯 훅은 첫마디가 서로 달라야 합니다. 제품 이름으로 시작하지 마세요.',
       '- 쓰지 말 것: "~니다" 광고 말투, "~다면?"·"~하시나요?" 같은 뻔한 질문, "~하세요" 권유, "하나로", "소개", "추천", "필수템", "꿀템", "~이 달라집니다".',
       '- 나쁜 예: "현관이 좁아 우산 둘 곳이 없다면?", "우산꽂이 하나로 현관이 달라집니다.", "자석형 2피스 우산꽂이" (기능 나열로 시작하지 마세요).',
       '- 좋은 예: "급하게 출근할 때마다 우산 깜빡하는 사람?", "원룸 살면 우산꽂이 둘 자리도 애매하잖아요.", "비 오는 날마다 현관이 지저분해지는 이유."',
       '- 각 훅마다 그 훅으로 시작할 때의 첫 장면을 함께 쓰세요: visual(첫 프레임부터 보여 줄 장면 연출), flow_prompt(그 장면의 영어 Google Flow 프롬프트), emphasis(자막 강조), sfx(효과음, 없으면 빈 문자열). 운영자가 훅을 고르면 첫 장면이 이것으로 바뀝니다.',
       '- 두 번째 장면(EMPATHY)부터는 다섯 훅 중 어떤 것으로 시작해도 자연스럽게 이어지도록 쓰세요.',
-      '- recommended_hook: 첫 프레임에서 문제가 가장 잘 보이고 제품 해결책과 자연스럽게 이어지는 훅의 id와 짧은 이유.' + (mode === 'new' ? ' 대본의 hook과 첫 장면(narration·visual·flow_prompt)은 이 훅과 똑같아야 합니다.' : ''),
+      '- recommended_hook: 문제를 먼저 보여 주는(problem-first) 가장 강한 훅 — 첫 프레임에서 문제가 가장 잘 보이고 제품 해결책과 자연스럽게 이어지는 훅의 id와 짧은 이유.' + (mode === 'new' ? ' 대본의 hook과 첫 장면(narration·visual·flow_prompt)은 이 훅과 똑같아야 합니다.' : ''),
       ''
     );
     if (mode === 'new') {
@@ -2521,6 +2721,73 @@ function buildGeminiPrompt(product, previousErrors, previousResponse, avoidHooks
       lines.push('', '## 이전 응답 (JSON — 위 오류만 고쳐서 다시 출력)', String(previousResponse).slice(0, 12000));
     }
   }
+  return lines.join('\n');
+}
+
+/** Response schema for a targeted hook rewrite: exactly the hooks in `ids`, nothing else. */
+function hookRevisionSchema(ids) {
+  const item = JSON.parse(JSON.stringify(RF_GEMINI_RESPONSE_SCHEMA.properties.hooks.items));
+  item.properties.id = { type: 'STRING', enum: ids.slice() };
+  return {
+    type: 'OBJECT',
+    properties: { hooks: { type: 'ARRAY', minItems: ids.length, maxItems: ids.length, items: item } },
+    required: ['hooks'],
+    propertyOrdering: ['hooks'],
+  };
+}
+
+/**
+ * Prompt to rewrite only some of the five hooks (plan.ids, with their problems in plan.problems), keeping
+ * the other hooks, the recommendation and the script as they are. One Gemini call, text only.
+ * payload: { hooks: [...5], recommended_hook } — the current set, so the rewrites stay distinct.
+ */
+function buildHookRevisionPrompt(product, payload, plan, avoidHooks) {
+  const B = RF_CONFIG.BRAND;
+  const H = RF_CONFIG.HOOK_TYPES;
+  const facts = parseConfirmedFeatures(product.features);
+  const hooks = (payload && payload.hooks) || [];
+  const lines = [
+    '당신은 인스타그램 계정 "' + B.NAME + '"의 릴스 훅 작가입니다. 말투: ' + B.PERSONALITY,
+    '아래 훅 5개 중 ' + plan.ids.join(', ') + '만 다시 쓰세요. 다른 훅·추천 훅·대본은 바꾸지 않습니다.',
+    '광고 문구가 아니라 친구에게 말하듯, 유치원생도 알아들을 쉬운 생활 언어로 쓰세요.',
+    '',
+    '## 상품',
+    '- 상품명: ' + normalizeText(product.name),
+    '- 타깃: ' + (normalizeText(product.target) || '(미입력)'),
+    '',
+    '## 확인된 기능 (이 목록만 사실로 사용)',
+  ];
+  facts.forEach(function (f, i) {
+    lines.push('- ' + factId(i) + ': ' + f);
+  });
+  lines.push(
+    '',
+    '## 규칙',
+    '- 확인된 기능에 없는 기능·소재·호환·수치·가격·후기·통계를 만들지 마세요. 과장 표현(최고, 완벽, 무조건, 튼튼 등)과 "~이 달라집니다" 같은 결과 약속도 쓰지 마세요.',
+    '- 각 훅은 ' + RF_CONFIG.HOOK_STYLE.MAX_CHARS + '자 이내, 시청자가 겪는 문제·상황이 첫 2초에 들리게. 제품 이름으로 시작하지 마세요. "~니다" 광고 말투, "~하시나요?" 같은 뻔한 질문, "~하세요" 권유, "추천·소개·필수템·꿀템"은 쓰지 마세요.',
+    '- 유형의 뜻만 지키면 되고 정해진 말투는 없습니다.',
+    '- 다른 훅과 첫마디가 겹치지 않게 쓰세요.',
+    '- 각 훅마다 그 훅으로 시작할 때의 첫 장면도 쓰세요: visual(장면 연출), flow_prompt(영어 Google Flow 프롬프트, 9:16 vertical, photorealistic, Korean apartment, natural light, 로고·글자·실존 인물 얼굴 없이), emphasis(자막 강조), sfx(효과음, 없으면 빈 문자열).',
+    '',
+    '## 현재 훅 5개'
+  );
+  hooks.forEach(function (h) {
+    if (h && H[h.id]) lines.push('- ' + h.id + ' (' + H[h.id].label + '): "' + normalizeText(h.text) + '"');
+  });
+  lines.push('', '## 다시 쓸 훅과 고칠 점');
+  plan.ids.forEach(function (id) {
+    lines.push('- ' + id + ' ' + H[id].type + ' (' + H[id].label + '): ' + H[id].rule);
+    (plan.problems[id] || []).forEach(function (p) {
+      lines.push('  · ' + p);
+    });
+  });
+  if (avoidHooks && avoidHooks.length) {
+    lines.push('', '## 이 상품에 이미 쓴 훅 (비슷하게 쓰지 마세요)');
+    avoidHooks.slice(-15).forEach(function (h) {
+      lines.push('- ' + normalizeText(h));
+    });
+  }
+  lines.push('', 'JSON 스키마에 맞춰 hooks 배열에 ' + plan.ids.join(', ') + '만 넣어 JSON만 출력하세요.');
   return lines.join('\n');
 }
 
@@ -3991,22 +4258,80 @@ function promptForGeminiApiKey() {
 }
 
 /**
- * Generates up to MAX_GEMINI_ATTEMPTS Gemini responses until one passes validation,
- * then returns { records, attempts }. Throws with all validation errors otherwise.
+ * One targeted Gemini call that rewrites only plan.ids of the five hooks (see hookRevisionPlan) and
+ * merges each rewrite only if it is better (mergeHookRevisions). Returns the merge result
+ * { payload, revised, kept }, or null if the call failed (the caller keeps what it had).
+ */
+function reviseHooks_(product, payload, plan, avoidHooks, source, opts) {
+  let raw = '';
+  try {
+    raw = callGemini_(buildHookRevisionPrompt(product, payload, plan, avoidHooks), hookRevisionSchema(plan.ids));
+  } catch (e) {
+    logEvent_('WARN', source, product.id, '훅 ' + plan.ids.join(', ') + ' 다듬기 호출 실패 — 기존 훅을 유지합니다.', String(e && e.message || e));
+    return null;
+  }
+  const parsed = parseModelJson(raw);
+  if (parsed.error) {
+    logEvent_('WARN', source, product.id, '훅 다듬기 응답을 읽을 수 없습니다 — 기존 훅을 유지합니다.', parsed.error + '\n\n--- 원본 응답 ---\n' + raw);
+    return null;
+  }
+  const merged = mergeHookRevisions(payload, parsed.value, product, avoidHooks, plan.ids, opts);
+  logEvent_('INFO', source, product.id,
+    '훅만 다듬기 (Gemini 1회): ' + (merged.revised.length ? merged.revised.join(', ') + ' 반영' : '반영 없음') +
+      (merged.kept.length ? ' · ' + merged.kept.join(', ') + ' 유지' : ''),
+    Object.keys(plan.problems).map(function (id) { return id + ': ' + plan.problems[id].join(' / '); }).join('\n') + '\n\n--- 원본 응답 ---\n' + raw);
+  return merged;
+}
+
+/**
+ * Generates the five hooks and the script with as few Gemini calls as possible, then returns
+ * { records, attempts, calls }. Throws with all validation errors otherwise.
+ *  - Hook style issues are warnings, not failures: a safe hook with a warning is kept for the operator.
+ *  - When only some non-recommended hooks have problems, one targeted call rewrites just those hooks
+ *    (hard errors always; style warnings when HOOK_STYLE.AUTO_REVISE_WEAK) instead of regenerating all.
+ *  - A full corrective retry happens only for script / set errors or a hard error on the recommended hook.
+ *  - Never more than MAX_GEMINI_CALLS_PER_RUN calls.
  */
 function generateValidatedRecords_(product, existingIds, existingKeywords, previousHooks) {
   const vopts = { avoidHooks: previousHooks || [] };
+  const maxCalls = RF_CONFIG.MAX_GEMINI_CALLS_PER_RUN || RF_CONFIG.MAX_GEMINI_ATTEMPTS;
+  let calls = 0;
   let lastErrors = [];
   let lastRaw = '';
   const attempts = [];
   const meta = function () {
     return { model: RF_GEMINI_STATE.lastModel || getGeminiModel(), generatedAt: new Date() };
   };
-  for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS && calls < maxCalls; attempt++) {
     // A retry gets the exact failing claims and the previous response, so Gemini fixes only those.
-    const raw = callGemini_(buildGeminiPrompt(product, lastErrors, lastRaw, vopts.avoidHooks));
-    const result = prepareReelRecords(product, raw, existingIds, existingKeywords, meta(), vopts);
-    if (!result.errors.length) return { records: result.records, attempts: attempt };
+    let raw = callGemini_(buildGeminiPrompt(product, lastErrors, lastRaw, vopts.avoidHooks));
+    calls++;
+    let result = prepareReelRecords(product, raw, existingIds, existingKeywords, meta(), vopts);
+    // Only some hooks need work → rewrite just those hooks (one call), keep everything else.
+    const plan = hookRevisionPlan(result.validation, RF_CONFIG.HOOK_STYLE.AUTO_REVISE_WEAK);
+    if (plan && plan.ids.length && calls < maxCalls) {
+      calls++;
+      const merged = reviseHooks_(product, result.payload, plan, vopts.avoidHooks, 'validateGemini');
+      if (merged && merged.revised.length) {
+        const mergedRaw = JSON.stringify(merged.payload);
+        const again = prepareReelRecords(product, mergedRaw, existingIds, existingKeywords, meta(), vopts);
+        // Use the rewrite when it passes; a passing original is never replaced by a failing merge.
+        if (!again.errors.length || result.errors.length) {
+          result = again;
+          raw = mergedRaw;
+        }
+      }
+    }
+    if (!result.errors.length) {
+      const warned = Object.keys(result.validation.warnings || {}).filter(function (id) {
+        return result.validation.warnings[id].length;
+      });
+      if (warned.length) {
+        logEvent_('INFO', 'validateGemini', product.id, '스타일 경고가 있는 훅 ' + warned.join(', ') + ' — 대시보드에 표시, 운영자가 판단합니다.',
+          warned.map(function (id) { return id + ': ' + result.validation.warnings[id].join(' / '); }).join('\n'));
+      }
+      return { records: result.records, attempts: attempt, calls: calls };
+    }
     attempts.push(result.attempt);
     lastErrors = result.errors;
     lastRaw = raw;
@@ -4021,11 +4346,11 @@ function generateValidatedRecords_(product, existingIds, existingKeywords, previ
     const combined = attempts.length > 1 ? combineValidReels(attempts, product, null, vopts) : null;
     if (combined) {
       logEvent_('INFO', 'validateGemini', product.id, '시도별로 검증을 통과한 대본을 합쳐 사용합니다 (추가 호출 없음).', '');
-      return { records: buildReelRecords(product, combined.reels, existingIds, existingKeywords, meta()), attempts: attempt };
+      return { records: buildReelRecords(product, combined.reels, existingIds, existingKeywords, meta()), attempts: attempt, calls: calls };
     }
   }
   throw new Error(
-    'Gemini 응답이 ' + RF_CONFIG.MAX_GEMINI_ATTEMPTS + '회 모두 검증에 실패했습니다. REELS에는 아무것도 기록하지 않았습니다.\n' +
+    'Gemini 응답이 검증에 실패했습니다 (Gemini 호출 ' + calls + '회). REELS에는 아무것도 기록하지 않았습니다.\n' +
       '자세한 내용은 LOG 시트를 확인하세요.\n\n- ' + lastErrors.slice(0, 8).join('\n- ')
   );
 }
@@ -4473,7 +4798,7 @@ function reelSummary_(row, data) {
   };
 }
 
-function hookView_(row, status, columnsMissing) {
+function hookView_(row, status, columnsMissing, product, avoidHooks) {
   const set = parseHookSet(row['훅 후보(JSON)']);
   const selected = parseSelectedHook(row['선택한 훅']);
   const current = normalizeText(row['후킹']);
@@ -4491,6 +4816,13 @@ function hookView_(row, status, columnsMissing) {
     canSelect: reviewing && !columnsMissing && set.hooks.length > 0,
     scriptVersion: scriptVersionOf(row),
     types: RF_CONFIG.HOOK_TYPES,
+    // Style warnings per hook id (never block; the operator may edit, select, or ask Gemini to improve one).
+    warnings: product ? hookSetWarnings(set, product, avoidHooks || []) : {},
+    // Warnings for the chosen wording when the operator edited it.
+    selectedWarnings: product && selected && selected.id && RF_CONFIG.HOOK_TYPES[selected.id] && selected.edited
+      ? hookWarnings(selected.id, selected.text, product, [])
+      : [],
+    canRevise: reviewing && !columnsMissing && set.hooks.length > 0,
   };
 }
 
@@ -4599,7 +4931,7 @@ function reelDetail_(ss, reelId) {
     canRegenerate: status === 'SCRIPT_CHANGES_REQUESTED',
     pillar: { id: reel.pillar, label: pillarLabel(reel.pillar) },
     // Five hooks (H1–H5), Gemini's recommendation, and the operator's choice (with script version).
-    hooks: hookView_(row, status, data.hookColumnsMissing),
+    hooks: hookView_(row, status, data.hookColumnsMissing, product, productHooksExcept_(data, product.id, normalizeText(row['릴스ID']))),
     pillars: brandSummary_().pillars,
     // Gemini's production plan (after approval), Drive folder and clip tracker.
     production: productionView_(row, product, data.productionColumnsMissing),
@@ -4850,21 +5182,30 @@ function apiGenerateHooks(reelId, input) {
       const current = rowToReel(found.row);
       if (!current.scenes) throw new Error('"장면(JSON)" 셀이 올바른 JSON이 아닙니다. "수정 요청" 후 재생성하세요.');
       // Hooks already used for this product (other reels) are avoided; this script's own hook may return.
-      const avoid = [];
-      data.reels.forEach(function (r) {
-        if (normalizeText(r['상품ID']) !== found.product.id || normalizeText(r['릴스ID']) === id) return;
-        if (normalizeText(r['후킹'])) avoid.push(normalizeText(r['후킹']));
-        parseHookSet(r['훅 후보(JSON)']).hooks.forEach(function (h) {
-          avoid.push(h.text);
-        });
-      });
+      const avoid = productHooksExcept_(data, found.product.id, id);
       let lastErrors = [];
       let lastRaw = '';
       let hookSet = null;
-      for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS && !hookSet; attempt++) {
-        const raw = callGemini_(buildHooksForScriptPrompt(found.product, current, avoid, lastErrors, lastRaw), geminiResponseSchema(1, 'only'));
+      let calls = 0;
+      const maxCalls = RF_CONFIG.MAX_GEMINI_CALLS_PER_RUN || RF_CONFIG.MAX_GEMINI_ATTEMPTS;
+      for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS && !hookSet && calls < maxCalls; attempt++) {
+        let raw = callGemini_(buildHooksForScriptPrompt(found.product, current, avoid, lastErrors, lastRaw), geminiResponseSchema(1, 'only'));
+        calls++;
         const parsed = parseModelJson(raw);
-        const result = parsed.error ? { errors: [parsed.error] } : validateHookSet(parsed.value, found.product, avoid);
+        let result = parsed.error ? { errors: [parsed.error] } : validateHookSet(parsed.value, found.product, avoid);
+        // Only some hooks need work → rewrite just those (one call) instead of all five.
+        const plan = parsed.error ? null : hookRevisionPlan(result, RF_CONFIG.HOOK_STYLE.AUTO_REVISE_WEAK);
+        if (plan && plan.ids.length && calls < maxCalls) {
+          calls++;
+          const merged = reviseHooks_(found.product, parsed.value, plan, avoid, 'generateHooks');
+          if (merged && merged.revised.length) {
+            const again = validateHookSet(merged.payload, found.product, avoid);
+            if (!again.errors.length || result.errors.length) {
+              result = again;
+              raw = JSON.stringify(merged.payload);
+            }
+          }
+        }
         if (result.errors.length) {
           lastErrors = result.errors;
           lastRaw = raw;
@@ -4883,6 +5224,71 @@ function apiGenerateHooks(reelId, input) {
     });
     return { detail: reelDetail_(ss, id) };
   });
+}
+
+/**
+ * Touchpoint 2: the operator asks Gemini to improve ONE hook (e.g. one with a style warning). One Gemini
+ * call, no retry; only that hook (and its opening scene) changes, the other four hooks and the script do
+ * not. The rewrite is kept only if it passes the hard checks and has no more warnings than before.
+ * If the operator had chosen that hook, the choice is cleared so they confirm the new wording.
+ */
+function apiReviseHook(reelId, input) {
+  return api_(function (user) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const id = normalizeText(reelId);
+    input = input || {};
+    let notice = '';
+    withLock_(function () {
+      const data = loadData_(ss);
+      if (data.hookColumnsMissing) throw new Error('REELS에 훅 저장 열이 없습니다. "릴스 팩토리 → 시트 준비"를 먼저 실행하세요. Gemini는 호출하지 않았습니다.');
+      const found = findReel_(data, id);
+      const status = reelStatus(found.row);
+      if ((input.expectedStatus && input.expectedStatus !== status) || Number(input.expectedScriptVersion) !== scriptVersionOf(found.row)) {
+        throw staleError_(found.row, status);
+      }
+      if (RF_ACTIONS.SET_HOOKS.from.indexOf(status) === -1) {
+        throw new Error('훅은 대본 검토 중에만 다듬을 수 있습니다 (현재: ' + (RF_STATUS_LABELS[status] || status) + ').');
+      }
+      const set = parseHookSet(found.row['훅 후보(JSON)']);
+      const hookId = normalizeText(input.hookId);
+      if (!set.hooks.some(function (h) { return h.id === hookId; })) throw new Error('이 대본의 훅 후보에서 ' + (hookId || '훅') + '을(를) 찾을 수 없습니다.');
+      const avoid = productHooksExcept_(data, found.product.id, id);
+      const payload = { hooks: set.hooks, recommended_hook: set.recommended };
+      const v = validateHookSet(payload, found.product, avoid);
+      const problems = (v.hookErrors[hookId] || []).concat(v.warnings[hookId] || []);
+      const plan = { ids: [hookId], problems: {}, hard: false };
+      plan.problems[hookId] = problems.length ? problems : ['문제 상황이 첫 2초에 더 또렷하게 들리도록 다듬기'];
+      const merged = reviseHooks_(found.product, payload, plan, avoid, 'reviseHook', { operator: true });
+      if (!merged) throw new Error('Gemini 호출에 실패했습니다. 훅은 바뀌지 않았습니다. LOG 시트를 확인하세요.');
+      if (!merged.revised.length) {
+        notice = 'Gemini가 더 나은 ' + hookId + '를 만들지 못해 기존 훅을 그대로 두었습니다 (Gemini 1회 사용).';
+        return;
+      }
+      const result = validateHookSet(merged.payload, found.product, avoid);
+      if (!result.hookSet) throw new Error('다듬은 훅이 검증을 통과하지 못했습니다. 훅은 바뀌지 않았습니다.\n- ' + result.errors.slice(0, 6).join('\n- '));
+      applyTransition_(ss, id, 'SET_HOOKS', {
+        expectedStatus: status,
+        expectedScriptVersion: scriptVersionOf(found.row),
+        hookSet: result.hookSet,
+        revisedIds: [hookId],
+      }, user + ' + Gemini (' + (RF_GEMINI_STATE.lastModel || getGeminiModel()) + ')');
+      notice = hookId + ' 훅을 다듬었습니다. 대본은 바뀌지 않았습니다 — 이 훅을 쓰려면 "이 훅으로 정하기"를 누르세요.';
+    });
+    return { notice: notice, detail: reelDetail_(ss, id) };
+  });
+}
+
+/** Hooks already used by this product's other reels (the given reel's own hooks may return). */
+function productHooksExcept_(data, productId, reelId) {
+  const avoid = [];
+  data.reels.forEach(function (r) {
+    if (normalizeText(r['상품ID']) !== productId || normalizeText(r['릴스ID']) === reelId) return;
+    if (normalizeText(r['후킹'])) avoid.push(normalizeText(r['후킹']));
+    parseHookSet(r['훅 후보(JSON)']).hooks.forEach(function (h) {
+      avoid.push(h.text);
+    });
+  });
+  return avoid;
 }
 
 /** Touchpoint 1 from the phone: generate 3 scripts for a product already entered in PRODUCTS. */
@@ -4966,4 +5372,4 @@ function showRenderSecret() {
 }
 
 // ===== Dashboard.html (embedded) =====
-const RF_DASHBOARD_HTML = "<!doctype html>\n<html lang=\"ko\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n<base target=\"_top\">\n<title>릴스 팩토리</title>\n<style>\n  :root {\n    --bg: #f2f2f7; --card: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --line: #d1d1d6;\n    --accent: #0a66d6; --ok: #1a7f37; --warn: #a15c00; --bad: #c62828; --chip: #e9e9ef;\n  }\n  @media (prefers-color-scheme: dark) {\n    :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --muted: #a1a1a6; --line: #38383a;\n      --accent: #4c9aff; --ok: #3fb950; --warn: #e3a008; --bad: #ff6b6b; --chip: #2c2c2e; }\n  }\n  * { box-sizing: border-box; }\n  html, body { margin: 0; background: var(--bg); color: var(--text);\n    font: 16px/1.45 -apple-system, BlinkMacSystemFont, \"Apple SD Gothic Neo\", \"Noto Sans KR\", sans-serif; }\n  header { position: sticky; top: 0; z-index: 5; background: var(--bg);\n    padding: calc(env(safe-area-inset-top) + 10px) 16px 8px; border-bottom: 1px solid var(--line); }\n  header h1 { font-size: 20px; margin: 0; display: flex; align-items: center; gap: 8px; }\n  header .user { font-size: 12px; color: var(--muted); }\n  main { padding: 12px 16px calc(env(safe-area-inset-bottom) + 90px); max-width: 720px; margin: 0 auto; }\n  nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 5; display: flex; background: var(--card);\n    border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }\n  nav button { flex: 1; border: 0; background: none; color: var(--muted); padding: 8px 2px 10px; font-size: 12px;\n    min-height: 56px; position: relative; }\n  nav button.on { color: var(--accent); font-weight: 600; }\n  nav .n { position: absolute; top: 4px; right: 18%; background: var(--bad); color: #fff; border-radius: 9px;\n    font-size: 11px; min-width: 18px; padding: 0 5px; }\n  nav .ico { display: block; font-size: 20px; line-height: 24px; }\n  .card { background: var(--card); border-radius: 14px; padding: 14px; margin: 0 0 12px; border: 1px solid var(--line); }\n  .card.tap { cursor: pointer; }\n  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }\n  .muted { color: var(--muted); font-size: 13px; }\n  .chip { display: inline-block; background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 12px; }\n  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }\n  h2 { font-size: 17px; margin: 18px 0 8px; }\n  h3 { font-size: 15px; margin: 14px 0 6px; }\n  .hook { font-weight: 600; font-size: 17px; margin: 6px 0; }\n  .pre { white-space: pre-wrap; word-break: break-word; }\n  .scene { border-top: 1px solid var(--line); padding: 10px 0 2px; }\n  .flow { font-size: 15px; background: var(--chip); border-radius: 8px; padding: 8px; white-space: pre-wrap; word-break: break-word; }\n  .flow.mono { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }\n  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }\n  .btns.one { grid-template-columns: 1fr; }\n  button.b { min-height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--card);\n    color: var(--text); font-size: 16px; font-weight: 600; padding: 8px 12px; }\n  button.b.primary { background: var(--accent); color: #fff; border-color: var(--accent); }\n  button.b.ok { background: var(--ok); color: #fff; border-color: var(--ok); }\n  button.b.bad { color: var(--bad); }\n  button.b:disabled { opacity: .5; }\n  button.link { border: 0; background: none; color: var(--accent); font-size: 15px; padding: 8px 0; min-height: 44px; }\n  textarea, input[type=text], input[type=url] { width: 100%; font: inherit; font-size: 16px; color: var(--text);\n    background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }\n  textarea { min-height: 88px; }\n  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }\n  .banner { border-radius: 12px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; white-space: pre-wrap; }\n  .banner.warn { background: rgba(227,160,8,.15); } .banner.bad { background: rgba(198,40,40,.13); }\n  .banner.ok { background: rgba(26,127,55,.13); }\n  .tp { display: grid; grid-template-columns: 28px 1fr; gap: 4px 8px; align-items: start; padding: 6px 0; }\n  .tp .dot { width: 24px; height: 24px; border-radius: 12px; display: grid; place-items: center; font-size: 13px;\n    background: var(--chip); }\n  .tp .dot.done { background: var(--ok); color: #fff; }\n  .video { position: relative; width: 100%; max-width: 360px; aspect-ratio: 9 / 16; margin: 8px auto;\n    background: #000; border-radius: 12px; overflow: hidden; }\n  .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }\n  .tabs2 { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }\n  .tabs2 button { flex: none; min-height: 36px; border-radius: 999px; border: 1px solid var(--line);\n    background: var(--card); color: var(--text); padding: 4px 12px; font-size: 14px; }\n  .tabs2 button.on { background: var(--accent); color: #fff; border-color: var(--accent); }\n  details summary { min-height: 44px; display: flex; align-items: center; color: var(--accent); cursor: pointer; }\n  .hist { font-size: 13px; border-top: 1px solid var(--line); padding: 6px 0; }\n  .empty { text-align: center; color: var(--muted); padding: 32px 0; }\n  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 72px); z-index: 9;\n    background: #333; color: #fff; border-radius: 12px; padding: 12px; font-size: 14px; display: none; white-space: pre-wrap; }\n  #busy { position: fixed; inset: 0; z-index: 8; background: rgba(0,0,0,.25); display: none; place-items: center; }\n  #busy div { background: var(--card); padding: 16px 20px; border-radius: 12px; }\n</style>\n</head>\n<body>\n<header>\n  <h1 id=\"title\">릴스 팩토리</h1>\n  <div class=\"user\" id=\"user\"></div>\n</header>\n<main id=\"main\"><div class=\"empty\">불러오는 중…</div></main>\n<nav id=\"nav\"></nav>\n<div id=\"toast\"></div>\n<div id=\"busy\"><div id=\"busyText\">처리 중…</div></div>\n\n<script>\n'use strict';\n// ---------------------------------------------------------------- helpers\n// All data is rendered with textContent / attributes, never parsed as HTML.\nfunction h(tag, attrs, children) {\n  const el = document.createElement(tag);\n  Object.keys(attrs || {}).forEach(function (k) {\n    const v = attrs[k];\n    if (v == null || v === false) return;\n    if (k === 'class') el.className = v;\n    else if (k === 'text') el.textContent = v;\n    else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v);\n    else el.setAttribute(k, v === true ? '' : v);\n  });\n  (children || []).forEach(function (c) {\n    if (c == null || c === false) return;\n    el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);\n  });\n  return el;\n}\nfunction clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }\nfunction fmt(v) {\n  if (!v) return '';\n  const d = new Date(v);\n  if (isNaN(d)) return String(v);\n  const p = function (n) { return (n < 10 ? '0' : '') + n; };\n  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());\n}\nfunction toast(msg, ms) {\n  const t = document.getElementById('toast');\n  t.textContent = msg; t.style.display = 'block';\n  clearTimeout(toast._t); toast._t = setTimeout(function () { t.style.display = 'none'; }, ms || 3500);\n}\nfunction busy(on, text) {\n  document.getElementById('busyText').textContent = text || '처리 중…';\n  document.getElementById('busy').style.display = on ? 'grid' : 'none';\n}\nfunction call(name) {\n  const args = Array.prototype.slice.call(arguments, 1);\n  return new Promise(function (resolve) {\n    const runner = google.script.run\n      .withSuccessHandler(function (res) { resolve(res || { ok: false, error: '빈 응답' }); })\n      .withFailureHandler(function (err) { resolve({ ok: false, error: (err && err.message) || String(err) }); });\n    runner[name].apply(runner, args);\n  });\n}\nfunction copyText(text) {\n  function fallback() {\n    const ta = h('textarea', { readonly: true, style: 'position:fixed;top:0;left:0;opacity:0' });\n    ta.value = text; document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);\n    let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }\n    document.body.removeChild(ta); return ok;\n  }\n  const done = function (ok) { toast(ok ? '복사했습니다' : '복사하지 못했습니다. 길게 눌러 직접 복사하세요.'); };\n  if (navigator.clipboard && navigator.clipboard.writeText) {\n    navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallback()); });\n  } else { done(fallback()); }\n}\nfunction copyBlock(label, text, mono) {\n  return h('div', {}, [\n    h('div', { class: 'row', style: 'justify-content:space-between' }, [\n      h('span', { class: 'muted', text: label }),\n      h('button', { class: 'link', type: 'button', onclick: function () { copyText(text); }, text: '복사' }),\n    ]),\n    h('div', { class: 'flow' + (mono ? ' mono' : ''), text: text }),\n  ]);\n}\n\n// ---------------------------------------------------------------- state\nconst TABS = [\n  { key: 'script', ico: '📝', label: '대본', statuses: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], badge: ['SCRIPT_REVIEW_PENDING'] },\n  { key: 'make', ico: '🎬', label: '제작', statuses: ['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'], badge: ['VIDEO_FAILED'] },\n  { key: 'video', ico: '▶️', label: '영상', statuses: ['VIDEO_REVIEW_PENDING'], badge: ['VIDEO_REVIEW_PENDING'] },\n  { key: 'publish', ico: '📤', label: '게시', statuses: ['VIDEO_APPROVED', 'READY_TO_PUBLISH'], badge: ['READY_TO_PUBLISH', 'VIDEO_APPROVED'] },\n  { key: 'products', ico: '🛍️', label: '상품' },\n  { key: 'done', ico: '✅', label: '기록', statuses: ['COMPLETED', 'SCRIPT_REJECTED', 'VIDEO_REJECTED', ''] },\n];\nconst S = { tab: 'script', dash: null, detail: null, mode: 'view' };\n\nfunction tabFor(status) {\n  for (let i = 0; i < TABS.length; i++) if (TABS[i].statuses && TABS[i].statuses.indexOf(status) !== -1) return TABS[i].key;\n  return 'done';\n}\nfunction statusChip(status, label) {\n  const cls = /REJECTED|FAILED/.test(status) ? 'bad' : /APPROVED|READY|COMPLETED/.test(status) ? 'ok' : 'warn';\n  return h('span', { class: 'chip ' + cls, text: label || status || '상태 없음' });\n}\n\n// ---------------------------------------------------------------- loading\nfunction loadDashboard() {\n  return call('apiGetDashboard').then(function (res) {\n    if (!res.ok) { renderFatal(res.error); return; }\n    S.dash = res;\n    document.getElementById('user').textContent = res.user + ' · Google Sheets 기준 · 코드 ' + (res.codeVersion || '이전 버전');\n    renderNav(); if (!S.detail) renderList();\n  });\n}\nfunction openReel(reelId) {\n  busy(true, '불러오는 중…');\n  return call('apiGetReel', reelId).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 6000); return; }\n    S.detail = res.detail; S.mode = 'view'; renderDetail(); window.scrollTo(0, 0);\n  });\n}\n// Reloads list data (badges, sibling chips) without leaving the open reel.\nfunction refreshAround() {\n  return loadDashboard().then(function () { if (S.detail && S.mode === 'view') renderDetail(); });\n}\nfunction backToList() { S.detail = null; S.mode = 'view'; loadDashboard().then(renderList); window.scrollTo(0, 0); }\n\nfunction renderFatal(msg) {\n  clear(document.getElementById('main')).appendChild(h('div', { class: 'banner bad', text: msg }));\n}\n\n// ---------------------------------------------------------------- nav + lists\nfunction renderNav() {\n  const nav = clear(document.getElementById('nav'));\n  const reels = (S.dash && S.dash.reels) || [];\n  TABS.forEach(function (t) {\n    const n = t.badge ? reels.filter(function (r) { return t.badge.indexOf(r.status) !== -1; }).length : 0;\n    nav.appendChild(h('button', {\n      type: 'button', class: S.tab === t.key && !S.detail ? 'on' : '',\n      onclick: function () { S.tab = t.key; S.detail = null; renderNav(); renderList(); window.scrollTo(0, 0); },\n    }, [h('span', { class: 'ico', text: t.ico }), t.label, n ? h('span', { class: 'n', text: String(n) }) : null]));\n  });\n}\n\nfunction warningsBanner(list) {\n  return (list || []).map(function (w) { return h('div', { class: 'banner warn', text: '⚠ ' + w }); });\n}\n\nfunction renderList() {\n  const main = clear(document.getElementById('main'));\n  const tab = TABS.filter(function (t) { return t.key === S.tab; })[0];\n  document.getElementById('title').textContent = '릴스 팩토리 · ' + tab.label;\n  warningsBanner(S.dash.warnings).forEach(function (b) { main.appendChild(b); });\n  if (tab.key === 'products') { renderBrand(main); renderProducts(main); return; }\n  const reels = S.dash.reels.filter(function (r) { return tabFor(r.status) === tab.key; });\n  const intro = {\n    script: '② 대본을 검토하세요. 승인된 대본 버전만 영상 제작에 쓰입니다.',\n    make: 'Google Flow 클립은 수동 생성입니다. 프롬프트를 복사해 Flow에서 만든 뒤, 완성 MP4를 Drive에 올려 등록하세요.',\n    video: '③ 완성 영상을 재생해 보고 승인/수정 요청/반려하세요.',\n    publish: '④ 게시 자료를 복사해 직접 인스타그램에 올리고 ManyChat을 설정한 뒤 확인을 누르세요. 자동 게시는 하지 않습니다.',\n    done: '완료·반려된 릴스와 상태 확인이 필요한 행입니다.',\n  }[tab.key];\n  main.appendChild(h('p', { class: 'muted', text: intro }));\n  if (!reels.length) { main.appendChild(h('div', { class: 'empty', text: '항목이 없습니다' })); return; }\n  reels.forEach(function (r) {\n    main.appendChild(h('div', { class: 'card tap', role: 'button', tabindex: '0', onclick: function () { openReel(r.reelId); } }, [\n      h('div', { class: 'row', style: 'justify-content:space-between' }, [\n        h('strong', { text: r.reelId }), statusChip(r.status, r.statusLabel),\n      ]),\n      h('div', { class: 'muted', text: r.productName + ' · 대본 v' + r.scriptVersion + (r.videoVersion ? ' · 영상 v' + r.videoVersion : '') }),\n      h('div', { class: 'hook', text: r.hook }),\n      h('div', { class: 'muted', text: r.concept }),\n      r.pillar ? h('span', { class: 'chip', text: r.pillar }) : null,\n      r.error ? h('div', { class: 'banner bad', style: 'margin:8px 0 0', text: r.error }) : null,\n    ]));\n  });\n}\n\n// Brand and content-pillar mix (editorial targets are a planning aid, not a rule per product).\nfunction renderBrand(main) {\n  const b = S.dash.brand;\n  if (!b) return;\n  const mix = S.dash.pillarMix || [];\n  main.appendChild(h('div', { class: 'card' }, [\n    h('strong', { text: b.name }),\n    h('div', { class: 'muted', text: '“' + b.tagline + '”' }),\n    b.focus ? h('div', { class: 'banner ok', style: 'margin:8px 0', text: b.focus }) : null,\n    h('h3', { text: '콘텐츠 기둥 (현재 / 목표)' }),\n    h('div', {}, mix.map(function (m) {\n      return h('div', { class: 'row', style: 'justify-content:space-between' }, [\n        h('span', { text: m.label }),\n        h('span', { class: 'muted', text: m.count + '개 · ' + m.share + '% / ' + m.target + '%' }),\n      ]);\n    })),\n  ]));\n}\n\nfunction renderProducts(main) {\n  main.appendChild(h('p', { class: 'muted', text: '① 상품 등록·제휴 링크·확인된 기능·영상 허가는 Google Sheets PRODUCTS에서 입력합니다. 여기서는 준비 상태를 확인하고 대본 생성을 요청할 수 있습니다.' }));\n  if (!S.dash.products.length) { main.appendChild(h('div', { class: 'empty', text: 'PRODUCTS에 상품이 없습니다' })); return; }\n  S.dash.products.forEach(function (p) {\n    const ready = p.factsCount > 0 && !p.duplicate;\n    main.appendChild(h('div', { class: 'card' }, [\n      h('div', { class: 'row', style: 'justify-content:space-between' }, [h('strong', { text: p.id }), h('span', { class: 'muted', text: '릴스 ' + p.reelCount + '개' })]),\n      h('div', { text: p.name }),\n      h('div', { class: 'row', style: 'margin-top:6px' }, [\n        h('span', { class: 'chip ' + (p.factsCount ? 'ok' : 'bad'), text: '확인된 기능 ' + p.factsCount }),\n        h('span', { class: 'chip ' + (p.affiliateUrlOk ? 'ok' : 'warn'), text: p.affiliateUrlOk ? '제휴 링크 ✓' : '제휴 링크 필요' }),\n        h('span', { class: 'chip ' + (p.permissionOk ? 'ok' : 'warn'), text: '영상 허가: ' + p.permission }),\n        p.duplicate ? h('span', { class: 'chip bad', text: '상품ID 중복' }) : null,\n      ]),\n      h('div', { class: 'btns one' }, [h('button', {\n        class: 'b', type: 'button', disabled: !ready,\n        onclick: function () { generate(p, false); },\n        text: p.reelCount ? '훅 5개 + 대본 추가 생성' : '훅 5개 + 대본 생성 (Gemini)',\n      })]),\n    ]));\n  });\n}\n\nfunction generate(p, allowAdditional) {\n  if (!allowAdditional && !confirm(p.id + ' 훅 5개와 대본 1개를 Gemini로 생성할까요? (API 호출 1~2회)')) return;\n  busy(true, 'Gemini로 대본 생성 중… (최대 1분)');\n  call('apiGenerateScripts', p.id, allowAdditional).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    if (res.needsConfirm) {\n      if (confirm('이미 릴스 ' + res.needsConfirm + '개가 있습니다. 새 훅 5개와 대본을 추가로 생성할까요?')) generate(p, true);\n      return;\n    }\n    toast('생성 완료: ' + res.ids.join(', '));\n    S.tab = 'script'; loadDashboard().then(function () { renderNav(); renderList(); });\n  });\n}\n\n// ---------------------------------------------------------------- detail\nfunction act(action, input, confirmText) {\n  const d = S.detail;\n  if (confirmText && !confirm(confirmText)) return;\n  const base = { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion, expectedVideoVersion: d.summary.videoVersion };\n  busy(true);\n  call('apiAction', d.summary.reelId, action, Object.assign(base, input || {})).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; S.mode = 'view'; renderDetail();\n    toast(res.notice || '저장했습니다 (REELS·AUDIT 기록)', res.notice ? 8000 : 2500);\n    refreshAround();\n  });\n}\nfunction askNote(promptText, required) {\n  const v = prompt(promptText, '');\n  if (v === null) return null;\n  if (required && !v.trim()) { toast('메모(사유)를 입력해야 합니다.'); return null; }\n  return v.trim();\n}\n\nfunction renderDetail() {\n  const d = S.detail;\n  const main = clear(document.getElementById('main'));\n  renderNav();\n  document.getElementById('title').textContent = d.summary.reelId;\n  main.appendChild(h('button', { class: 'link', type: 'button', onclick: backToList, text: '‹ 목록' }));\n  warningsBanner(d.warnings).forEach(function (b) { main.appendChild(b); });\n\n  // Sibling scripts generated for the same product.\n  const siblings = (S.dash ? S.dash.reels : []).filter(function (r) { return r.productId === d.product.id; });\n  if (siblings.length > 1) {\n    main.appendChild(h('div', { class: 'tabs2' }, siblings.map(function (r) {\n      return h('button', { type: 'button', class: r.reelId === d.summary.reelId ? 'on' : '', onclick: function () { openReel(r.reelId); }, text: r.reelId.replace(d.product.id + '-', '') + ' · ' + r.statusLabel });\n    })));\n  }\n\n  main.appendChild(h('div', { class: 'card' }, [\n    h('div', { class: 'row', style: 'justify-content:space-between' }, [h('strong', { text: d.product.name }), statusChip(d.summary.status, d.summary.statusLabel)]),\n    h('div', { class: 'muted', text: '대본 v' + d.summary.scriptVersion + (d.approvedVersion ? ' · 승인 v' + d.approvedVersion + (d.approvedIntact ? '' : ' (승인 후 변경됨!)') : '') + (d.summary.videoVersion ? ' · 영상 v' + d.summary.videoVersion : '') }),\n    d.summary.error ? h('div', { class: 'banner bad', style: 'margin:8px 0 0', text: d.summary.error }) : null,\n  ]));\n\n  if (S.mode === 'edit') { renderEditor(main); return; }\n\n  if (d.video && ['VIDEO_REVIEW_PENDING', 'VIDEO_APPROVED', 'READY_TO_PUBLISH', 'COMPLETED', 'VIDEO_CHANGES_REQUESTED', 'VIDEO_REJECTED'].indexOf(d.summary.status) !== -1) {\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '완성 영상 v' + d.summary.videoVersion }),\n      h('div', { class: 'video' }, [h('iframe', { src: d.video.previewUrl, allow: 'autoplay; fullscreen', title: '영상 미리보기' })]),\n      h('a', { href: d.video.url, target: '_blank', rel: 'noopener', text: 'Google Drive에서 열기 ↗' }),\n      h('div', { class: 'muted', text: '미리보기가 안 보이면 Drive에서 열어 재생하세요 (같은 Google 계정 로그인 필요).' }),\n    ]));\n  }\n\n  renderHooks(main);\n  renderProduction(main);\n  renderActions(main);\n\n  // Product facts (what the script may claim).\n  main.appendChild(h('div', { class: 'card' }, [\n    h('h3', { style: 'margin-top:0', text: '확인된 기능 (PRODUCTS)' }),\n    h('ul', { style: 'margin:0;padding-left:20px' }, d.product.facts.map(function (f) { return h('li', { text: f }); })),\n    h('div', { class: 'row', style: 'margin-top:8px' }, [\n      h('span', { class: 'chip ' + (d.product.permissionOk ? 'ok' : 'warn'), text: '영상 허가: ' + d.product.permission }),\n      h('span', { class: 'chip ' + (d.product.affiliateUrlOk ? 'ok' : 'warn'), text: d.product.affiliateUrlOk ? '제휴 링크 ✓' : '제휴 링크 필요' }),\n    ]),\n  ]));\n\n  // Full script.\n  const r = d.reel;\n  const scriptCard = h('div', { class: 'card' }, [\n    h('div', { class: 'row' }, [\n      h('span', { class: 'chip', text: '콘텐츠 기둥: ' + (d.pillar && d.pillar.label ? d.pillar.label : '미지정') }),\n      (d.verificationFlags || []).length ? h('span', { class: 'chip warn', text: '확인 필요 ' + d.verificationFlags.length }) : null,\n    ]),\n    h('div', { class: 'muted', text: r.concept }),\n    h('h3', { text: '후킹 (문제 제시 · 첫 0~3초)' }),\n    h('div', { class: 'hook', text: r.hook }),\n    h('h3', { text: '내레이션' }), h('div', { class: 'pre', text: r.narration }),\n    h('h3', { text: '자막' }), h('div', { class: 'pre', text: (r.captions || []).join('\\n') }),\n    h('h3', { text: '사용한 확인 기능' }), h('div', { class: 'pre muted', text: (r.facts_used || []).join('\\n') }),\n    h('h3', { text: 'CTA · ManyChat 키워드' }), h('div', { class: 'pre', text: d.cta + '\\n키워드: ' + d.keyword }),\n    h('h3', { text: '광고 표기' }), h('div', { class: 'pre', text: d.disclosure }),\n  ]);\n  if (d.scenesInvalid) scriptCard.appendChild(h('div', { class: 'banner bad', text: '장면(JSON) 셀이 손상되었습니다. 수정 요청 후 재생성하세요.' }));\n  (r.scenes || []).forEach(function (s) {\n    scriptCard.appendChild(h('div', { class: 'scene' }, [\n      h('strong', { text: '장면 ' + s.scene_no + (s.beat ? ' · ' + s.beat : '') + ' · ' + s.duration_sec + '초' }),\n      s.ai_visualization ? h('span', { class: 'chip warn', style: 'margin-left:6px', text: d.brand ? d.brand.aiLabel : 'AI 시뮬레이션' }) : null,\n      s.narration ? h('div', { class: 'hook', text: '“' + s.narration + '”' }) : null,\n      h('div', { class: 'muted', text: '화면 연출: ' + s.visual }),\n      s.emphasis ? h('div', { class: 'muted', text: '자막 강조: ' + s.emphasis }) : null,\n      s.sfx ? h('div', { class: 'muted', text: '효과음: ' + s.sfx }) : null,\n      s.on_screen_text ? h('div', { class: 'muted', text: '화면 문구: ' + s.on_screen_text }) : null,\n      d.approvedIntact\n        ? copyBlock('Google Flow 프롬프트 (수동 생성)', s.flow_prompt, true)\n        : h('div', {}, [h('div', { class: 'muted', text: 'Google Flow 프롬프트 — 대본 승인 후 복사·생성 (Flow 크레딧 보호)' }), h('div', { class: 'flow mono', text: s.flow_prompt })]),\n    ]));\n  });\n  main.appendChild(h('h2', { text: '대본' }));\n  main.appendChild(scriptCard);\n\n  // Touchpoints + history (audit).\n  main.appendChild(h('h2', { text: '운영자 확인 4단계' }));\n  main.appendChild(h('div', { class: 'card' }, d.touchpoints.map(function (t) {\n    return h('div', { class: 'tp' }, [\n      h('div', { class: 'dot' + (t.done ? ' done' : ''), text: t.done ? '✓' : String(t.n) }),\n      h('div', {}, [h('div', { text: t.label }), h('div', { class: 'muted', text: t.detail })]),\n    ]);\n  })));\n  main.appendChild(h('h2', { text: '기록 (AUDIT)' }));\n  main.appendChild(h('div', { class: 'card' }, d.history.length ? d.history.map(function (x) {\n    return h('div', { class: 'hist' }, [\n      h('div', {}, [h('strong', { text: x.label }), ' → ' + (x.to || ''), h('span', { class: 'muted', text: '  ' + fmt(x.at) })]),\n      h('div', { class: 'muted', text: [x.actor, x.scriptVersion ? '대본 v' + x.scriptVersion : '', x.videoVersion ? '영상 v' + x.videoVersion : ''].filter(Boolean).join(' · ') }),\n      x.note ? h('div', { class: 'pre', text: x.note }) : null,\n    ]);\n  }) : [h('div', { class: 'muted', text: '기록 없음' })]));\n}\n\nfunction renderActions(main) {\n  const d = S.detail;\n  const can = function (a) { return d.allowedActions.indexOf(a) !== -1; };\n  const card = h('div', { class: 'card' });\n  const st = d.summary.status;\n\n  if (st === 'SCRIPT_REVIEW_PENDING' || st === 'SCRIPT_CHANGES_REQUESTED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '② 대본 검토' }));\n    if (st === 'SCRIPT_CHANGES_REQUESTED') {\n      card.appendChild(h('div', { class: 'banner warn', text: '수정 요청: ' + (d.scriptReview.note || '') }));\n    }\n    // Verification flags: the reviewer confirms they are real (or labelled) before approving.\n    const flags = d.verificationFlags || [];\n    let flagBox = null;\n    if (flags.length) {\n      flagBox = h('input', { type: 'checkbox', id: 'flagsOk' });\n      card.appendChild(h('div', { class: 'banner warn' }, [\n        h('strong', { text: '확인 필요 ' + flags.length + '건 — 승인 전에 실제 경험·테스트·AI 표시인지 확인하세요' }),\n        h('ul', { style: 'margin:6px 0;padding-left:20px' }, flags.map(function (f) { return h('li', { text: f }); })),\n        h('label', { style: 'display:flex;gap:8px;align-items:center' }, [flagBox, h('span', { text: '모두 확인했습니다' })]),\n      ]));\n    }\n    // The operator confirms they reviewed the script with the chosen hook (required by the server too).\n    let reviewedBox = null;\n    if (can('APPROVE_SCRIPT') && d.hooks && d.hooks.selectionValid) {\n      reviewedBox = h('input', { type: 'checkbox', id: 'hookReviewed' });\n      card.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:center;margin:4px 0 10px' }, [reviewedBox, h('span', { text: '선택한 훅이 반영된 대본 v' + d.summary.scriptVersion + '을(를) 끝까지 확인했습니다' })]));\n    }\n    const b = h('div', { class: 'btns' });\n    if (can('APPROVE_SCRIPT')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '승인 (v' + d.summary.scriptVersion + ')',\n      onclick: function () {\n        if (d.hooks && d.hooks.required && !d.hooks.selectionValid) { alert('먼저 위 \"훅 고르기\"에서 훅을 하나 고르세요.'); return; }\n        if (!reviewedBox || !reviewedBox.checked) { alert('선택한 훅이 반영된 대본을 확인했다고 체크한 뒤 승인하세요.'); return; }\n        if (flagBox && !flagBox.checked) { alert('확인 필요 항목을 확인한 뒤 \"모두 확인했습니다\"에 체크하세요.'); return; }\n        act('APPROVE_SCRIPT', { note: '', flagsConfirmed: !!(flagBox && flagBox.checked), hookReviewed: true }, '대본 v' + d.summary.scriptVersion + '을(를) 승인합니다. 이 버전 그대로 영상 제작에 사용됩니다.');\n      } }));\n    if (can('EDIT_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '직접 수정', onclick: function () { S.mode = 'edit'; renderDetail(); } }));\n    if (can('REQUEST_SCRIPT_CHANGES')) b.appendChild(h('button', { class: 'b', type: 'button', text: '수정 요청',\n      onclick: function () { const n = askNote('무엇을 바꿀까요? (재생성 시 Gemini에 전달)', true); if (n !== null) act('REQUEST_SCRIPT_CHANGES', { note: n }); } }));\n    if (d.canRegenerate) b.appendChild(h('button', { class: 'b primary', type: 'button', text: 'Gemini 재생성', onclick: regenerate }));\n    if (can('REJECT_SCRIPT')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '반려',\n      onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_SCRIPT', { note: n }, '이 대본을 반려할까요? 되돌릴 수 없습니다.'); } }));\n    card.appendChild(b);\n  } else if (['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'].indexOf(st) !== -1) {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '영상 제작 (실제 제품 촬영·Flow → Mac 렌더)' }));\n    if (st === 'VIDEO_CHANGES_REQUESTED') card.appendChild(h('div', { class: 'banner warn', text: '영상 수정 요청: ' + (d.videoReview.note || '') }));\n    if (!d.product.permissionOk) card.appendChild(h('div', { class: 'banner warn', text: '영상 사용 허가가 확인되지 않아 제작을 시작할 수 없습니다. PRODUCTS의 \"영상 사용 허가 상태\"를 확인하세요.' }));\n    if (!d.approvedIntact && st !== 'VIDEO_IN_PRODUCTION') card.appendChild(h('div', { class: 'banner bad', text: '승인된 대본이 변경되었습니다. 승인 취소 후 다시 승인하세요.' }));\n    const b = h('div', { class: 'btns' });\n    if (can('START_VIDEO')) b.appendChild(h('button', { class: 'b primary', type: 'button', text: '영상 제작 시작', disabled: !d.product.permissionOk || !d.approvedIntact,\n      onclick: function () { act('START_VIDEO', {}); } }));\n    if (st === 'VIDEO_IN_PRODUCTION') b.appendChild(h('button', { class: 'b', type: 'button', text: '렌더 작업 파일 (Mac)', onclick: openRenderJob }));\n    if (can('REGISTER_VIDEO')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '완성 MP4 등록',\n      onclick: function () { const u = askNote('Google Drive MP4 공유 링크를 붙여넣으세요', true); if (u !== null) act('REGISTER_VIDEO', { videoUrl: u }); } }));\n    if (can('MARK_VIDEO_FAILED')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '제작 오류 기록',\n      onclick: function () { const n = askNote('오류 내용', true); if (n !== null) act('MARK_VIDEO_FAILED', { note: n }); } }));\n    if (can('REOPEN_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '대본 승인 취소',\n      onclick: function () { const n = askNote('승인 취소 사유 (선택)', false); if (n !== null) act('REOPEN_SCRIPT', { note: n }); } }));\n    card.appendChild(b);\n    // Detailed scene prompts are generated automatically on approval (free). One 8-second clip per scene.\n    const fp = d.flowScenePrompts || [];\n    card.appendChild(h('h3', { text: 'Google Flow 장면 프롬프트 (' + fp.length + '개 · 장면당 8초 클립 1개)' }));\n    if (!fp.length) {\n      card.appendChild(h('div', { class: 'banner warn', text: '대본 승인 후 자동으로 만들어집니다.' }));\n    } else {\n      card.appendChild(h('div', { class: 'muted', text: '각 프롬프트로 Flow에서 클립을 하나씩 만든 뒤, 위 \"제작 계획\" 카드의 Drive 폴더에 S1.mp4, S2.mp4 … 이름으로 올리세요 (Google Flow에는 공식 API가 없어 직접 만듭니다). \"Drive 동기화\"로 올린 클립을 확인하고, Mac 렌더러가 내려받아 편집합니다.' }));\n      fp.forEach(function (p) {\n        card.appendChild(h('details', { style: 'margin-top:8px' }, [\n          h('summary', { text: 'S' + p.scene + ' · ' + p.beat + ' → 파일 이름 S' + p.scene + '.mp4' }),\n          copyBlock('S' + p.scene + ' 프롬프트', p.prompt, true),\n        ]));\n      });\n    }\n  } else if (st === 'VIDEO_REVIEW_PENDING') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '③ 영상 검토 (v' + d.summary.videoVersion + ')' }));\n    card.appendChild(h('div', { class: 'btns' }, [\n      h('button', { class: 'b ok', type: 'button', text: '영상 승인',\n        onclick: function () { act('APPROVE_VIDEO', { note: '' }, '영상 v' + d.summary.videoVersion + '을(를) 승인할까요? 자동 게시는 되지 않습니다.'); } }),\n      h('button', { class: 'b', type: 'button', text: '수정 요청',\n        onclick: function () { const n = askNote('무엇을 고칠까요?', true); if (n !== null) act('REQUEST_VIDEO_CHANGES', { note: n }); } }),\n      h('button', { class: 'b bad', type: 'button', text: '반려',\n        onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_VIDEO', { note: n }, '이 릴스를 반려할까요?'); } }),\n    ]));\n  } else if (st === 'VIDEO_APPROVED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '게시 준비' }));\n    card.appendChild(h('div', { class: 'muted', text: '위 오류를 PRODUCTS에서 해결한 뒤 다시 시도하세요 (예: 쿠팡 파트너스 링크 입력).' }));\n    card.appendChild(h('div', { class: 'btns one' }, [h('button', { class: 'b primary', type: 'button', text: '게시 준비 다시 시도', onclick: function () { act('MARK_READY_TO_PUBLISH', {}); } })]));\n  } else if (st === 'READY_TO_PUBLISH' || st === 'COMPLETED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '④ 게시 · ManyChat (수동)' }));\n    card.appendChild(h('div', { class: 'btns one' }, [h('button', { class: 'b primary', type: 'button', text: '게시 자료 열기', onclick: openPack })]));\n    const b = h('div', { class: 'btns' });\n    if (can('CONFIRM_PUBLISHED')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '인스타그램 게시 완료',\n      onclick: function () { const u = askNote('게시물 URL (선택, https://www.instagram.com/…)', false); if (u !== null) act('CONFIRM_PUBLISHED', { instagramUrl: u }); } }));\n    if (can('CONFIRM_MANYCHAT')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: 'ManyChat 설정 완료',\n      onclick: function () { act('CONFIRM_MANYCHAT', {}, '키워드 \"' + d.keyword + '\" 자동화를 직접 켜고, 테스트 댓글로 올바른 링크가 오는 것을 확인했나요?'); } }));\n    card.appendChild(b);\n    if (st === 'COMPLETED') card.appendChild(h('div', { class: 'banner ok', text: '게시와 ManyChat 설정이 확인되었습니다.' }));\n  } else {\n    return;\n  }\n  main.appendChild(card);\n}\n\n// 🎬 Production plan: Gemini plans (Flow prompts, voice pace, subtitle emphasis, cuts, what to check), code and\n// the renderer execute. Only after the script is approved. Product visuals follow the verified product images.\nfunction renderProduction(main) {\n  const d = S.detail;\n  const pr = d.production;\n  if (!pr || !pr.visible) return;\n  const card = h('div', { class: 'card' });\n  card.appendChild(h('h3', { style: 'margin-top:0', text: '🎬 제작 계획 (Gemini가 계획 · 코드가 실행)' }));\n  card.appendChild(h('div', { class: 'muted', text: '승인된 대본은 바꾸지 않습니다. ' + pr.flowNote }));\n  card.appendChild(h('div', { class: 'row', style: 'margin:8px 0' }, [\n    h('span', { class: 'chip ' + (pr.referenceImages ? 'ok' : 'warn'), text: '검증된 제품 이미지 ' + pr.referenceImages + '장' }),\n  ]));\n  if (!pr.plan) {\n    if (pr.stale) card.appendChild(h('div', { class: 'banner warn', text: '이전 제작 계획은 지금 승인된 대본과 맞지 않아 쓰지 않습니다. 새로 만드세요.' }));\n    if (pr.blocker) card.appendChild(h('div', { class: 'banner warn', text: pr.blocker }));\n    else if (!pr.referenceImages) card.appendChild(h('div', { class: 'banner warn', text: 'PRODUCTS의 \"' + pr.referenceImagesField + '\" 열(오른쪽에 직접 추가)에 실제 제품을 보여 주는 이미지의 Google Drive 링크를 줄마다 하나씩 넣으세요. 제품 모양·색은 이 이미지 기준으로 계획합니다.' }));\n    card.appendChild(h('div', { class: 'btns one' }, [\n      h('button', { class: 'b primary', type: 'button', text: '제작 계획 만들기 (Gemini 1회)', disabled: !pr.canPlan || !pr.referenceImages, onclick: makePlan }),\n    ]));\n  } else {\n    const pl = pr.plan;\n    card.appendChild(h('div', { class: 'banner ok', text: '계획 완료 · 대본 v' + pl.scriptVersion + ' 기준 · 제품 이미지 ' + pl.references.length + '장 · Flow 프롬프트는 아래 \"Google Flow 장면 프롬프트\"에 반영되었습니다.' }));\n    card.appendChild(h('h3', { text: '제품 모습 (검증된 이미지 기준)' }));\n    card.appendChild(h('div', { class: 'pre', text: pl.productVisual.summary }));\n    card.appendChild(h('div', { class: 'muted', text: '반드시 같아야 함: ' + pl.productVisual.mustMatch.join(' · ') }));\n    if (pl.productVisual.mustNotShow.length) card.appendChild(h('div', { class: 'muted', text: '보이면 안 됨: ' + pl.productVisual.mustNotShow.join(' · ') }));\n    if (pl.risks.length) card.appendChild(h('div', { class: 'banner warn', text: '클립 확인할 때 주의:\\n- ' + pl.risks.join('\\n- ') }));\n    pl.scenes.forEach(function (sc, i) {\n      const nr = pl.narration[i] || {}; const sb = pl.subtitles[i] || {}; const ed = pl.edit[i] || { cuts: [] };\n      card.appendChild(h('details', { style: 'margin-top:8px' }, [\n        h('summary', { text: '장면 ' + sc.scene_no + ' · 음성 ' + nr.speaking_rate + '배속 · 쉼 ' + nr.pause_after_sec + '초 · 컷 ' + ed.cuts.length + '개' }),\n        h('div', { class: 'muted', text: '자막 강조: ' + ((sb.emphasis_words || []).join(', ') || '없음') + ' (템플릿에서 강조를 켠 경우에만 화면에 표시)' }),\n        h('div', { class: 'muted', text: '컷: ' + ed.cuts.map(function (c) { return c.framing; }).join(' → ') }),\n        h('div', { class: 'muted', text: '클립에서 확인: ' + sc.verify_in_clip.join(' / ') }),\n        h('div', { class: 'muted', text: '이어짐: ' + sc.continuity }),\n      ]));\n    });\n  }\n  // Google Drive folder + clip tracker (Flow clips are generated by hand and uploaded here).\n  if (pr.canPrepareAssets) {\n    card.appendChild(h('h3', { text: 'Google Drive 에셋' }));\n    const a = pr.assets;\n    if (!a) card.appendChild(h('div', { class: 'muted', text: '폴더를 만들면 장면마다 올려야 할 파일 이름(S1.mp4 …)이 목록으로 정리됩니다.' }));\n    else {\n      card.appendChild(h('div', { class: 'row' }, [\n        h('span', { class: 'chip ' + (a.uploaded === a.total ? 'ok' : 'warn'), text: '클립 ' + a.uploaded + '/' + a.total }),\n        h('a', { href: a.folderUrl, target: '_blank', rel: 'noopener', text: 'Drive 폴더 열기' }),\n      ]));\n      card.appendChild(h('div', { class: 'pre' , text: a.clips.map(function (c) { return (c.status === 'UPLOADED' ? '✓ ' : '○ ') + c.file + ' — 장면 ' + c.scene + ' ' + c.beat + (c.parts > 1 ? ' (' + c.part + '/' + c.parts + ')' : ''); }).join('\\n') }));\n      if ((a.extra || []).length) card.appendChild(h('div', { class: 'muted', text: '목록에 없는 파일(무시됨): ' + a.extra.join(', ') }));\n      card.appendChild(h('div', { class: 'muted', text: '마지막 동기화: ' + fmt(a.syncedAt) }));\n    }\n    card.appendChild(h('div', { class: 'btns one' }, [\n      h('button', { class: 'b', type: 'button', text: a ? 'Drive 동기화' : 'Drive 폴더 준비', onclick: syncAssets }),\n    ]));\n  }\n  main.appendChild(h('h2', { text: '제작' }));\n  main.appendChild(card);\n}\n\nfunction makePlan() {\n  const d = S.detail;\n  if (!confirm('승인된 대본으로 제작 계획을 Gemini에게 만들게 할까요? (API 호출 1~2회, 제품 이미지가 함께 전송됩니다. 영상·음성은 만들지 않습니다)')) return;\n  busy(true, 'Gemini가 제작 계획 만드는 중… (최대 1분)');\n  call('apiCreateProductionPlan', d.summary.reelId, { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 9000); return; }\n    S.detail = res.detail; renderDetail();\n    toast('제작 계획을 만들었습니다. Flow 프롬프트가 갱신되었습니다.');\n  });\n}\n\nfunction syncAssets() {\n  const d = S.detail;\n  busy(true, 'Drive 확인 중…');\n  call('apiPrepareAssets', d.summary.reelId, { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 9000); return; }\n    S.detail = res.detail; renderDetail();\n    const a = res.detail.production.assets;\n    toast('Drive 클립 ' + a.uploaded + '/' + a.total + ' 확인');\n  });\n}\n\n// ② Five hooks (H1–H5): Gemini recommends, the operator chooses (and may edit the wording).\n// Shown for every script under review — including scripts written before the five-hook workflow.\nfunction renderHooks(main) {\n  const d = S.detail;\n  const hk = d.hooks;\n  const st = d.summary.status;\n  const reviewing = st === 'SCRIPT_REVIEW_PENDING' || st === 'SCRIPT_CHANGES_REQUESTED';\n  if (!hk || (!reviewing && !(hk.candidates || []).length)) return;\n  const card = h('div', { class: 'card' });\n  card.appendChild(h('h3', { style: 'margin-top:0', text: '① 훅 고르기 (5개 중 1개 — 최종 선택은 직접)' }));\n  if (hk.columnsMissing) {\n    card.appendChild(h('div', { class: 'banner bad', text: 'REELS 시트에 \"훅 후보(JSON)\"·\"선택한 훅\" 열이 없습니다. Google Sheets에서 \"릴스 팩토리 → 시트 준비\"를 실행한 뒤 이 화면을 새로고침하세요. 기존 데이터는 바뀌지 않습니다. 훅을 고르기 전에는 승인할 수 없습니다.' }));\n    main.appendChild(card);\n    return;\n  }\n  if (!hk.candidates.length) {\n    card.appendChild(h('div', { class: 'banner warn', text: '이 대본에는 훅 후보가 없습니다 (훅 5개 기능 이전에 만든 대본). 훅 5개를 만들어 하나를 고른 뒤 승인할 수 있습니다. 대본 자체는 바뀌지 않습니다.' }));\n    if (hk.canGenerate) card.appendChild(h('div', { class: 'btns' }, [\n      h('button', { class: 'b primary', type: 'button', text: '훅 5개 만들기 (Gemini 1회)', onclick: makeHooks }),\n    ]));\n    main.appendChild(card);\n    return;\n  }\n  if (!hk.selectionValid) {\n    card.appendChild(h('div', { class: 'banner warn', text: '승인하려면 먼저 훅을 하나 고르세요. ★추천은 참고만 하세요.' }));\n  } else {\n    card.appendChild(h('div', { class: 'banner ok', text: '선택한 훅: ' + hk.selected.id + ' ' + (hk.selected.label || '') + (hk.selected.edited ? ' (수정)' : '') + ' · 대본 v' + hk.selected.scriptVersion + (hk.selected.by ? ' · ' + hk.selected.by : '') + '\\n아래 \"대본\"에서 바뀐 첫 장면과 전체 흐름을 확인한 뒤 승인하세요.' }));\n  }\n  const edit = h('textarea', { rows: '2' });\n  let chosen = null;\n  hk.candidates.forEach(function (c) {\n    const isRec = hk.recommended && hk.recommended.id === c.id;\n    const isSel = hk.selected && hk.selected.id === c.id && hk.selectionValid;\n    const radio = h('input', { type: 'radio', name: 'hookPick', value: c.id });\n    if (isSel || (!hk.selectionValid && isRec)) { radio.checked = true; chosen = c; edit.value = isSel ? hk.selected.text : c.text; }\n    radio.addEventListener('change', function () { chosen = c; edit.value = c.text; });\n    card.appendChild(h('label', { class: 'scene', style: 'display:flex;gap:10px;align-items:flex-start' }, [\n      radio,\n      h('div', {}, [\n        h('div', { class: 'row' }, [\n          h('strong', { text: c.id + ' · ' + c.label }),\n          isRec ? h('span', { class: 'chip ok', text: '★ 추천' }) : null,\n          isSel ? h('span', { class: 'chip', text: '선택됨' }) : null,\n        ]),\n        h('div', { class: 'hook', text: c.text }),\n        c.visual ? h('div', { class: 'muted', text: '첫 장면: ' + c.visual }) : null,\n        isRec && hk.recommended.reason ? h('div', { class: 'muted', text: '추천 이유: ' + hk.recommended.reason }) : null,\n      ]),\n    ]));\n  });\n  if (hk.canSelect) {\n    card.appendChild(h('label', { text: '훅 문장 (고칠 수 있음 · 확인된 기능 밖의 내용은 거부됩니다)' }));\n    card.appendChild(edit);\n    card.appendChild(h('div', { class: 'btns' }, [\n      h('button', { class: 'b ok', type: 'button', text: '이 훅으로 정하기 (무료)', onclick: function () { pickHook(chosen, edit.value, 'keep'); } }),\n      h('button', { class: 'b primary', type: 'button', text: '대본 다시 쓰기 (Gemini)', onclick: function () { pickHook(chosen, edit.value, 'regenerate'); } }),\n    ]));\n    card.appendChild(h('div', { class: 'muted', text: '\"정하기\"는 첫 장면(말·자막·화면 연출·Flow 프롬프트)을 이 훅의 것으로 바꿉니다 (무료). \"다시 쓰기\"는 이 훅에 맞게 대본 전체를 Gemini로 새로 씁니다 (호출 1~2회). 바뀐 대본은 새 버전이 되고, 확인 후 승인합니다.' }));\n  }\n  main.appendChild(h('h2', { text: '훅' }));\n  main.appendChild(card);\n}\n\nfunction makeHooks() {\n  const d = S.detail;\n  if (!confirm('이 대본에 쓸 훅 5개를 Gemini로 만들까요? (API 호출 1~2회, 대본은 바뀌지 않습니다)')) return;\n  busy(true, 'Gemini로 훅 5개 만드는 중… (최대 1분)');\n  call('apiGenerateHooks', d.summary.reelId, { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; renderDetail();\n    toast('훅 5개를 만들었습니다. 하나를 고르세요.');\n  });\n}\n\nfunction pickHook(chosen, text, mode) {\n  const d = S.detail;\n  if (!chosen) { toast('훅을 하나 고르세요.'); return; }\n  text = String(text || '').trim();\n  if (!text) { toast('훅 문장이 비어 있습니다.'); return; }\n  if (mode === 'regenerate' && !confirm('이 훅으로 대본 전체를 Gemini로 다시 쓸까요? (API 호출 1~2회, 새 대본 버전)')) return;\n  busy(true, mode === 'regenerate' ? 'Gemini로 대본 다시 쓰는 중… (최대 1분)' : '저장 중…');\n  call('apiSelectHook', d.summary.reelId, {\n    hookId: chosen.id, text: text, mode: mode,\n    expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion,\n  }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; renderDetail();\n    toast('훅 ' + chosen.id + ' 선택 · 대본 v' + res.detail.summary.scriptVersion + ' (REELS·AUDIT 기록)');\n    refreshAround();\n  });\n}\n\nfunction regenerate() {\n  const d = S.detail;\n  if (!confirm('수정 요청 메모를 반영해 이 대본 1개를 Gemini로 다시 작성할까요? (API 호출 1~2회)')) return;\n  busy(true, 'Gemini로 재생성 중… (최대 1분)');\n  call('apiRegenerateScript', d.summary.reelId, { expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; renderDetail(); toast('새 버전 v' + res.detail.summary.scriptVersion + '이(가) 검토 대기 중입니다.');\n    refreshAround();\n  });\n}\n\n// Signed render job for the Mac/cloud renderer. Issued only for approved reels in production.\nfunction openRenderJob() {\n  busy(true);\n  call('apiGetRenderJob', S.detail.summary.reelId).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    const main = clear(document.getElementById('main'));\n    main.appendChild(h('button', { class: 'link', type: 'button', onclick: renderDetail, text: '‹ ' + S.detail.summary.reelId }));\n    main.appendChild(h('div', { class: 'banner warn', text: '이 파일은 72시간 동안 유효합니다. Mac에서 renderer/jobs/' + res.fileName + ' 로 저장한 뒤:\\n\\nnpm run render -- --job renderer/jobs/' + res.fileName + ' --dry-run\\n(비용·계획 확인 후) --dry-run 없이 다시 실행' }));\n    const a = h('a', { href: 'data:application/json;charset=utf-8,' + encodeURIComponent(res.jobFile), download: res.fileName, text: '파일 다운로드 ↓' });\n    main.appendChild(h('div', { class: 'card' }, [a, copyBlock(res.fileName, res.jobFile, true)]));\n    window.scrollTo(0, 0);\n  });\n}\n\nfunction openPack() {\n  busy(true);\n  call('apiGetPublishingPack', S.detail.summary.reelId).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 6000); return; }\n    const p = res.pack;\n    const main = clear(document.getElementById('main'));\n    main.appendChild(h('button', { class: 'link', type: 'button', onclick: renderDetail, text: '‹ ' + p.reelId }));\n    main.appendChild(h('div', { class: 'banner warn', text: '자동 게시·자동 DM은 하지 않습니다. 아래 순서대로 직접 진행하세요.' }));\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '1. 영상' }),\n      h('a', { href: p.videoUrl, target: '_blank', rel: 'noopener', text: 'Drive에서 MP4 열기 ↗' }),\n      h('div', { class: 'muted', text: 'Drive 앱 → ⋯ → 사본 보내기 → 동영상 저장' }),\n    ]));\n    main.appendChild(h('div', { class: 'card' }, [h('h3', { style: 'margin-top:0', text: '2. 인스타그램 캡션' }), copyBlock('첫 줄 광고 표기 유지', p.instagramCaption)]));\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '3. ManyChat' }),\n      copyBlock('댓글 키워드', p.manychatKeyword, true),\n      copyBlock('DM 문구 (쿠팡 파트너스 링크 포함)', p.manychatDm),\n      copyBlock('쿠팡 파트너스 링크', p.affiliateUrl, true),\n    ]));\n    main.appendChild(h('div', { class: 'card' }, [h('h3', { style: 'margin-top:0', text: '체크리스트' }),\n      h('ol', { style: 'margin:0;padding-left:20px' }, p.checklist.map(function (c) { return h('li', { text: c }); }))]));\n    window.scrollTo(0, 0);\n  });\n}\n\n// ---------------------------------------------------------------- editor\nfunction renderEditor(main) {\n  const d = S.detail;\n  const r = d.reel;\n  // Storyboard scripts: each scene's line is the narration and the subtitle.\n  const storyboard = (r.scenes || []).some(function (s) { return s.beat || s.narration; });\n  const f = {};\n  function field(key, label, value, multiline) {\n    f[key] = multiline ? h('textarea', {}) : h('input', { type: 'text' });\n    f[key].value = value || '';\n    return h('div', {}, [h('label', { text: label }), f[key]]);\n  }\n  const card = h('div', { class: 'card' }, [\n    h('div', { class: 'banner warn', text: '수정하면 새 버전(v' + (d.summary.scriptVersion + 1) + ')이 되고 다시 승인해야 합니다. 숫자·기능은 PRODUCTS의 확인된 기능에 있는 것만 쓸 수 있습니다.' }),\n    d.pillars ? h('div', {}, [h('label', { text: '콘텐츠 기둥' }), (f.pillar = h('select', {}, [h('option', { value: '', text: '(그대로)' })].concat(d.pillars.map(function (p) {\n      const o = h('option', { value: p.id, text: p.label });\n      if (d.pillar && d.pillar.id === p.id) o.selected = true;\n      return o;\n    }))))]) : null,\n    field('concept', '컨셉', r.concept),\n    field('hook', '후킹 (40자 이내)', r.hook),\n    storyboard ? null : field('narration', '내레이션 (300자 이내)', r.narration, true),\n    storyboard ? null : field('captions', '자막 (한 줄에 하나, 각 40자 이내)', (r.captions || []).join('\\n'), true),\n  ]);\n  (r.scenes || []).forEach(function (s, i) {\n    card.appendChild(h('h3', { text: '장면 ' + s.scene_no + (s.beat ? ' · ' + s.beat : '') + ' · ' + s.duration_sec + '초' }));\n    if (storyboard) card.appendChild(field('s' + i + 'line', '내레이션 = 자막 (30자 이내, CTA에는 {키워드})', s.narration));\n    card.appendChild(field('s' + i + 'visual', '장면 설명', s.visual, true));\n    if (!storyboard) card.appendChild(field('s' + i + 'text', '화면 문구', s.on_screen_text));\n    card.appendChild(field('s' + i + 'flow', 'Flow 프롬프트 (영어)', s.flow_prompt, true));\n    f['s' + i + 'ai'] = h('input', { type: 'checkbox' });\n    f['s' + i + 'ai'].checked = !!s.ai_visualization;\n    card.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:center' }, [f['s' + i + 'ai'], h('span', { text: 'AI 시뮬레이션 장면 (영상에 표시)' })]));\n  });\n  card.appendChild(field('note', '수정 메모 (선택)', '', true));\n  card.appendChild(h('div', { class: 'btns' }, [\n    h('button', { class: 'b', type: 'button', text: '취소', onclick: function () { S.mode = 'view'; renderDetail(); } }),\n    h('button', { class: 'b primary', type: 'button', text: '저장 (v' + (d.summary.scriptVersion + 1) + ')', onclick: function () {\n      const edit = {\n        concept: f.concept.value, hook: f.hook.value,\n        pillar: f.pillar && f.pillar.value ? f.pillar.value : undefined,\n        narration: storyboard ? undefined : f.narration.value,\n        captions: storyboard ? undefined : f.captions.value.split('\\n').map(function (x) { return x.trim(); }).filter(Boolean),\n        scenes: (r.scenes || []).map(function (s, i) {\n          const out = { visual: f['s' + i + 'visual'].value, flow_prompt: f['s' + i + 'flow'].value, ai_visualization: f['s' + i + 'ai'].checked };\n          if (storyboard) out.narration = f['s' + i + 'line'].value; else out.on_screen_text = f['s' + i + 'text'].value;\n          return out;\n        }),\n      };\n      act('EDIT_SCRIPT', { edit: edit, note: f.note.value });\n    } }),\n  ]));\n  main.appendChild(card);\n}\n\nloadDashboard();\n</script>\n</body>\n</html>\n";
+const RF_DASHBOARD_HTML = "<!doctype html>\n<html lang=\"ko\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n<base target=\"_top\">\n<title>릴스 팩토리</title>\n<style>\n  :root {\n    --bg: #f2f2f7; --card: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --line: #d1d1d6;\n    --accent: #0a66d6; --ok: #1a7f37; --warn: #a15c00; --bad: #c62828; --chip: #e9e9ef;\n  }\n  @media (prefers-color-scheme: dark) {\n    :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --muted: #a1a1a6; --line: #38383a;\n      --accent: #4c9aff; --ok: #3fb950; --warn: #e3a008; --bad: #ff6b6b; --chip: #2c2c2e; }\n  }\n  * { box-sizing: border-box; }\n  html, body { margin: 0; background: var(--bg); color: var(--text);\n    font: 16px/1.45 -apple-system, BlinkMacSystemFont, \"Apple SD Gothic Neo\", \"Noto Sans KR\", sans-serif; }\n  header { position: sticky; top: 0; z-index: 5; background: var(--bg);\n    padding: calc(env(safe-area-inset-top) + 10px) 16px 8px; border-bottom: 1px solid var(--line); }\n  header h1 { font-size: 20px; margin: 0; display: flex; align-items: center; gap: 8px; }\n  header .user { font-size: 12px; color: var(--muted); }\n  main { padding: 12px 16px calc(env(safe-area-inset-bottom) + 90px); max-width: 720px; margin: 0 auto; }\n  nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 5; display: flex; background: var(--card);\n    border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }\n  nav button { flex: 1; border: 0; background: none; color: var(--muted); padding: 8px 2px 10px; font-size: 12px;\n    min-height: 56px; position: relative; }\n  nav button.on { color: var(--accent); font-weight: 600; }\n  nav .n { position: absolute; top: 4px; right: 18%; background: var(--bad); color: #fff; border-radius: 9px;\n    font-size: 11px; min-width: 18px; padding: 0 5px; }\n  nav .ico { display: block; font-size: 20px; line-height: 24px; }\n  .card { background: var(--card); border-radius: 14px; padding: 14px; margin: 0 0 12px; border: 1px solid var(--line); }\n  .card.tap { cursor: pointer; }\n  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }\n  .muted { color: var(--muted); font-size: 13px; }\n  .chip { display: inline-block; background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 12px; }\n  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }\n  h2 { font-size: 17px; margin: 18px 0 8px; }\n  h3 { font-size: 15px; margin: 14px 0 6px; }\n  .hook { font-weight: 600; font-size: 17px; margin: 6px 0; }\n  .pre { white-space: pre-wrap; word-break: break-word; }\n  .scene { border-top: 1px solid var(--line); padding: 10px 0 2px; }\n  .flow { font-size: 15px; background: var(--chip); border-radius: 8px; padding: 8px; white-space: pre-wrap; word-break: break-word; }\n  .flow.mono { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }\n  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }\n  .btns.one { grid-template-columns: 1fr; }\n  button.b { min-height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--card);\n    color: var(--text); font-size: 16px; font-weight: 600; padding: 8px 12px; }\n  button.b.primary { background: var(--accent); color: #fff; border-color: var(--accent); }\n  button.b.ok { background: var(--ok); color: #fff; border-color: var(--ok); }\n  button.b.bad { color: var(--bad); }\n  button.b:disabled { opacity: .5; }\n  button.link { border: 0; background: none; color: var(--accent); font-size: 15px; padding: 8px 0; min-height: 44px; }\n  textarea, input[type=text], input[type=url] { width: 100%; font: inherit; font-size: 16px; color: var(--text);\n    background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }\n  textarea { min-height: 88px; }\n  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }\n  .banner { border-radius: 12px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; white-space: pre-wrap; }\n  .banner.warn { background: rgba(227,160,8,.15); } .banner.bad { background: rgba(198,40,40,.13); }\n  .hookwarn { background: rgba(227,160,8,.12); border-radius: 10px; padding: 6px 10px; margin: 6px 0; font-size: 13px; }\n  .banner.ok { background: rgba(26,127,55,.13); }\n  .tp { display: grid; grid-template-columns: 28px 1fr; gap: 4px 8px; align-items: start; padding: 6px 0; }\n  .tp .dot { width: 24px; height: 24px; border-radius: 12px; display: grid; place-items: center; font-size: 13px;\n    background: var(--chip); }\n  .tp .dot.done { background: var(--ok); color: #fff; }\n  .video { position: relative; width: 100%; max-width: 360px; aspect-ratio: 9 / 16; margin: 8px auto;\n    background: #000; border-radius: 12px; overflow: hidden; }\n  .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }\n  .tabs2 { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }\n  .tabs2 button { flex: none; min-height: 36px; border-radius: 999px; border: 1px solid var(--line);\n    background: var(--card); color: var(--text); padding: 4px 12px; font-size: 14px; }\n  .tabs2 button.on { background: var(--accent); color: #fff; border-color: var(--accent); }\n  details summary { min-height: 44px; display: flex; align-items: center; color: var(--accent); cursor: pointer; }\n  .hist { font-size: 13px; border-top: 1px solid var(--line); padding: 6px 0; }\n  .empty { text-align: center; color: var(--muted); padding: 32px 0; }\n  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 72px); z-index: 9;\n    background: #333; color: #fff; border-radius: 12px; padding: 12px; font-size: 14px; display: none; white-space: pre-wrap; }\n  #busy { position: fixed; inset: 0; z-index: 8; background: rgba(0,0,0,.25); display: none; place-items: center; }\n  #busy div { background: var(--card); padding: 16px 20px; border-radius: 12px; }\n</style>\n</head>\n<body>\n<header>\n  <h1 id=\"title\">릴스 팩토리</h1>\n  <div class=\"user\" id=\"user\"></div>\n</header>\n<main id=\"main\"><div class=\"empty\">불러오는 중…</div></main>\n<nav id=\"nav\"></nav>\n<div id=\"toast\"></div>\n<div id=\"busy\"><div id=\"busyText\">처리 중…</div></div>\n\n<script>\n'use strict';\n// ---------------------------------------------------------------- helpers\n// All data is rendered with textContent / attributes, never parsed as HTML.\nfunction h(tag, attrs, children) {\n  const el = document.createElement(tag);\n  Object.keys(attrs || {}).forEach(function (k) {\n    const v = attrs[k];\n    if (v == null || v === false) return;\n    if (k === 'class') el.className = v;\n    else if (k === 'text') el.textContent = v;\n    else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v);\n    else el.setAttribute(k, v === true ? '' : v);\n  });\n  (children || []).forEach(function (c) {\n    if (c == null || c === false) return;\n    el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);\n  });\n  return el;\n}\nfunction clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }\nfunction fmt(v) {\n  if (!v) return '';\n  const d = new Date(v);\n  if (isNaN(d)) return String(v);\n  const p = function (n) { return (n < 10 ? '0' : '') + n; };\n  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());\n}\nfunction toast(msg, ms) {\n  const t = document.getElementById('toast');\n  t.textContent = msg; t.style.display = 'block';\n  clearTimeout(toast._t); toast._t = setTimeout(function () { t.style.display = 'none'; }, ms || 3500);\n}\nfunction busy(on, text) {\n  document.getElementById('busyText').textContent = text || '처리 중…';\n  document.getElementById('busy').style.display = on ? 'grid' : 'none';\n}\nfunction call(name) {\n  const args = Array.prototype.slice.call(arguments, 1);\n  return new Promise(function (resolve) {\n    const runner = google.script.run\n      .withSuccessHandler(function (res) { resolve(res || { ok: false, error: '빈 응답' }); })\n      .withFailureHandler(function (err) { resolve({ ok: false, error: (err && err.message) || String(err) }); });\n    runner[name].apply(runner, args);\n  });\n}\nfunction copyText(text) {\n  function fallback() {\n    const ta = h('textarea', { readonly: true, style: 'position:fixed;top:0;left:0;opacity:0' });\n    ta.value = text; document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);\n    let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }\n    document.body.removeChild(ta); return ok;\n  }\n  const done = function (ok) { toast(ok ? '복사했습니다' : '복사하지 못했습니다. 길게 눌러 직접 복사하세요.'); };\n  if (navigator.clipboard && navigator.clipboard.writeText) {\n    navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallback()); });\n  } else { done(fallback()); }\n}\nfunction copyBlock(label, text, mono) {\n  return h('div', {}, [\n    h('div', { class: 'row', style: 'justify-content:space-between' }, [\n      h('span', { class: 'muted', text: label }),\n      h('button', { class: 'link', type: 'button', onclick: function () { copyText(text); }, text: '복사' }),\n    ]),\n    h('div', { class: 'flow' + (mono ? ' mono' : ''), text: text }),\n  ]);\n}\n\n// ---------------------------------------------------------------- state\nconst TABS = [\n  { key: 'script', ico: '📝', label: '대본', statuses: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], badge: ['SCRIPT_REVIEW_PENDING'] },\n  { key: 'make', ico: '🎬', label: '제작', statuses: ['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'], badge: ['VIDEO_FAILED'] },\n  { key: 'video', ico: '▶️', label: '영상', statuses: ['VIDEO_REVIEW_PENDING'], badge: ['VIDEO_REVIEW_PENDING'] },\n  { key: 'publish', ico: '📤', label: '게시', statuses: ['VIDEO_APPROVED', 'READY_TO_PUBLISH'], badge: ['READY_TO_PUBLISH', 'VIDEO_APPROVED'] },\n  { key: 'products', ico: '🛍️', label: '상품' },\n  { key: 'done', ico: '✅', label: '기록', statuses: ['COMPLETED', 'SCRIPT_REJECTED', 'VIDEO_REJECTED', ''] },\n];\nconst S = { tab: 'script', dash: null, detail: null, mode: 'view' };\n\nfunction tabFor(status) {\n  for (let i = 0; i < TABS.length; i++) if (TABS[i].statuses && TABS[i].statuses.indexOf(status) !== -1) return TABS[i].key;\n  return 'done';\n}\nfunction statusChip(status, label) {\n  const cls = /REJECTED|FAILED/.test(status) ? 'bad' : /APPROVED|READY|COMPLETED/.test(status) ? 'ok' : 'warn';\n  return h('span', { class: 'chip ' + cls, text: label || status || '상태 없음' });\n}\n\n// ---------------------------------------------------------------- loading\nfunction loadDashboard() {\n  return call('apiGetDashboard').then(function (res) {\n    if (!res.ok) { renderFatal(res.error); return; }\n    S.dash = res;\n    document.getElementById('user').textContent = res.user + ' · Google Sheets 기준 · 코드 ' + (res.codeVersion || '이전 버전');\n    renderNav(); if (!S.detail) renderList();\n  });\n}\nfunction openReel(reelId) {\n  busy(true, '불러오는 중…');\n  return call('apiGetReel', reelId).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 6000); return; }\n    S.detail = res.detail; S.mode = 'view'; renderDetail(); window.scrollTo(0, 0);\n  });\n}\n// Reloads list data (badges, sibling chips) without leaving the open reel.\nfunction refreshAround() {\n  return loadDashboard().then(function () { if (S.detail && S.mode === 'view') renderDetail(); });\n}\nfunction backToList() { S.detail = null; S.mode = 'view'; loadDashboard().then(renderList); window.scrollTo(0, 0); }\n\nfunction renderFatal(msg) {\n  clear(document.getElementById('main')).appendChild(h('div', { class: 'banner bad', text: msg }));\n}\n\n// ---------------------------------------------------------------- nav + lists\nfunction renderNav() {\n  const nav = clear(document.getElementById('nav'));\n  const reels = (S.dash && S.dash.reels) || [];\n  TABS.forEach(function (t) {\n    const n = t.badge ? reels.filter(function (r) { return t.badge.indexOf(r.status) !== -1; }).length : 0;\n    nav.appendChild(h('button', {\n      type: 'button', class: S.tab === t.key && !S.detail ? 'on' : '',\n      onclick: function () { S.tab = t.key; S.detail = null; renderNav(); renderList(); window.scrollTo(0, 0); },\n    }, [h('span', { class: 'ico', text: t.ico }), t.label, n ? h('span', { class: 'n', text: String(n) }) : null]));\n  });\n}\n\nfunction warningsBanner(list) {\n  return (list || []).map(function (w) { return h('div', { class: 'banner warn', text: '⚠ ' + w }); });\n}\n\nfunction renderList() {\n  const main = clear(document.getElementById('main'));\n  const tab = TABS.filter(function (t) { return t.key === S.tab; })[0];\n  document.getElementById('title').textContent = '릴스 팩토리 · ' + tab.label;\n  warningsBanner(S.dash.warnings).forEach(function (b) { main.appendChild(b); });\n  if (tab.key === 'products') { renderBrand(main); renderProducts(main); return; }\n  const reels = S.dash.reels.filter(function (r) { return tabFor(r.status) === tab.key; });\n  const intro = {\n    script: '② 대본을 검토하세요. 승인된 대본 버전만 영상 제작에 쓰입니다.',\n    make: 'Google Flow 클립은 수동 생성입니다. 프롬프트를 복사해 Flow에서 만든 뒤, 완성 MP4를 Drive에 올려 등록하세요.',\n    video: '③ 완성 영상을 재생해 보고 승인/수정 요청/반려하세요.',\n    publish: '④ 게시 자료를 복사해 직접 인스타그램에 올리고 ManyChat을 설정한 뒤 확인을 누르세요. 자동 게시는 하지 않습니다.',\n    done: '완료·반려된 릴스와 상태 확인이 필요한 행입니다.',\n  }[tab.key];\n  main.appendChild(h('p', { class: 'muted', text: intro }));\n  if (!reels.length) { main.appendChild(h('div', { class: 'empty', text: '항목이 없습니다' })); return; }\n  reels.forEach(function (r) {\n    main.appendChild(h('div', { class: 'card tap', role: 'button', tabindex: '0', onclick: function () { openReel(r.reelId); } }, [\n      h('div', { class: 'row', style: 'justify-content:space-between' }, [\n        h('strong', { text: r.reelId }), statusChip(r.status, r.statusLabel),\n      ]),\n      h('div', { class: 'muted', text: r.productName + ' · 대본 v' + r.scriptVersion + (r.videoVersion ? ' · 영상 v' + r.videoVersion : '') }),\n      h('div', { class: 'hook', text: r.hook }),\n      h('div', { class: 'muted', text: r.concept }),\n      r.pillar ? h('span', { class: 'chip', text: r.pillar }) : null,\n      r.error ? h('div', { class: 'banner bad', style: 'margin:8px 0 0', text: r.error }) : null,\n    ]));\n  });\n}\n\n// Brand and content-pillar mix (editorial targets are a planning aid, not a rule per product).\nfunction renderBrand(main) {\n  const b = S.dash.brand;\n  if (!b) return;\n  const mix = S.dash.pillarMix || [];\n  main.appendChild(h('div', { class: 'card' }, [\n    h('strong', { text: b.name }),\n    h('div', { class: 'muted', text: '“' + b.tagline + '”' }),\n    b.focus ? h('div', { class: 'banner ok', style: 'margin:8px 0', text: b.focus }) : null,\n    h('h3', { text: '콘텐츠 기둥 (현재 / 목표)' }),\n    h('div', {}, mix.map(function (m) {\n      return h('div', { class: 'row', style: 'justify-content:space-between' }, [\n        h('span', { text: m.label }),\n        h('span', { class: 'muted', text: m.count + '개 · ' + m.share + '% / ' + m.target + '%' }),\n      ]);\n    })),\n  ]));\n}\n\nfunction renderProducts(main) {\n  main.appendChild(h('p', { class: 'muted', text: '① 상품 등록·제휴 링크·확인된 기능·영상 허가는 Google Sheets PRODUCTS에서 입력합니다. 여기서는 준비 상태를 확인하고 대본 생성을 요청할 수 있습니다.' }));\n  if (!S.dash.products.length) { main.appendChild(h('div', { class: 'empty', text: 'PRODUCTS에 상품이 없습니다' })); return; }\n  S.dash.products.forEach(function (p) {\n    const ready = p.factsCount > 0 && !p.duplicate;\n    main.appendChild(h('div', { class: 'card' }, [\n      h('div', { class: 'row', style: 'justify-content:space-between' }, [h('strong', { text: p.id }), h('span', { class: 'muted', text: '릴스 ' + p.reelCount + '개' })]),\n      h('div', { text: p.name }),\n      h('div', { class: 'row', style: 'margin-top:6px' }, [\n        h('span', { class: 'chip ' + (p.factsCount ? 'ok' : 'bad'), text: '확인된 기능 ' + p.factsCount }),\n        h('span', { class: 'chip ' + (p.affiliateUrlOk ? 'ok' : 'warn'), text: p.affiliateUrlOk ? '제휴 링크 ✓' : '제휴 링크 필요' }),\n        h('span', { class: 'chip ' + (p.permissionOk ? 'ok' : 'warn'), text: '영상 허가: ' + p.permission }),\n        p.duplicate ? h('span', { class: 'chip bad', text: '상품ID 중복' }) : null,\n      ]),\n      h('div', { class: 'btns one' }, [h('button', {\n        class: 'b', type: 'button', disabled: !ready,\n        onclick: function () { generate(p, false); },\n        text: p.reelCount ? '훅 5개 + 대본 추가 생성' : '훅 5개 + 대본 생성 (Gemini)',\n      })]),\n    ]));\n  });\n}\n\nfunction generate(p, allowAdditional) {\n  if (!allowAdditional && !confirm(p.id + ' 훅 5개와 대본 1개를 Gemini로 생성할까요? (API 호출 1~2회)')) return;\n  busy(true, 'Gemini로 대본 생성 중… (최대 1분)');\n  call('apiGenerateScripts', p.id, allowAdditional).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    if (res.needsConfirm) {\n      if (confirm('이미 릴스 ' + res.needsConfirm + '개가 있습니다. 새 훅 5개와 대본을 추가로 생성할까요?')) generate(p, true);\n      return;\n    }\n    toast('생성 완료: ' + res.ids.join(', '));\n    S.tab = 'script'; loadDashboard().then(function () { renderNav(); renderList(); });\n  });\n}\n\n// ---------------------------------------------------------------- detail\nfunction act(action, input, confirmText) {\n  const d = S.detail;\n  if (confirmText && !confirm(confirmText)) return;\n  const base = { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion, expectedVideoVersion: d.summary.videoVersion };\n  busy(true);\n  call('apiAction', d.summary.reelId, action, Object.assign(base, input || {})).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; S.mode = 'view'; renderDetail();\n    toast(res.notice || '저장했습니다 (REELS·AUDIT 기록)', res.notice ? 8000 : 2500);\n    refreshAround();\n  });\n}\nfunction askNote(promptText, required) {\n  const v = prompt(promptText, '');\n  if (v === null) return null;\n  if (required && !v.trim()) { toast('메모(사유)를 입력해야 합니다.'); return null; }\n  return v.trim();\n}\n\nfunction renderDetail() {\n  const d = S.detail;\n  const main = clear(document.getElementById('main'));\n  renderNav();\n  document.getElementById('title').textContent = d.summary.reelId;\n  main.appendChild(h('button', { class: 'link', type: 'button', onclick: backToList, text: '‹ 목록' }));\n  warningsBanner(d.warnings).forEach(function (b) { main.appendChild(b); });\n\n  // Sibling scripts generated for the same product.\n  const siblings = (S.dash ? S.dash.reels : []).filter(function (r) { return r.productId === d.product.id; });\n  if (siblings.length > 1) {\n    main.appendChild(h('div', { class: 'tabs2' }, siblings.map(function (r) {\n      return h('button', { type: 'button', class: r.reelId === d.summary.reelId ? 'on' : '', onclick: function () { openReel(r.reelId); }, text: r.reelId.replace(d.product.id + '-', '') + ' · ' + r.statusLabel });\n    })));\n  }\n\n  main.appendChild(h('div', { class: 'card' }, [\n    h('div', { class: 'row', style: 'justify-content:space-between' }, [h('strong', { text: d.product.name }), statusChip(d.summary.status, d.summary.statusLabel)]),\n    h('div', { class: 'muted', text: '대본 v' + d.summary.scriptVersion + (d.approvedVersion ? ' · 승인 v' + d.approvedVersion + (d.approvedIntact ? '' : ' (승인 후 변경됨!)') : '') + (d.summary.videoVersion ? ' · 영상 v' + d.summary.videoVersion : '') }),\n    d.summary.error ? h('div', { class: 'banner bad', style: 'margin:8px 0 0', text: d.summary.error }) : null,\n  ]));\n\n  if (S.mode === 'edit') { renderEditor(main); return; }\n\n  if (d.video && ['VIDEO_REVIEW_PENDING', 'VIDEO_APPROVED', 'READY_TO_PUBLISH', 'COMPLETED', 'VIDEO_CHANGES_REQUESTED', 'VIDEO_REJECTED'].indexOf(d.summary.status) !== -1) {\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '완성 영상 v' + d.summary.videoVersion }),\n      h('div', { class: 'video' }, [h('iframe', { src: d.video.previewUrl, allow: 'autoplay; fullscreen', title: '영상 미리보기' })]),\n      h('a', { href: d.video.url, target: '_blank', rel: 'noopener', text: 'Google Drive에서 열기 ↗' }),\n      h('div', { class: 'muted', text: '미리보기가 안 보이면 Drive에서 열어 재생하세요 (같은 Google 계정 로그인 필요).' }),\n    ]));\n  }\n\n  renderHooks(main);\n  renderProduction(main);\n  renderActions(main);\n\n  // Product facts (what the script may claim).\n  main.appendChild(h('div', { class: 'card' }, [\n    h('h3', { style: 'margin-top:0', text: '확인된 기능 (PRODUCTS)' }),\n    h('ul', { style: 'margin:0;padding-left:20px' }, d.product.facts.map(function (f) { return h('li', { text: f }); })),\n    h('div', { class: 'row', style: 'margin-top:8px' }, [\n      h('span', { class: 'chip ' + (d.product.permissionOk ? 'ok' : 'warn'), text: '영상 허가: ' + d.product.permission }),\n      h('span', { class: 'chip ' + (d.product.affiliateUrlOk ? 'ok' : 'warn'), text: d.product.affiliateUrlOk ? '제휴 링크 ✓' : '제휴 링크 필요' }),\n    ]),\n  ]));\n\n  // Full script.\n  const r = d.reel;\n  const scriptCard = h('div', { class: 'card' }, [\n    h('div', { class: 'row' }, [\n      h('span', { class: 'chip', text: '콘텐츠 기둥: ' + (d.pillar && d.pillar.label ? d.pillar.label : '미지정') }),\n      (d.verificationFlags || []).length ? h('span', { class: 'chip warn', text: '확인 필요 ' + d.verificationFlags.length }) : null,\n    ]),\n    h('div', { class: 'muted', text: r.concept }),\n    h('h3', { text: '후킹 (문제 제시 · 첫 0~3초)' }),\n    h('div', { class: 'hook', text: r.hook }),\n    h('h3', { text: '내레이션' }), h('div', { class: 'pre', text: r.narration }),\n    h('h3', { text: '자막' }), h('div', { class: 'pre', text: (r.captions || []).join('\\n') }),\n    h('h3', { text: '사용한 확인 기능' }), h('div', { class: 'pre muted', text: (r.facts_used || []).join('\\n') }),\n    h('h3', { text: 'CTA · ManyChat 키워드' }), h('div', { class: 'pre', text: d.cta + '\\n키워드: ' + d.keyword }),\n    h('h3', { text: '광고 표기' }), h('div', { class: 'pre', text: d.disclosure }),\n  ]);\n  if (d.scenesInvalid) scriptCard.appendChild(h('div', { class: 'banner bad', text: '장면(JSON) 셀이 손상되었습니다. 수정 요청 후 재생성하세요.' }));\n  (r.scenes || []).forEach(function (s) {\n    scriptCard.appendChild(h('div', { class: 'scene' }, [\n      h('strong', { text: '장면 ' + s.scene_no + (s.beat ? ' · ' + s.beat : '') + ' · ' + s.duration_sec + '초' }),\n      s.ai_visualization ? h('span', { class: 'chip warn', style: 'margin-left:6px', text: d.brand ? d.brand.aiLabel : 'AI 시뮬레이션' }) : null,\n      s.narration ? h('div', { class: 'hook', text: '“' + s.narration + '”' }) : null,\n      h('div', { class: 'muted', text: '화면 연출: ' + s.visual }),\n      s.emphasis ? h('div', { class: 'muted', text: '자막 강조: ' + s.emphasis }) : null,\n      s.sfx ? h('div', { class: 'muted', text: '효과음: ' + s.sfx }) : null,\n      s.on_screen_text ? h('div', { class: 'muted', text: '화면 문구: ' + s.on_screen_text }) : null,\n      d.approvedIntact\n        ? copyBlock('Google Flow 프롬프트 (수동 생성)', s.flow_prompt, true)\n        : h('div', {}, [h('div', { class: 'muted', text: 'Google Flow 프롬프트 — 대본 승인 후 복사·생성 (Flow 크레딧 보호)' }), h('div', { class: 'flow mono', text: s.flow_prompt })]),\n    ]));\n  });\n  main.appendChild(h('h2', { text: '대본' }));\n  main.appendChild(scriptCard);\n\n  // Touchpoints + history (audit).\n  main.appendChild(h('h2', { text: '운영자 확인 4단계' }));\n  main.appendChild(h('div', { class: 'card' }, d.touchpoints.map(function (t) {\n    return h('div', { class: 'tp' }, [\n      h('div', { class: 'dot' + (t.done ? ' done' : ''), text: t.done ? '✓' : String(t.n) }),\n      h('div', {}, [h('div', { text: t.label }), h('div', { class: 'muted', text: t.detail })]),\n    ]);\n  })));\n  main.appendChild(h('h2', { text: '기록 (AUDIT)' }));\n  main.appendChild(h('div', { class: 'card' }, d.history.length ? d.history.map(function (x) {\n    return h('div', { class: 'hist' }, [\n      h('div', {}, [h('strong', { text: x.label }), ' → ' + (x.to || ''), h('span', { class: 'muted', text: '  ' + fmt(x.at) })]),\n      h('div', { class: 'muted', text: [x.actor, x.scriptVersion ? '대본 v' + x.scriptVersion : '', x.videoVersion ? '영상 v' + x.videoVersion : ''].filter(Boolean).join(' · ') }),\n      x.note ? h('div', { class: 'pre', text: x.note }) : null,\n    ]);\n  }) : [h('div', { class: 'muted', text: '기록 없음' })]));\n}\n\nfunction renderActions(main) {\n  const d = S.detail;\n  const can = function (a) { return d.allowedActions.indexOf(a) !== -1; };\n  const card = h('div', { class: 'card' });\n  const st = d.summary.status;\n\n  if (st === 'SCRIPT_REVIEW_PENDING' || st === 'SCRIPT_CHANGES_REQUESTED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '② 대본 검토' }));\n    if (st === 'SCRIPT_CHANGES_REQUESTED') {\n      card.appendChild(h('div', { class: 'banner warn', text: '수정 요청: ' + (d.scriptReview.note || '') }));\n    }\n    // Verification flags: the reviewer confirms they are real (or labelled) before approving.\n    const flags = d.verificationFlags || [];\n    let flagBox = null;\n    if (flags.length) {\n      flagBox = h('input', { type: 'checkbox', id: 'flagsOk' });\n      card.appendChild(h('div', { class: 'banner warn' }, [\n        h('strong', { text: '확인 필요 ' + flags.length + '건 — 승인 전에 실제 경험·테스트·AI 표시인지 확인하세요' }),\n        h('ul', { style: 'margin:6px 0;padding-left:20px' }, flags.map(function (f) { return h('li', { text: f }); })),\n        h('label', { style: 'display:flex;gap:8px;align-items:center' }, [flagBox, h('span', { text: '모두 확인했습니다' })]),\n      ]));\n    }\n    // The operator confirms they reviewed the script with the chosen hook (required by the server too).\n    let reviewedBox = null;\n    if (can('APPROVE_SCRIPT') && d.hooks && d.hooks.selectionValid) {\n      reviewedBox = h('input', { type: 'checkbox', id: 'hookReviewed' });\n      card.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:center;margin:4px 0 10px' }, [reviewedBox, h('span', { text: '선택한 훅이 반영된 대본 v' + d.summary.scriptVersion + '을(를) 끝까지 확인했습니다' })]));\n    }\n    const b = h('div', { class: 'btns' });\n    if (can('APPROVE_SCRIPT')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '승인 (v' + d.summary.scriptVersion + ')',\n      onclick: function () {\n        if (d.hooks && d.hooks.required && !d.hooks.selectionValid) { alert('먼저 위 \"훅 고르기\"에서 훅을 하나 고르세요.'); return; }\n        if (!reviewedBox || !reviewedBox.checked) { alert('선택한 훅이 반영된 대본을 확인했다고 체크한 뒤 승인하세요.'); return; }\n        if (flagBox && !flagBox.checked) { alert('확인 필요 항목을 확인한 뒤 \"모두 확인했습니다\"에 체크하세요.'); return; }\n        act('APPROVE_SCRIPT', { note: '', flagsConfirmed: !!(flagBox && flagBox.checked), hookReviewed: true }, '대본 v' + d.summary.scriptVersion + '을(를) 승인합니다. 이 버전 그대로 영상 제작에 사용됩니다.');\n      } }));\n    if (can('EDIT_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '직접 수정', onclick: function () { S.mode = 'edit'; renderDetail(); } }));\n    if (can('REQUEST_SCRIPT_CHANGES')) b.appendChild(h('button', { class: 'b', type: 'button', text: '수정 요청',\n      onclick: function () { const n = askNote('무엇을 바꿀까요? (재생성 시 Gemini에 전달)', true); if (n !== null) act('REQUEST_SCRIPT_CHANGES', { note: n }); } }));\n    if (d.canRegenerate) b.appendChild(h('button', { class: 'b primary', type: 'button', text: 'Gemini 재생성', onclick: regenerate }));\n    if (can('REJECT_SCRIPT')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '반려',\n      onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_SCRIPT', { note: n }, '이 대본을 반려할까요? 되돌릴 수 없습니다.'); } }));\n    card.appendChild(b);\n  } else if (['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'].indexOf(st) !== -1) {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '영상 제작 (실제 제품 촬영·Flow → Mac 렌더)' }));\n    if (st === 'VIDEO_CHANGES_REQUESTED') card.appendChild(h('div', { class: 'banner warn', text: '영상 수정 요청: ' + (d.videoReview.note || '') }));\n    if (!d.product.permissionOk) card.appendChild(h('div', { class: 'banner warn', text: '영상 사용 허가가 확인되지 않아 제작을 시작할 수 없습니다. PRODUCTS의 \"영상 사용 허가 상태\"를 확인하세요.' }));\n    if (!d.approvedIntact && st !== 'VIDEO_IN_PRODUCTION') card.appendChild(h('div', { class: 'banner bad', text: '승인된 대본이 변경되었습니다. 승인 취소 후 다시 승인하세요.' }));\n    const b = h('div', { class: 'btns' });\n    if (can('START_VIDEO')) b.appendChild(h('button', { class: 'b primary', type: 'button', text: '영상 제작 시작', disabled: !d.product.permissionOk || !d.approvedIntact,\n      onclick: function () { act('START_VIDEO', {}); } }));\n    if (st === 'VIDEO_IN_PRODUCTION') b.appendChild(h('button', { class: 'b', type: 'button', text: '렌더 작업 파일 (Mac)', onclick: openRenderJob }));\n    if (can('REGISTER_VIDEO')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '완성 MP4 등록',\n      onclick: function () { const u = askNote('Google Drive MP4 공유 링크를 붙여넣으세요', true); if (u !== null) act('REGISTER_VIDEO', { videoUrl: u }); } }));\n    if (can('MARK_VIDEO_FAILED')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '제작 오류 기록',\n      onclick: function () { const n = askNote('오류 내용', true); if (n !== null) act('MARK_VIDEO_FAILED', { note: n }); } }));\n    if (can('REOPEN_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '대본 승인 취소',\n      onclick: function () { const n = askNote('승인 취소 사유 (선택)', false); if (n !== null) act('REOPEN_SCRIPT', { note: n }); } }));\n    card.appendChild(b);\n    // Detailed scene prompts are generated automatically on approval (free). One 8-second clip per scene.\n    const fp = d.flowScenePrompts || [];\n    card.appendChild(h('h3', { text: 'Google Flow 장면 프롬프트 (' + fp.length + '개 · 장면당 8초 클립 1개)' }));\n    if (!fp.length) {\n      card.appendChild(h('div', { class: 'banner warn', text: '대본 승인 후 자동으로 만들어집니다.' }));\n    } else {\n      card.appendChild(h('div', { class: 'muted', text: '각 프롬프트로 Flow에서 클립을 하나씩 만든 뒤, 위 \"제작 계획\" 카드의 Drive 폴더에 S1.mp4, S2.mp4 … 이름으로 올리세요 (Google Flow에는 공식 API가 없어 직접 만듭니다). \"Drive 동기화\"로 올린 클립을 확인하고, Mac 렌더러가 내려받아 편집합니다.' }));\n      fp.forEach(function (p) {\n        card.appendChild(h('details', { style: 'margin-top:8px' }, [\n          h('summary', { text: 'S' + p.scene + ' · ' + p.beat + ' → 파일 이름 S' + p.scene + '.mp4' }),\n          copyBlock('S' + p.scene + ' 프롬프트', p.prompt, true),\n        ]));\n      });\n    }\n  } else if (st === 'VIDEO_REVIEW_PENDING') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '③ 영상 검토 (v' + d.summary.videoVersion + ')' }));\n    card.appendChild(h('div', { class: 'btns' }, [\n      h('button', { class: 'b ok', type: 'button', text: '영상 승인',\n        onclick: function () { act('APPROVE_VIDEO', { note: '' }, '영상 v' + d.summary.videoVersion + '을(를) 승인할까요? 자동 게시는 되지 않습니다.'); } }),\n      h('button', { class: 'b', type: 'button', text: '수정 요청',\n        onclick: function () { const n = askNote('무엇을 고칠까요?', true); if (n !== null) act('REQUEST_VIDEO_CHANGES', { note: n }); } }),\n      h('button', { class: 'b bad', type: 'button', text: '반려',\n        onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_VIDEO', { note: n }, '이 릴스를 반려할까요?'); } }),\n    ]));\n  } else if (st === 'VIDEO_APPROVED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '게시 준비' }));\n    card.appendChild(h('div', { class: 'muted', text: '위 오류를 PRODUCTS에서 해결한 뒤 다시 시도하세요 (예: 쿠팡 파트너스 링크 입력).' }));\n    card.appendChild(h('div', { class: 'btns one' }, [h('button', { class: 'b primary', type: 'button', text: '게시 준비 다시 시도', onclick: function () { act('MARK_READY_TO_PUBLISH', {}); } })]));\n  } else if (st === 'READY_TO_PUBLISH' || st === 'COMPLETED') {\n    card.appendChild(h('h3', { style: 'margin-top:0', text: '④ 게시 · ManyChat (수동)' }));\n    card.appendChild(h('div', { class: 'btns one' }, [h('button', { class: 'b primary', type: 'button', text: '게시 자료 열기', onclick: openPack })]));\n    const b = h('div', { class: 'btns' });\n    if (can('CONFIRM_PUBLISHED')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '인스타그램 게시 완료',\n      onclick: function () { const u = askNote('게시물 URL (선택, https://www.instagram.com/…)', false); if (u !== null) act('CONFIRM_PUBLISHED', { instagramUrl: u }); } }));\n    if (can('CONFIRM_MANYCHAT')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: 'ManyChat 설정 완료',\n      onclick: function () { act('CONFIRM_MANYCHAT', {}, '키워드 \"' + d.keyword + '\" 자동화를 직접 켜고, 테스트 댓글로 올바른 링크가 오는 것을 확인했나요?'); } }));\n    card.appendChild(b);\n    if (st === 'COMPLETED') card.appendChild(h('div', { class: 'banner ok', text: '게시와 ManyChat 설정이 확인되었습니다.' }));\n  } else {\n    return;\n  }\n  main.appendChild(card);\n}\n\n// 🎬 Production plan: Gemini plans (Flow prompts, voice pace, subtitle emphasis, cuts, what to check), code and\n// the renderer execute. Only after the script is approved. Product visuals follow the verified product images.\nfunction renderProduction(main) {\n  const d = S.detail;\n  const pr = d.production;\n  if (!pr || !pr.visible) return;\n  const card = h('div', { class: 'card' });\n  card.appendChild(h('h3', { style: 'margin-top:0', text: '🎬 제작 계획 (Gemini가 계획 · 코드가 실행)' }));\n  card.appendChild(h('div', { class: 'muted', text: '승인된 대본은 바꾸지 않습니다. ' + pr.flowNote }));\n  card.appendChild(h('div', { class: 'row', style: 'margin:8px 0' }, [\n    h('span', { class: 'chip ' + (pr.referenceImages ? 'ok' : 'warn'), text: '검증된 제품 이미지 ' + pr.referenceImages + '장' }),\n  ]));\n  if (!pr.plan) {\n    if (pr.stale) card.appendChild(h('div', { class: 'banner warn', text: '이전 제작 계획은 지금 승인된 대본과 맞지 않아 쓰지 않습니다. 새로 만드세요.' }));\n    if (pr.blocker) card.appendChild(h('div', { class: 'banner warn', text: pr.blocker }));\n    else if (!pr.referenceImages) card.appendChild(h('div', { class: 'banner warn', text: 'PRODUCTS의 \"' + pr.referenceImagesField + '\" 열(오른쪽에 직접 추가)에 실제 제품을 보여 주는 이미지의 Google Drive 링크를 줄마다 하나씩 넣으세요. 제품 모양·색은 이 이미지 기준으로 계획합니다.' }));\n    card.appendChild(h('div', { class: 'btns one' }, [\n      h('button', { class: 'b primary', type: 'button', text: '제작 계획 만들기 (Gemini 1회)', disabled: !pr.canPlan || !pr.referenceImages, onclick: makePlan }),\n    ]));\n  } else {\n    const pl = pr.plan;\n    card.appendChild(h('div', { class: 'banner ok', text: '계획 완료 · 대본 v' + pl.scriptVersion + ' 기준 · 제품 이미지 ' + pl.references.length + '장 · Flow 프롬프트는 아래 \"Google Flow 장면 프롬프트\"에 반영되었습니다.' }));\n    card.appendChild(h('h3', { text: '제품 모습 (검증된 이미지 기준)' }));\n    card.appendChild(h('div', { class: 'pre', text: pl.productVisual.summary }));\n    card.appendChild(h('div', { class: 'muted', text: '반드시 같아야 함: ' + pl.productVisual.mustMatch.join(' · ') }));\n    if (pl.productVisual.mustNotShow.length) card.appendChild(h('div', { class: 'muted', text: '보이면 안 됨: ' + pl.productVisual.mustNotShow.join(' · ') }));\n    if (pl.risks.length) card.appendChild(h('div', { class: 'banner warn', text: '클립 확인할 때 주의:\\n- ' + pl.risks.join('\\n- ') }));\n    pl.scenes.forEach(function (sc, i) {\n      const nr = pl.narration[i] || {}; const sb = pl.subtitles[i] || {}; const ed = pl.edit[i] || { cuts: [] };\n      card.appendChild(h('details', { style: 'margin-top:8px' }, [\n        h('summary', { text: '장면 ' + sc.scene_no + ' · 음성 ' + nr.speaking_rate + '배속 · 쉼 ' + nr.pause_after_sec + '초 · 컷 ' + ed.cuts.length + '개' }),\n        h('div', { class: 'muted', text: '자막 강조: ' + ((sb.emphasis_words || []).join(', ') || '없음') + ' (템플릿에서 강조를 켠 경우에만 화면에 표시)' }),\n        h('div', { class: 'muted', text: '컷: ' + ed.cuts.map(function (c) { return c.framing; }).join(' → ') }),\n        h('div', { class: 'muted', text: '클립에서 확인: ' + sc.verify_in_clip.join(' / ') }),\n        h('div', { class: 'muted', text: '이어짐: ' + sc.continuity }),\n      ]));\n    });\n  }\n  // Google Drive folder + clip tracker (Flow clips are generated by hand and uploaded here).\n  if (pr.canPrepareAssets) {\n    card.appendChild(h('h3', { text: 'Google Drive 에셋' }));\n    const a = pr.assets;\n    if (!a) card.appendChild(h('div', { class: 'muted', text: '폴더를 만들면 장면마다 올려야 할 파일 이름(S1.mp4 …)이 목록으로 정리됩니다.' }));\n    else {\n      card.appendChild(h('div', { class: 'row' }, [\n        h('span', { class: 'chip ' + (a.uploaded === a.total ? 'ok' : 'warn'), text: '클립 ' + a.uploaded + '/' + a.total }),\n        h('a', { href: a.folderUrl, target: '_blank', rel: 'noopener', text: 'Drive 폴더 열기' }),\n      ]));\n      card.appendChild(h('div', { class: 'pre' , text: a.clips.map(function (c) { return (c.status === 'UPLOADED' ? '✓ ' : '○ ') + c.file + ' — 장면 ' + c.scene + ' ' + c.beat + (c.parts > 1 ? ' (' + c.part + '/' + c.parts + ')' : ''); }).join('\\n') }));\n      if ((a.extra || []).length) card.appendChild(h('div', { class: 'muted', text: '목록에 없는 파일(무시됨): ' + a.extra.join(', ') }));\n      card.appendChild(h('div', { class: 'muted', text: '마지막 동기화: ' + fmt(a.syncedAt) }));\n    }\n    card.appendChild(h('div', { class: 'btns one' }, [\n      h('button', { class: 'b', type: 'button', text: a ? 'Drive 동기화' : 'Drive 폴더 준비', onclick: syncAssets }),\n    ]));\n  }\n  main.appendChild(h('h2', { text: '제작' }));\n  main.appendChild(card);\n}\n\nfunction makePlan() {\n  const d = S.detail;\n  if (!confirm('승인된 대본으로 제작 계획을 Gemini에게 만들게 할까요? (API 호출 1~2회, 제품 이미지가 함께 전송됩니다. 영상·음성은 만들지 않습니다)')) return;\n  busy(true, 'Gemini가 제작 계획 만드는 중… (최대 1분)');\n  call('apiCreateProductionPlan', d.summary.reelId, { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 9000); return; }\n    S.detail = res.detail; renderDetail();\n    toast('제작 계획을 만들었습니다. Flow 프롬프트가 갱신되었습니다.');\n  });\n}\n\nfunction syncAssets() {\n  const d = S.detail;\n  busy(true, 'Drive 확인 중…');\n  call('apiPrepareAssets', d.summary.reelId, { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 9000); return; }\n    S.detail = res.detail; renderDetail();\n    const a = res.detail.production.assets;\n    toast('Drive 클립 ' + a.uploaded + '/' + a.total + ' 확인');\n  });\n}\n\n// ② Five hooks (H1–H5): Gemini recommends, the operator chooses (and may edit the wording).\n// Shown for every script under review — including scripts written before the five-hook workflow.\nfunction renderHooks(main) {\n  const d = S.detail;\n  const hk = d.hooks;\n  const st = d.summary.status;\n  const reviewing = st === 'SCRIPT_REVIEW_PENDING' || st === 'SCRIPT_CHANGES_REQUESTED';\n  if (!hk || (!reviewing && !(hk.candidates || []).length)) return;\n  const card = h('div', { class: 'card' });\n  card.appendChild(h('h3', { style: 'margin-top:0', text: '① 훅 고르기 (5개 중 1개 — 최종 선택은 직접)' }));\n  if (hk.columnsMissing) {\n    card.appendChild(h('div', { class: 'banner bad', text: 'REELS 시트에 \"훅 후보(JSON)\"·\"선택한 훅\" 열이 없습니다. Google Sheets에서 \"릴스 팩토리 → 시트 준비\"를 실행한 뒤 이 화면을 새로고침하세요. 기존 데이터는 바뀌지 않습니다. 훅을 고르기 전에는 승인할 수 없습니다.' }));\n    main.appendChild(card);\n    return;\n  }\n  if (!hk.candidates.length) {\n    card.appendChild(h('div', { class: 'banner warn', text: '이 대본에는 훅 후보가 없습니다 (훅 5개 기능 이전에 만든 대본). 훅 5개를 만들어 하나를 고른 뒤 승인할 수 있습니다. 대본 자체는 바뀌지 않습니다.' }));\n    if (hk.canGenerate) card.appendChild(h('div', { class: 'btns' }, [\n      h('button', { class: 'b primary', type: 'button', text: '훅 5개 만들기 (Gemini 1회)', onclick: makeHooks }),\n    ]));\n    main.appendChild(card);\n    return;\n  }\n  if (!hk.selectionValid) {\n    card.appendChild(h('div', { class: 'banner warn', text: '승인하려면 먼저 훅을 하나 고르세요. ★추천은 참고만 하세요.' }));\n  } else {\n    card.appendChild(h('div', { class: 'banner ok', text: '선택한 훅: ' + hk.selected.id + ' ' + (hk.selected.label || '') + (hk.selected.edited ? ' (수정)' : '') + ' · 대본 v' + hk.selected.scriptVersion + (hk.selected.by ? ' · ' + hk.selected.by : '') + '\\n아래 \"대본\"에서 바뀐 첫 장면과 전체 흐름을 확인한 뒤 승인하세요.' }));\n    if ((hk.selectedWarnings || []).length) {\n      card.appendChild(h('div', { class: 'banner warn', text: '⚠ 고친 훅 문장 참고 (승인은 막지 않음): ' + hk.selectedWarnings.join(' / ') }));\n    }\n  }\n  const edit = h('textarea', { rows: '2' });\n  let chosen = null;\n  hk.candidates.forEach(function (c) {\n    const isRec = hk.recommended && hk.recommended.id === c.id;\n    const isSel = hk.selected && hk.selected.id === c.id && hk.selectionValid;\n    const radio = h('input', { type: 'radio', name: 'hookPick', value: c.id });\n    if (isSel || (!hk.selectionValid && isRec)) { radio.checked = true; chosen = c; edit.value = isSel ? hk.selected.text : c.text; }\n    radio.addEventListener('change', function () { chosen = c; edit.value = c.text; });\n    card.appendChild(h('label', { class: 'scene', style: 'display:flex;gap:10px;align-items:flex-start' }, [\n      radio,\n      h('div', {}, [\n        h('div', { class: 'row' }, [\n          h('strong', { text: c.id + ' · ' + c.label }),\n          isRec ? h('span', { class: 'chip ok', text: '★ 추천' }) : null,\n          isSel ? h('span', { class: 'chip', text: '선택됨' }) : null,\n        ]),\n        h('div', { class: 'hook', text: c.text }),\n        // Style warnings: safe to use; the operator may still pick, edit, or have Gemini improve this one hook.\n        ((hk.warnings || {})[c.id] || []).length ? h('div', { class: 'hookwarn' }, [\n          h('div', { text: '⚠ 스타일 참고 (사용 가능 · 승인은 막지 않음)' }),\n          h('ul', { style: 'margin:4px 0;padding-left:20px' }, hk.warnings[c.id].map(function (w) { return h('li', { text: w }); })),\n          hk.canRevise ? h('button', { class: 'b', type: 'button', text: '이 훅만 다듬기 (Gemini 1회)', onclick: function (ev) { ev.preventDefault(); ev.stopPropagation(); reviseHook(c); } }) : null,\n        ]) : null,\n        c.visual ? h('div', { class: 'muted', text: '첫 장면: ' + c.visual }) : null,\n        isRec && hk.recommended.reason ? h('div', { class: 'muted', text: '추천 이유: ' + hk.recommended.reason }) : null,\n      ]),\n    ]));\n  });\n  if (hk.canSelect) {\n    card.appendChild(h('label', { text: '훅 문장 (고칠 수 있음 · 확인된 기능 밖의 내용은 거부됩니다)' }));\n    card.appendChild(edit);\n    card.appendChild(h('div', { class: 'btns' }, [\n      h('button', { class: 'b ok', type: 'button', text: '이 훅으로 정하기 (무료)', onclick: function () { pickHook(chosen, edit.value, 'keep'); } }),\n      h('button', { class: 'b primary', type: 'button', text: '대본 다시 쓰기 (Gemini)', onclick: function () { pickHook(chosen, edit.value, 'regenerate'); } }),\n    ]));\n    card.appendChild(h('div', { class: 'muted', text: '\"정하기\"는 첫 장면(말·자막·화면 연출·Flow 프롬프트)을 이 훅의 것으로 바꿉니다 (무료). \"다시 쓰기\"는 이 훅에 맞게 대본 전체를 Gemini로 새로 씁니다 (호출 1~2회). 바뀐 대본은 새 버전이 되고, 확인 후 승인합니다.' }));\n  }\n  main.appendChild(h('h2', { text: '훅' }));\n  main.appendChild(card);\n}\n\nfunction makeHooks() {\n  const d = S.detail;\n  if (!confirm('이 대본에 쓸 훅 5개를 Gemini로 만들까요? (API 호출 1~3회, 대본은 바뀌지 않습니다)')) return;\n  busy(true, 'Gemini로 훅 5개 만드는 중… (최대 1분)');\n  call('apiGenerateHooks', d.summary.reelId, { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; renderDetail();\n    toast('훅 5개를 만들었습니다. 하나를 고르세요.');\n  });\n}\n\nfunction reviseHook(c) {\n  const d = S.detail;\n  if (!confirm(c.id + ' 훅 하나만 Gemini로 다듬을까요? (API 호출 1회, 다른 훅과 대본은 바뀌지 않습니다)')) return;\n  busy(true, 'Gemini로 ' + c.id + ' 다듬는 중… (최대 30초)');\n  call('apiReviseHook', d.summary.reelId, { hookId: c.id, expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; renderDetail();\n    toast(res.notice || '훅을 다듬었습니다.', 6000);\n  });\n}\n\nfunction pickHook(chosen, text, mode) {\n  const d = S.detail;\n  if (!chosen) { toast('훅을 하나 고르세요.'); return; }\n  text = String(text || '').trim();\n  if (!text) { toast('훅 문장이 비어 있습니다.'); return; }\n  if (mode === 'regenerate' && !confirm('이 훅으로 대본 전체를 Gemini로 다시 쓸까요? (API 호출 1~2회, 새 대본 버전)')) return;\n  busy(true, mode === 'regenerate' ? 'Gemini로 대본 다시 쓰는 중… (최대 1분)' : '저장 중…');\n  call('apiSelectHook', d.summary.reelId, {\n    hookId: chosen.id, text: text, mode: mode,\n    expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion,\n  }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; renderDetail();\n    toast('훅 ' + chosen.id + ' 선택 · 대본 v' + res.detail.summary.scriptVersion + ' (REELS·AUDIT 기록)');\n    refreshAround();\n  });\n}\n\nfunction regenerate() {\n  const d = S.detail;\n  if (!confirm('수정 요청 메모를 반영해 이 대본 1개를 Gemini로 다시 작성할까요? (API 호출 1~2회)')) return;\n  busy(true, 'Gemini로 재생성 중… (최대 1분)');\n  call('apiRegenerateScript', d.summary.reelId, { expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    S.detail = res.detail; renderDetail(); toast('새 버전 v' + res.detail.summary.scriptVersion + '이(가) 검토 대기 중입니다.');\n    refreshAround();\n  });\n}\n\n// Signed render job for the Mac/cloud renderer. Issued only for approved reels in production.\nfunction openRenderJob() {\n  busy(true);\n  call('apiGetRenderJob', S.detail.summary.reelId).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 8000); return; }\n    const main = clear(document.getElementById('main'));\n    main.appendChild(h('button', { class: 'link', type: 'button', onclick: renderDetail, text: '‹ ' + S.detail.summary.reelId }));\n    main.appendChild(h('div', { class: 'banner warn', text: '이 파일은 72시간 동안 유효합니다. Mac에서 renderer/jobs/' + res.fileName + ' 로 저장한 뒤:\\n\\nnpm run render -- --job renderer/jobs/' + res.fileName + ' --dry-run\\n(비용·계획 확인 후) --dry-run 없이 다시 실행' }));\n    const a = h('a', { href: 'data:application/json;charset=utf-8,' + encodeURIComponent(res.jobFile), download: res.fileName, text: '파일 다운로드 ↓' });\n    main.appendChild(h('div', { class: 'card' }, [a, copyBlock(res.fileName, res.jobFile, true)]));\n    window.scrollTo(0, 0);\n  });\n}\n\nfunction openPack() {\n  busy(true);\n  call('apiGetPublishingPack', S.detail.summary.reelId).then(function (res) {\n    busy(false);\n    if (!res.ok) { toast(res.error, 6000); return; }\n    const p = res.pack;\n    const main = clear(document.getElementById('main'));\n    main.appendChild(h('button', { class: 'link', type: 'button', onclick: renderDetail, text: '‹ ' + p.reelId }));\n    main.appendChild(h('div', { class: 'banner warn', text: '자동 게시·자동 DM은 하지 않습니다. 아래 순서대로 직접 진행하세요.' }));\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '1. 영상' }),\n      h('a', { href: p.videoUrl, target: '_blank', rel: 'noopener', text: 'Drive에서 MP4 열기 ↗' }),\n      h('div', { class: 'muted', text: 'Drive 앱 → ⋯ → 사본 보내기 → 동영상 저장' }),\n    ]));\n    main.appendChild(h('div', { class: 'card' }, [h('h3', { style: 'margin-top:0', text: '2. 인스타그램 캡션' }), copyBlock('첫 줄 광고 표기 유지', p.instagramCaption)]));\n    main.appendChild(h('div', { class: 'card' }, [\n      h('h3', { style: 'margin-top:0', text: '3. ManyChat' }),\n      copyBlock('댓글 키워드', p.manychatKeyword, true),\n      copyBlock('DM 문구 (쿠팡 파트너스 링크 포함)', p.manychatDm),\n      copyBlock('쿠팡 파트너스 링크', p.affiliateUrl, true),\n    ]));\n    main.appendChild(h('div', { class: 'card' }, [h('h3', { style: 'margin-top:0', text: '체크리스트' }),\n      h('ol', { style: 'margin:0;padding-left:20px' }, p.checklist.map(function (c) { return h('li', { text: c }); }))]));\n    window.scrollTo(0, 0);\n  });\n}\n\n// ---------------------------------------------------------------- editor\nfunction renderEditor(main) {\n  const d = S.detail;\n  const r = d.reel;\n  // Storyboard scripts: each scene's line is the narration and the subtitle.\n  const storyboard = (r.scenes || []).some(function (s) { return s.beat || s.narration; });\n  const f = {};\n  function field(key, label, value, multiline) {\n    f[key] = multiline ? h('textarea', {}) : h('input', { type: 'text' });\n    f[key].value = value || '';\n    return h('div', {}, [h('label', { text: label }), f[key]]);\n  }\n  const card = h('div', { class: 'card' }, [\n    h('div', { class: 'banner warn', text: '수정하면 새 버전(v' + (d.summary.scriptVersion + 1) + ')이 되고 다시 승인해야 합니다. 숫자·기능은 PRODUCTS의 확인된 기능에 있는 것만 쓸 수 있습니다.' }),\n    d.pillars ? h('div', {}, [h('label', { text: '콘텐츠 기둥' }), (f.pillar = h('select', {}, [h('option', { value: '', text: '(그대로)' })].concat(d.pillars.map(function (p) {\n      const o = h('option', { value: p.id, text: p.label });\n      if (d.pillar && d.pillar.id === p.id) o.selected = true;\n      return o;\n    }))))]) : null,\n    field('concept', '컨셉', r.concept),\n    field('hook', '후킹 (40자 이내)', r.hook),\n    storyboard ? null : field('narration', '내레이션 (300자 이내)', r.narration, true),\n    storyboard ? null : field('captions', '자막 (한 줄에 하나, 각 40자 이내)', (r.captions || []).join('\\n'), true),\n  ]);\n  (r.scenes || []).forEach(function (s, i) {\n    card.appendChild(h('h3', { text: '장면 ' + s.scene_no + (s.beat ? ' · ' + s.beat : '') + ' · ' + s.duration_sec + '초' }));\n    if (storyboard) card.appendChild(field('s' + i + 'line', '내레이션 = 자막 (30자 이내, CTA에는 {키워드})', s.narration));\n    card.appendChild(field('s' + i + 'visual', '장면 설명', s.visual, true));\n    if (!storyboard) card.appendChild(field('s' + i + 'text', '화면 문구', s.on_screen_text));\n    card.appendChild(field('s' + i + 'flow', 'Flow 프롬프트 (영어)', s.flow_prompt, true));\n    f['s' + i + 'ai'] = h('input', { type: 'checkbox' });\n    f['s' + i + 'ai'].checked = !!s.ai_visualization;\n    card.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:center' }, [f['s' + i + 'ai'], h('span', { text: 'AI 시뮬레이션 장면 (영상에 표시)' })]));\n  });\n  card.appendChild(field('note', '수정 메모 (선택)', '', true));\n  card.appendChild(h('div', { class: 'btns' }, [\n    h('button', { class: 'b', type: 'button', text: '취소', onclick: function () { S.mode = 'view'; renderDetail(); } }),\n    h('button', { class: 'b primary', type: 'button', text: '저장 (v' + (d.summary.scriptVersion + 1) + ')', onclick: function () {\n      const edit = {\n        concept: f.concept.value, hook: f.hook.value,\n        pillar: f.pillar && f.pillar.value ? f.pillar.value : undefined,\n        narration: storyboard ? undefined : f.narration.value,\n        captions: storyboard ? undefined : f.captions.value.split('\\n').map(function (x) { return x.trim(); }).filter(Boolean),\n        scenes: (r.scenes || []).map(function (s, i) {\n          const out = { visual: f['s' + i + 'visual'].value, flow_prompt: f['s' + i + 'flow'].value, ai_visualization: f['s' + i + 'ai'].checked };\n          if (storyboard) out.narration = f['s' + i + 'line'].value; else out.on_screen_text = f['s' + i + 'text'].value;\n          return out;\n        }),\n      };\n      act('EDIT_SCRIPT', { edit: edit, note: f.note.value });\n    } }),\n  ]));\n  main.appendChild(card);\n}\n\nloadDashboard();\n</script>\n</body>\n</html>\n";

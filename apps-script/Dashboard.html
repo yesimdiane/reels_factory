@@ -58,6 +58,7 @@
   label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
   .banner { border-radius: 12px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; white-space: pre-wrap; }
   .banner.warn { background: rgba(227,160,8,.15); } .banner.bad { background: rgba(198,40,40,.13); }
+  .hookwarn { background: rgba(227,160,8,.12); border-radius: 10px; padding: 6px 10px; margin: 6px 0; font-size: 13px; }
   .banner.ok { background: rgba(26,127,55,.13); }
   .tp { display: grid; grid-template-columns: 28px 1fr; gap: 4px 8px; align-items: start; padding: 6px 0; }
   .tp .dot { width: 24px; height: 24px; border-radius: 12px; display: grid; place-items: center; font-size: 13px;
@@ -642,6 +643,9 @@ function renderHooks(main) {
     card.appendChild(h('div', { class: 'banner warn', text: '승인하려면 먼저 훅을 하나 고르세요. ★추천은 참고만 하세요.' }));
   } else {
     card.appendChild(h('div', { class: 'banner ok', text: '선택한 훅: ' + hk.selected.id + ' ' + (hk.selected.label || '') + (hk.selected.edited ? ' (수정)' : '') + ' · 대본 v' + hk.selected.scriptVersion + (hk.selected.by ? ' · ' + hk.selected.by : '') + '\n아래 "대본"에서 바뀐 첫 장면과 전체 흐름을 확인한 뒤 승인하세요.' }));
+    if ((hk.selectedWarnings || []).length) {
+      card.appendChild(h('div', { class: 'banner warn', text: '⚠ 고친 훅 문장 참고 (승인은 막지 않음): ' + hk.selectedWarnings.join(' / ') }));
+    }
   }
   const edit = h('textarea', { rows: '2' });
   let chosen = null;
@@ -660,6 +664,12 @@ function renderHooks(main) {
           isSel ? h('span', { class: 'chip', text: '선택됨' }) : null,
         ]),
         h('div', { class: 'hook', text: c.text }),
+        // Style warnings: safe to use; the operator may still pick, edit, or have Gemini improve this one hook.
+        ((hk.warnings || {})[c.id] || []).length ? h('div', { class: 'hookwarn' }, [
+          h('div', { text: '⚠ 스타일 참고 (사용 가능 · 승인은 막지 않음)' }),
+          h('ul', { style: 'margin:4px 0;padding-left:20px' }, hk.warnings[c.id].map(function (w) { return h('li', { text: w }); })),
+          hk.canRevise ? h('button', { class: 'b', type: 'button', text: '이 훅만 다듬기 (Gemini 1회)', onclick: function (ev) { ev.preventDefault(); ev.stopPropagation(); reviseHook(c); } }) : null,
+        ]) : null,
         c.visual ? h('div', { class: 'muted', text: '첫 장면: ' + c.visual }) : null,
         isRec && hk.recommended.reason ? h('div', { class: 'muted', text: '추천 이유: ' + hk.recommended.reason }) : null,
       ]),
@@ -680,13 +690,25 @@ function renderHooks(main) {
 
 function makeHooks() {
   const d = S.detail;
-  if (!confirm('이 대본에 쓸 훅 5개를 Gemini로 만들까요? (API 호출 1~2회, 대본은 바뀌지 않습니다)')) return;
+  if (!confirm('이 대본에 쓸 훅 5개를 Gemini로 만들까요? (API 호출 1~3회, 대본은 바뀌지 않습니다)')) return;
   busy(true, 'Gemini로 훅 5개 만드는 중… (최대 1분)');
   call('apiGenerateHooks', d.summary.reelId, { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {
     busy(false);
     if (!res.ok) { toast(res.error, 8000); return; }
     S.detail = res.detail; renderDetail();
     toast('훅 5개를 만들었습니다. 하나를 고르세요.');
+  });
+}
+
+function reviseHook(c) {
+  const d = S.detail;
+  if (!confirm(c.id + ' 훅 하나만 Gemini로 다듬을까요? (API 호출 1회, 다른 훅과 대본은 바뀌지 않습니다)')) return;
+  busy(true, 'Gemini로 ' + c.id + ' 다듬는 중… (최대 30초)');
+  call('apiReviseHook', d.summary.reelId, { hookId: c.id, expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion }).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 8000); return; }
+    S.detail = res.detail; renderDetail();
+    toast(res.notice || '훅을 다듬었습니다.', 6000);
   });
 }
 

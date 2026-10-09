@@ -62,14 +62,15 @@ test('the Gemini prompt carries the brand, pillars, PROBLEM → EMPATHY → SOLU
   assert.equal(items.properties.needs_verification.type, 'ARRAY');
 });
 
-test('the new example hooks pass; feature-list hooks do not', () => {
+test('the new example hooks pass; feature-list hooks get a style warning (not an error)', () => {
   const { env, product } = setup(null, { prepare: false });
-  const errs = (hook) => plain(env.gs('hookStyleErrors_')({ hook }, product, '릴스 1', [])).join('\n');
+  const check = (hook) => plain(env.gs('hookStyleCheck_')(hook, product, []));
   for (const h of ['급하게 출근할 때마다 우산 깜빡하는 사람?', '원룸 살면 우산꽂이 둘 자리도 애매하잖아요.', '비 오는 날마다 현관이 지저분해지는 이유.']) {
-    assert.equal(errs(h), '', h);
+    assert.deepEqual(check(h), { errors: [], warnings: [] }, h);
   }
-  assert.match(errs('190x55x50mm 자석 2피스 구조'), /치수·사양을 늘어놓는 기능 나열/);
-  assert.match(errs('자석형 2피스 우산꽂이예요'), /제품 이름으로 시작합니다|기능 나열/);
+  assert.deepEqual(check('190x55x50mm 자석 2피스 구조').errors, []);
+  assert.match(check('190x55x50mm 자석 2피스 구조').warnings.join('\n'), /치수·사양을 늘어놓는 기능 나열/);
+  assert.match(check('자석형 2피스 우산꽂이예요').warnings.join('\n'), /제품 이름으로 시작합니다|기능 나열/);
 });
 
 test('Gemini output: a pillar is required; invented purchases, tests and husband reactions are rejected', () => {
