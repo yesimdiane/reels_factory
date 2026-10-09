@@ -63,6 +63,10 @@ const RF_ACTIONS = {
   REQUEST_SCRIPT_CHANGES: { touchpoint: 2, from: ['SCRIPT_REVIEW_PENDING'], to: 'SCRIPT_CHANGES_REQUESTED', label: '대본 수정 요청', noteRequired: true },
   EDIT_SCRIPT: { touchpoint: 2, from: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], to: 'SCRIPT_REVIEW_PENDING', label: '대본 직접 수정' },
   REGENERATE_SCRIPT: { touchpoint: 0, from: ['SCRIPT_CHANGES_REQUESTED'], to: 'SCRIPT_REVIEW_PENDING', label: '대본 재생성 (Gemini)' },
+  // The operator picks one of the five hooks (optionally edited); the script may be swapped or rewritten.
+  SELECT_HOOK: { touchpoint: 2, from: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], to: 'SCRIPT_REVIEW_PENDING', label: '훅 선택' },
+  // Five hooks made by Gemini for a script that has none yet (e.g. written before the five-hook workflow).
+  SET_HOOKS: { touchpoint: 2, from: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], to: 'SCRIPT_REVIEW_PENDING', label: '훅 5개 만들기 (Gemini)' },
   REJECT_SCRIPT: { touchpoint: 2, from: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], to: 'SCRIPT_REJECTED', label: '대본 반려' },
   REOPEN_SCRIPT: { touchpoint: 2, from: ['SCRIPT_APPROVED'], to: 'SCRIPT_REVIEW_PENDING', label: '대본 승인 취소' },
   START_VIDEO: { touchpoint: 0, from: ['SCRIPT_APPROVED', 'VIDEO_CHANGES_REQUESTED', 'VIDEO_FAILED'], to: 'VIDEO_IN_PRODUCTION', label: '영상 제작 시작' },
@@ -183,6 +187,50 @@ function reelToScriptCells(reel) {
  * Applies a human edit to the current script. Only text fields are editable; scene count,
  * timing and facts_used stay as generated unless explicitly provided.
  */
+/** "선택한 훅" cell: the operator's choice, stored with the script version it applies to. */
+function selectedHookCell_(base, text, edited, recommended, scriptVersion, mode, actor, at) {
+  return JSON.stringify({
+    id: base.id,
+    label: base.label,
+    text: normalizeText(text),
+    edited: !!edited,
+    recommended: !!recommended,
+    scriptVersion: scriptVersion,
+    mode: mode,
+    by: actor || '',
+    at: at instanceof Date ? at.toISOString() : String(at || ''),
+  });
+}
+
+/**
+ * The current script opened by another hook: the hook line (first scene narration, first caption, hook)
+ * and — when the hook carries one — its own opening scene (visual, Flow prompt, emphasis, SFX).
+ * Scenes 2+ are unchanged (they are written to follow any of the five hooks).
+ */
+function swapHook_(reel, text, opening) {
+  const out = JSON.parse(JSON.stringify(reel));
+  const old = normalizeText(reel.hook);
+  out.hook = text;
+  const first = Array.isArray(out.scenes) ? out.scenes[0] : null;
+  if (first && (normalizeText(first.narration) === old || first.beat === 'HOOK')) {
+    first.narration = text;
+    if (opening && normalizeText(opening.visual)) first.visual = normalizeText(opening.visual);
+    if (opening && normalizeText(opening.flow_prompt)) first.flow_prompt = normalizeText(opening.flow_prompt);
+    if (opening && opening.emphasis !== undefined) first.emphasis = normalizeText(opening.emphasis);
+    if (opening && opening.sfx !== undefined) first.sfx = normalizeText(opening.sfx);
+  }
+  if (Array.isArray(out.captions) && normalizeText(out.captions[0]) === old) out.captions[0] = text;
+  return out;
+}
+
+/** True if the hook's opening scene differs from the script's current first scene. */
+function openingDiffers_(reel, opening) {
+  const first = reel && Array.isArray(reel.scenes) ? reel.scenes[0] : null;
+  if (!first || !opening) return false;
+  return (!!normalizeText(opening.visual) && normalizeText(opening.visual) !== normalizeText(first.visual)) ||
+    (!!normalizeText(opening.flow_prompt) && normalizeText(opening.flow_prompt) !== normalizeText(first.flow_prompt));
+}
+
 /**
  * Verification flags for a row's script: detected in the text and pillar, plus any "[Gemini 요청]"
  * lines Gemini added at generation (kept until the reviewer confirms them).
@@ -307,7 +355,7 @@ function planTransition(row, product, action, input, ctx) {
     (input.expectedScriptVersion == null || Number(input.expectedScriptVersion) === scriptVersion) &&
     (input.expectedVideoVersion == null || Number(input.expectedVideoVersion) === videoVersion);
   if (input.expectedStatus && input.expectedStatus !== status) {
-    if (def.to === status && versionsMatch && !/EDIT|REGENERATE|REGISTER/.test(action)) {
+    if (def.to === status && versionsMatch && !/EDIT|REGENERATE|REGISTER|SELECT|SET_HOOKS/.test(action)) {
       return { noop: true, status: status, updates: {}, audit: null };
     }
     throw staleError_(row, status);
@@ -375,6 +423,15 @@ function planTransition(row, product, action, input, ctx) {
     snapshot = cells;
   }
 
+  // An edit or revision that keeps the chosen hook keeps the choice (now for the new version).
+  function carrySelection_() {
+    const chosen = parseSelectedHook(row['선택한 훅']);
+    if (chosen && newScriptVersion !== scriptVersion && updates['후킹'] !== undefined && normalizeText(updates['후킹']) === normalizeText(chosen.text)) {
+      chosen.scriptVersion = newScriptVersion;
+      updates['선택한 훅'] = JSON.stringify(chosen);
+    }
+  }
+
   switch (action) {
     case 'APPROVE_SCRIPT': {
       if (input.expectedScriptVersion == null) throw new Error('승인할 대본 버전이 지정되지 않았습니다. 새로고침 후 다시 시도하세요.');
@@ -384,6 +441,24 @@ function planTransition(row, product, action, input, ctx) {
       if (errors.length) throw new Error('현재 대본이 검증 규칙에 맞지 않아 승인할 수 없습니다:\n- ' + errors.join('\n- '));
       const dErr = disclosureError_(row);
       if (dErr) throw new Error(dErr);
+      // The final hook is the operator's choice (one of five), made on THIS script version, and the
+      // operator confirms they reviewed the script with it. Applies to every script under review.
+      const hookSet = parseHookSet(row['훅 후보(JSON)']);
+      if (!hookSet.hooks.length) {
+        throw new Error('이 대본에는 훅 후보 5개가 없습니다. 대시보드 ②에서 "훅 5개 만들기"를 누른 뒤 훅을 고르세요 (REELS에 "훅 후보(JSON)" 열이 없으면 먼저 "시트 준비"를 실행하세요).');
+      }
+      const chosen = parseSelectedHook(row['선택한 훅']);
+      if (!chosen) throw new Error('훅을 먼저 선택하세요. 대시보드 ②에서 훅 5개 중 하나를 고르면 승인할 수 있습니다 (최종 훅은 운영자가 고릅니다).');
+      if (normalizeText(chosen.text) !== normalizeText(row['후킹'])) {
+        throw new Error('선택한 훅 "' + normalizeText(chosen.text) + '"과 현재 대본의 훅이 다릅니다. 훅을 다시 선택하세요.');
+      }
+      if (Number(chosen.scriptVersion) !== scriptVersion) {
+        throw new Error('훅을 고른 뒤 대본이 바뀌었습니다 (선택: v' + chosen.scriptVersion + ', 현재: v' + scriptVersion + '). 훅을 다시 확인해 선택하세요.');
+      }
+      if (input.hookReviewed !== true) {
+        throw new Error('선택한 훅이 반영된 대본 v' + scriptVersion + '을(를) 확인했다고 체크한 뒤 승인하세요.');
+      }
+      note = (note ? note + ' · ' : '') + '훅 ' + chosen.id + ': "' + normalizeText(chosen.text) + '" (대본 v' + scriptVersion + ' 확인함)';
       // Personal experience, tests, couple stories, results, comparisons, AI scenes: the reviewer must
       // confirm they are real (or labelled) before approval.
       const flags = verificationLines_(reel, pillarIdOf(row['콘텐츠 기둥']), row);
@@ -418,13 +493,64 @@ function planTransition(row, product, action, input, ctx) {
     case 'EDIT_SCRIPT': {
       const current = rowToReel(row);
       if (!current.scenes) throw new Error('"장면(JSON)" 셀이 올바른 JSON이 아닙니다. "수정 요청" 후 재생성하세요.');
-      replaceScript(mergeScriptEdit(current, input.edit || {}), '수정한 대본');
+      const merged = mergeScriptEdit(current, input.edit || {});
+      replaceScript(merged, '수정한 대본');
+      // Writing the hook yourself is choosing it (stored with the new script version).
+      if (normalizeText(merged.hook) !== normalizeText(current.hook) && parseHookSet(row['훅 후보(JSON)']).hooks.length) {
+        updates['선택한 훅'] = selectedHookCell_({ id: 'CUSTOM', label: '직접 작성' }, merged.hook, true, false, newScriptVersion, 'edited', actor, now);
+      } else {
+        carrySelection_();
+      }
       reviewScript();
+      break;
+    }
+    case 'SELECT_HOOK': {
+      const set = parseHookSet(row['훅 후보(JSON)']);
+      if (!set.hooks.length) throw new Error('이 대본에는 훅 후보가 없습니다 (이전 버전에서 만든 대본). "직접 수정"으로 훅을 바꾸세요.');
+      const base = set.hooks.filter(function (h) {
+        return h.id === input.hookId;
+      })[0];
+      if (!base) throw new Error('훅은 ' + set.hooks.map(function (h) { return h.id; }).join(', ') + ' 중에서 고르세요.');
+      const text = normalizeText(input.text || base.text);
+      if (!text) throw new Error('훅 문장이 비어 있습니다.');
+      const hookErrors = hookTextErrors(text, product);
+      if (hookErrors.length) throw new Error('이 훅은 쓸 수 없습니다:\n- ' + hookErrors.join('\n- '));
+      const current = rowToReel(row);
+      if (!current.scenes) throw new Error('"장면(JSON)" 셀이 올바른 JSON이 아닙니다. "수정 요청" 후 재생성하세요.');
+      let mode = 'kept';
+      if (input.reel) {
+        // Rewritten by Gemini around the chosen hook (validated in apiSelectHook and again here).
+        if (normalizeText(input.reel.hook) !== text) throw new Error('다시 쓴 대본이 선택한 훅으로 시작하지 않습니다.');
+        replaceScript(input.reel, '훅으로 다시 쓴 대본');
+        mode = 'regenerated';
+      } else if (normalizeText(current.hook) !== text || openingDiffers_(current, base)) {
+        // Free swap: the hook line and the hook's own opening scene (visual, Flow prompt, emphasis, SFX).
+        replaceScript(swapHook_(current, text, base), '훅을 바꾼 대본');
+        mode = 'swapped';
+      }
+      updates['선택한 훅'] = selectedHookCell_(base, text, text !== base.text, !!(set.recommended && set.recommended.id === base.id), newScriptVersion, mode, actor, now);
+      note = (note ? note + ' · ' : '') + '훅 ' + base.id + ' (' + base.label + ') 선택' + (text !== base.text ? ' (수정)' : '') + ': "' + text + '"' +
+        (mode === 'regenerated' ? ' — Gemini로 대본 다시 씀' : mode === 'swapped' ? ' — 훅만 교체' : '');
+      to = mode === 'kept' ? status : 'SCRIPT_REVIEW_PENDING';
+      if (!snapshot) snapshot = { '선택한 훅': text };
       break;
     }
     case 'REGENERATE_SCRIPT':
       replaceScript(input.reel, '재생성 대본');
+      carrySelection_();
       break;
+    case 'SET_HOOKS': {
+      const hs = input.hookSet;
+      if (!hs || !Array.isArray(hs.hooks) || hs.hooks.length !== Object.keys(RF_CONFIG.HOOK_TYPES).length) {
+        throw new Error('훅 5개가 올바르지 않습니다.');
+      }
+      updates['훅 후보(JSON)'] = JSON.stringify(hs);
+      updates['선택한 훅'] = '';
+      note = (note ? note + ' · ' : '') + '훅 5개 생성 (추천 ' + (hs.recommended ? hs.recommended.id : '-') + '). 대본은 바뀌지 않았습니다.';
+      to = status;
+      snapshot = { '훅 후보(JSON)': updates['훅 후보(JSON)'] };
+      break;
+    }
     case 'START_VIDEO':
       requireApprovedScript();
       requirePermission();

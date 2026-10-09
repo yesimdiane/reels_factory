@@ -15,13 +15,14 @@ function onOpen() {
 function addReelsFactoryMenu() {
   SpreadsheetApp.getUi()
     .createMenu('릴스 팩토리')
-    .addItem('선택한 상품으로 릴스 대본 3개 생성', 'generateReelsForSelectedProduct')
+    .addItem('선택한 상품으로 훅 5개 + 대본 생성', 'generateReelsForSelectedProduct')
     .addSeparator()
     .addItem('시트 준비 (REELS / PERFORMANCE / LOG / AUDIT)', 'setupSheets')
     .addItem('iPhone 대시보드 링크 보기', 'showDashboardLink')
     .addItem('렌더 키 보기 (Mac 렌더러 설정용)', 'showRenderSecret')
     .addItem('Gemini API 키 설정', 'promptForGeminiApiKey')
     .addItem('Gemini 모델 확인 (무료)', 'showGeminiModelCheck')
+    .addItem('코드 버전 확인 (대시보드와 비교)', 'showCodeVersion')
     .addSeparator()
     .addItem('테스트: PRD-001 오프라인 검증', 'runOfflineFixtureTest')
     .addItem('테스트: PRD-001 Gemini 실제 호출 (시트에 쓰지 않음)', 'runLiveGeminiTestPRD001')
@@ -94,6 +95,15 @@ function setupSheets() {
     logEvent_('ERROR', 'setupSheets', '', e.message, e.stack);
     ui.alert('시트 준비 실패\n\n' + report.concat([e.message]).join('\n'));
   }
+}
+
+/** Shows the pasted code's version; the dashboard header shows the deployed one. They must match. */
+function showCodeVersion() {
+  SpreadsheetApp.getUi().alert(
+    '코드 버전: ' + RF_CONFIG.CODE_VERSION + '\n\n' +
+      'iPhone 대시보드 맨 위에 같은 버전이 보여야 합니다. 다르면 웹 앱이 새 코드로 배포되지 않은 것입니다: ' +
+      'Apps Script → 배포 → 배포 관리 → ✏️ → 버전: 새 버전 → 배포.'
+  );
 }
 
 /** Stores the Gemini API key in Script Properties (never in the sheet or Git). */
@@ -198,6 +208,11 @@ function generateScriptsForProduct_(ss, rowNumber, options) {
   findProductRow_(productsSheet, product.id); // duplicate 상품ID check
 
   const reelsSheet = ensureSheet_(ss, RF_CONFIG.SHEETS.REELS, RF_CONFIG.REELS_HEADERS, RF_CONFIG.REELS_OPTIONAL_HEADERS);
+  // The five hooks and the operator's choice need their columns — checked before paying for Gemini.
+  const hookMissing = missingHeaders_(reelsSheet, RF_CONFIG.REELS_HOOK_HEADERS);
+  if (hookMissing.length) {
+    throw new Error('REELS에 훅 저장 열이 없습니다 (' + hookMissing.join(', ') + '). "릴스 팩토리 → 시트 준비"를 먼저 실행하세요 — 기존 데이터는 바뀌지 않고 1행 오른쪽에 열만 추가됩니다. Gemini는 호출하지 않았습니다.');
+  }
   const reelsMap = getHeaderMap_(reelsSheet);
   const existingIds = readColumn_(reelsSheet, reelsMap, '릴스ID');
   const existingKeywords = readRecords_(reelsSheet, ['ManyChat 키워드', '상품ID'])
@@ -241,12 +256,16 @@ function generateScriptsForProduct_(ss, rowNumber, options) {
   if (already > 0 && !options.allowAdditional) return { needsConfirm: already, product: product };
 
   // Hooks this product already has: Gemini is asked not to repeat them, and exact repeats are refused.
-  const previousHooks = readRecords_(reelsSheet, ['후킹', '상품ID'])
+  const previousHooks = [];
+  readRecords_(reelsSheet, ['후킹', '상품ID', '훅 후보(JSON)'])
     .filter(function (r) {
-      return normalizeText(r['상품ID']) === product.id && normalizeText(r['후킹']);
+      return normalizeText(r['상품ID']) === product.id;
     })
-    .map(function (r) {
-      return normalizeText(r['후킹']);
+    .forEach(function (r) {
+      if (normalizeText(r['후킹'])) previousHooks.push(normalizeText(r['후킹']));
+      parseHookSet(r['훅 후보(JSON)']).hooks.forEach(function (h) {
+        if (previousHooks.indexOf(h.text) === -1) previousHooks.push(h.text);
+      });
     });
   const result = generateValidatedRecords_(product, existingIds, existingKeywords, previousHooks);
   appendRecords_(reelsSheet, result.records, RF_SCRIPT_FIELDS);
@@ -322,7 +341,7 @@ function generateReelsForSelectedProduct() {
     if (res.needsConfirm) {
       const ok = ui.alert(
         '추가 생성 확인',
-        productId + '에 이미 릴스 ' + res.needsConfirm + '개가 있습니다. 새 대본 3개를 추가로 생성할까요?',
+        productId + '에 이미 릴스 ' + res.needsConfirm + '개가 있습니다. 새 훅 5개와 대본을 추가로 생성할까요?',
         ui.ButtonSet.YES_NO
       );
       if (ok !== ui.Button.YES) return;

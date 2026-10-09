@@ -6,11 +6,15 @@
  */
 
 const RF_CONFIG = {
+  // Shown in the dashboard header and in 릴스 팩토리 → 코드 버전 확인. If the two differ, the web app
+  // was not redeployed after the code was replaced (Deploy → Manage deployments → New version).
+  CODE_VERSION: '2026-10-09 · five-hooks 2',
+
   // Instagram brand. Used in the Gemini prompt and shown in the dashboard; edit here to reuse the
   // factory for another account. See docs/brand.md.
   BRAND: {
     NAME: '서울에서 집꾸미기',
-    POSITIONING: '작은 집을 불필요한 소비 없이 예쁘고, 실용적이고, 편안하게 만드는 법을 보여 주는 한국 홈&리빙 계정',
+    POSITIONING: '일상의 불편을 해결하는 예쁘고 실용적인 홈 제품을 소개하는 계정 — 특히 작은 집을 위해, 불필요한 소비 없이',
     TAGLINE: '우리 집에 들이기 전에, 먼저 보여드릴게요.',
     PERSONALITY: '자연스럽고, 공감 가고, 실용적이고, 따뜻한 대화체. 뻔한 판매 멘트는 쓰지 않음.',
     DIFFERENTIATORS: [
@@ -99,7 +103,9 @@ const RF_CONFIG = {
   ],
 
   // Added by 시트 준비 when missing; never required, so older sheets and the live dashboard keep working.
-  REELS_OPTIONAL_HEADERS: ['콘텐츠 기둥', '확인 필요'],
+  REELS_OPTIONAL_HEADERS: ['콘텐츠 기둥', '확인 필요', '훅 후보(JSON)', '선택한 훅'],
+  // New scripts need these to keep the five hooks and the operator's choice (checked before any Gemini call).
+  REELS_HOOK_HEADERS: ['훅 후보(JSON)', '선택한 훅'],
 
   // Append-only history of every operator decision and system transition.
   AUDIT_HEADERS: ['일시', '릴스ID', '상품ID', '작업', '이전 상태', '새 상태', '대본 버전', '영상 버전', '작업자', '메모', '스냅샷(JSON)'],
@@ -123,7 +129,18 @@ const RF_CONFIG = {
   LOG_HEADERS: ['일시', '레벨', '작업', '상품ID', '메시지', '상세'],
 
   PRODUCT_ID_PATTERN: /^PRD-\d{3,}$/,
-  REELS_PER_PRODUCT: 3,
+  // Scripts per generation run. Each run produces five hooks (H1–H5) and one script built on the
+  // recommended hook; the operator picks the final hook. Run again for another script.
+  REELS_PER_PRODUCT: 1,
+
+  // Five hook types per product, in this order. All ≤ HOOK_STYLE.MAX_CHARS, problem-first, no ad tone.
+  HOOK_TYPES: {
+    H1: { type: 'QUESTION', label: '질문형', rule: '시청자에게 묻는 질문으로 끝남 (?). "~하시나요?"·"~다면?" 같은 뻔한 질문은 금지.' },
+    H2: { type: 'NUMBER', label: '숫자로 시작하는형', rule: '확인된 기능에 근거한 숫자로 시작 (예: 2피스 → "두 조각"). 통계·수량·퍼센트를 지어내지 말 것.' },
+    H3: { type: 'MYTH', label: '통념을 뒤집는 단정형', rule: '흔한 생각을 뒤집는 단정 ("~아니에요", "~말고"). 질문 아님.' },
+    H4: { type: 'SITUATION', label: '상황 묘사형', rule: '시청자가 겪는 구체적인 순간을 묘사 (언제·어디서). 질문 아님.' },
+    H5: { type: 'CONCLUSION', label: '결론 먼저 던지는형', rule: '해결책을 먼저 말함 ("~하면 돼요"). 질문 아님.' },
+  },
 
   GEMINI_API_BASE: 'https://generativelanguage.googleapis.com/v1beta/models/',
   // gemini-3.5-flash: GA Flash model with structured output (ai.google.dev/gemini-api/docs/models).
@@ -158,6 +175,8 @@ const RF_CONFIG = {
     MAX_SCENES: 6,
     MIN_TOTAL_SEC: 10,
     MAX_TOTAL_SEC: 40,
+    // New Gemini scripts: 20–40 s, as long as the content needs (never padded). Older rows keep 10–40.
+    GENERATED_MIN_TOTAL_SEC: 20,
     MIN_FLOW_PROMPT_CHARS: 30,
     // Storyboard (video-first template): one narration line per scene = the subtitle.
     SCENE_MIN_SEC: 2,
@@ -226,7 +245,7 @@ const RF_CONFIG = {
       { pattern: /(하세요|해\s*보세요|만나\s*보세요|확인하세요)[.!~…]*$/, why: '광고 같은 권유형' },
       { pattern: /(하나로|소개|추천|필수템|꿀템|신박템|강추|이것만|역대)/, why: '광고 문구' },
       { pattern: /달라(집니다|져요|졌어요|지는)/, why: '"~이 달라집니다" 같은 결과 약속' },
-      { pattern: /\d/, why: '숫자·사양으로 시작하는 기능 나열' },
+      { pattern: /\d+(?:\.\d+)?\s*(?:mm|cm|kg|[x×])|[x×]\s*\d/i, why: '치수·사양을 늘어놓는 기능 나열' },
     ],
   },
   // Written by Gemini in the CTA line; replaced with the reel's ManyChat keyword at render time.

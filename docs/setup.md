@@ -19,7 +19,7 @@ You only paste **one file**. Nothing in your existing PRODUCTS tab is changed.
    - Click **Allow**. Then click the menu item again, paste the API key, and press **OK**.
 6. **Prepare the sheets.** Click **릴스 팩토리 → 시트 준비**. The result window should show ✓ PRODUCTS and ✓ for REELS / PERFORMANCE / LOG.
 7. **Test without spending API calls.** Click **릴스 팩토리 → 테스트: PRD-001 오프라인 검증**. It should say **통과**.
-8. **Use it.** Click any cell in a product row in PRODUCTS, then click **릴스 팩토리 → 선택한 상품으로 릴스 대본 3개 생성**. After about 10–60 seconds, three new rows appear in REELS.
+8. **Use it.** Click any cell in a product row in PRODUCTS, then click **릴스 팩토리 → 선택한 상품으로 훅 5개 + 대본 생성**. After about 10–60 seconds, a new row appears in REELS with five hooks and a script. Choose the final hook in the iPhone dashboard.
 
 **To update later**, follow [Updating an existing installation](#updating-an-existing-installation-keeps-all-sheet-data). It replaces only the code; your sheets are not touched.
 
@@ -34,14 +34,15 @@ The code lives in the Apps Script project. Your data lives in the sheets. Replac
 3. In the left panel, click the file `ReelsFactory` (the one you pasted before). **Do not delete the project, and do not create a second copy of the code.** Two files defining the same functions would conflict.
 4. Click inside the code, press **⌘A** (Mac) or **Ctrl+A**, and then **Delete**. The file is now empty.
 5. Open [`dist/ReelsFactory.gs`](../dist/ReelsFactory.gs) on GitHub (on the `main` branch after the PR is merged, or on the PR's branch to try it first). Click **Copy raw file**, paste it into the empty file, and click **💾 Save**.
-   - To check you have the new code, press ⌘F / Ctrl+F in the editor and search for `서울에서 집꾸미기`; it should be found.
+   - To check you have the new code, run **릴스 팩토리 → 코드 버전 확인** after step 7. It shows the version (e.g. `2026-10-09 · five-hooks 2`).
+   - Always copy from the **`main`** branch after the PR is merged. A PR merged into another branch does not reach `main`.
 6. The iPhone dashboard page is inside this same file, so there is nothing else to paste. Leave any other files in the project as they are.
 7. Reload the spreadsheet tab. In the **릴스 팩토리** menu:
    - run **테스트: PRD-001 오프라인 검증**. It should say 통과, with no API call.
    - Optionally run **Gemini 모델 확인 (무료)**.
-8. **If you use the iPhone dashboard:** **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**. The URL stays the same, but until you redeploy the dashboard keeps running the old code.
-9. **Recommended once:** run **릴스 팩토리 → 시트 준비** and answer **예**. It adds the two optional REELS columns `콘텐츠 기둥` and `확인 필요` at the right end of row 1. Existing cells are never changed.
-   - Without them, everything still works: the dashboard shows a warning, and verification flags are still computed from each script and still gate approval. The pillar is just not saved.
+8. **If you use the iPhone dashboard:** **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**. The URL stays the same, but until you redeploy the dashboard keeps running the old code. Check it: the dashboard header must show the same `코드 …` version as step 5.
+9. **Required once:** run **릴스 팩토리 → 시트 준비** and answer **예**. It adds the REELS columns `콘텐츠 기둥`, `확인 필요`, `훅 후보(JSON)` and `선택한 훅` at the right end of row 1. Existing cells are never changed.
+   - Until you do, existing scripts can still be reviewed, approved and rendered. New generation stops **before** calling Gemini and asks for 시트 준비, so no paid hooks are lost.
 
 Existing REELS rows keep working. Their `사용한 확인 기능` text still resolves to your facts, so they can still be approved, edited and rendered.
 

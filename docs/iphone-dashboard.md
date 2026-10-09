@@ -20,14 +20,22 @@ Google Sheets stays the system of record. Every button writes to the **REELS** r
 - **Verification flags:** if a script needs real-world checking (personal experience, product test, couple story, before/after, comparison, AI scene), a yellow **확인 필요** box lists the items. **승인** works only after ticking *모두 확인했습니다*.
 - **직접 수정:** you can change the pillar, the hook, each scene line, the scene descriptions and Flow prompts, and tick *AI 시뮬레이션 장면* before approving.
 
-Details: [brand.md](brand.md).
+- **① 훅 고르기** (shown first for every script under review): all five hooks with their types, each hook's opening scene, Gemini's ★추천 and its reason.
+  - Pick one (or edit its wording), then tap *이 훅으로 정하기 (무료)*. The first scene's line, caption, visual and Flow prompt become that hook's. Or tap *대본 다시 쓰기 (Gemini)* to rewrite the script around it. The updated script appears below as a new version.
+  - A script made before this feature shows **훅 5개 만들기 (Gemini 1회)** first. The script itself is not changed.
+  - **② 대본 검토 → 승인** works only after you have chosen a hook and ticked *선택한 훅이 반영된 대본 vN을 끝까지 확인했습니다*.
+  - Your choice is saved in REELS `선택한 훅`, with the script version, and in AUDIT (`SELECT_HOOK`, `SET_HOOKS`).
+- **Header:** shows the deployed code version (`코드 …`). Compare it with **릴스 팩토리 → 코드 버전 확인** in Sheets; a different version means the web app needs a redeploy.
+- **Scene view:** each scene shows its visual direction, subtitle emphasis and sound effect.
+
+Details: [brand.md](brand.md), [five-hook-workflow.md](five-hook-workflow.md).
 
 ## Your four manual steps (nothing else needs you)
 
 | # | You do | Where | What the system blocks until you do it |
 |---|---|---|---|
-| ① | Pick the product. Enter the Coupang Partners link, the verified facts (one per line) and the media permission. | Google Sheets → PRODUCTS (then **상품** tab → *대본 3개 생성*) | No scripts without facts. No video without permission. No publishing pack without a valid `link.coupang.com` / `coupa.ng` link. |
-| ② | Approve, edit, request changes, or reject each script. | **대본** tab | Video work starts only from the **exact approved script version**. If anyone edits the script afterwards (even directly in the sheet), video is blocked until the new version is approved. |
+| ① | Pick the product. Enter the Coupang Partners link, the verified facts (one per line) and the media permission. | Google Sheets → PRODUCTS (then **상품** tab → *훅 5개 + 대본 생성*) | No scripts without facts. No video without permission. No publishing pack without a valid `link.coupang.com` / `coupa.ng` link. |
+| ② | **Choose one of the five hooks** (edit its wording if you like). Then approve, edit, request changes, or reject the script. | **대본** tab → *훅 5개* | Video work starts only from the **exact approved script version**. If anyone edits the script afterwards (even directly in the sheet), video is blocked until the new version is approved. |
 | ③ | Watch the finished video, then approve, request changes, or reject it. | **영상** tab | Only an approved video can become *게시 준비 완료* (ready to publish). |
 | ④ | Post on Instagram, set up the ManyChat keyword, then tap both confirmations. | **게시** tab | Nothing is ever posted and no DM automation is ever switched on automatically. |
 

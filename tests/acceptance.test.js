@@ -64,7 +64,7 @@ test('1. existing Google Sheets data is preserved', () => {
 test('2–3. script approval works, and Flow prompts appear only after approval', () => {
   const { env, call, act } = workbook();
   const gen = call('apiGenerateScripts', 'PRD-001');
-  assert.deepEqual(gen.ids, ['PRD-001-R01', 'PRD-001-R02', 'PRD-001-R03']);
+  assert.deepEqual(gen.ids, ['PRD-001-R01']);
   const rec = () => env.sheets.REELS.record(env.sheets.REELS.rows.findIndex((r) => r[0] === 'PRD-001-R01') + 1);
   assert.equal(rec()['ManyChat 키워드'], '우산', 'product keyword used for every PRD-001 reel');
   assert.equal(rec()['Flow 장면 프롬프트'], '', 'no Flow prompts before approval');
@@ -73,7 +73,7 @@ test('2–3. script approval works, and Flow prompts appear only after approval'
   const ap = act('PRD-001-R01', 'APPROVE_SCRIPT');
   assert.equal(ap.detail.summary.status, 'SCRIPT_APPROVED');
   const prompts = ap.detail.flowScenePrompts;
-  assert.equal(prompts.length, 5, 'one Flow prompt per scene');
+  assert.equal(prompts.length, 6, 'one Flow prompt per scene');
   const p = prompts[1].prompt;
   for (const k of ['PRODUCT (identical in every scene): 리템 우산꽂이 자석형', '주 색상 다크그레이', '190×55×50mm', 'SCENE:', 'PRODUCT INTERACTION:', 'CAMERA:', 'LIGHTING & ENVIRONMENT:', 'DURATION: 8 seconds', 'CONSISTENCY:']) {
     assert.ok(p.includes(k), k);
@@ -89,11 +89,14 @@ test('2–3. script approval works, and Flow prompts appear only after approval'
 test('product keywords: shared by one product, never reused by another product', () => {
   const { env, call } = workbook();
   call('apiGenerateScripts', 'PRD-001');
-  // A second batch needs new hooks (repeating this product's hooks is refused); same keyword is fine.
-  env.gs(`FIXTURE_PRD_001_GEMINI_RESPONSE.reels.forEach(function (r, i) {
-    const h = ['아침마다 우산 어디 뒀는지 헷갈려요', '현관 바닥이 늘 신발로 꽉 차요', '장마철엔 현관이 늘 축축해요'][i];
-    r.hook = h; r.scenes[0].narration = h; r.captions[0] = h;
-  })`);
+  // A second batch needs five new hooks (repeating this product's hooks is refused); same keyword is fine.
+  env.gs(`(function () {
+    const f = FIXTURE_PRD_001_GEMINI_RESPONSE;
+    ['장마철마다 현관 정리 포기한 사람?', '두 조각으로 나눠 붙이는 이유', '젖은 우산, 꼭 바닥에 둘 필요 없어요', '아침마다 우산 어디 뒀는지 헷갈려요', '현관 우산은 문에 두면 돼요']
+      .forEach(function (t, i) { f.hooks[i].text = t; });
+    const r = f.reels[0];
+    r.hook = f.hooks[3].text; r.scenes[0].narration = r.hook; r.captions[0] = r.hook;
+  })()`);
   const more = call('apiGenerateScripts', 'PRD-001', true);
   assert.equal(more.ok, true, 'a second batch for the same product may reuse 우산');
   env.sheets.PRODUCTS.set(3, 'ManyChat 키워드', '우산');
@@ -138,20 +141,20 @@ test('6–7. full flow: Flow clips → render → final video approval → manua
   act('PRD-001-R01', 'APPROVE_SCRIPT');
   act('PRD-001-R01', 'START_VIDEO');
   const jobFile = JSON.parse(call('apiGetRenderJob', 'PRD-001-R01').jobFile);
-  assert.equal(verifyJob(jobFile, { secret: env.props.RF_RENDER_SECRET }).flowPrompts.length, 5);
+  assert.equal(verifyJob(jobFile, { secret: env.props.RF_RENDER_SECRET }).flowPrompts.length, 6);
 
   // Operator uploads one Flow clip per scene (synthetic stand-ins here).
   const dir = tmp();
   const clipDir = path.join(dir, 'clips', 'PRD-001-R01');
   fs.mkdirSync(clipDir, { recursive: true });
-  for (let n = 1; n <= 5; n++) {
+  for (let n = 1; n <= 6; n++) {
     execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=720x1280:d=8:r=30', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', path.join(clipDir, `S${n}.mp4`)]);
   }
   const provider = paidSpy();
   const m = await render({ jobFile, secret: env.props.RF_RENDER_SECRET, template: loadTemplate(), tts: ttsService(dir, provider), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: path.join(dir, 'clips'), ffmpeg: FF, font: 'NanumGothic', preset: 'ultrafast', crf: 36 });
   assert.equal(m.qc.postRender.ok, true);
-  assert.equal(provider.calls.length, 5, 'TTS once per scene line, only after approval + footage');
-  assert.deepEqual(m.timeline.beats.map((b) => b.subtitle.join(' ')), ['급하게 출근하면 꼭 까먹는 우산!', '구석에 세워 두면 눈에 안 띄잖아요.', '그래서 현관문에 붙이는 우산꽂이', '장우산도 접이식 우산도 쏙 들어가요.', "제품 정보는 댓글에 '우산'"]);
+  assert.equal(provider.calls.length, 6, 'TTS once per scene line, only after approval + footage');
+  assert.deepEqual(m.timeline.beats.map((b) => b.subtitle.join(' ')), ['비 오는 날, 현관에 젖은 우산이 굴러다녀요', '신발 둘 자리도 모자라잖아요', '자석이라 철제 현관문에 붙이면 돼요', '긴 우산도 접는 우산도 쏙 꽂아요', '위아래 두 조각으로 나뉘어 있어요', "저장해 두고, 댓글에 '우산' 남겨 주세요"]);
 
   // Operator uploads the MP4 to Drive and registers it; reviews on iPhone.
   const reg = act('PRD-001-R01', 'REGISTER_VIDEO', { videoUrl: 'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view' });

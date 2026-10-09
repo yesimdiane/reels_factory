@@ -7,7 +7,7 @@ These are the brand rules the factory applies to every script. They live in **`R
 | | |
 |---|---|
 | Name | 서울에서 집꾸미기 |
-| Positioning | A Korean home-and-living account that helps people make small spaces beautiful, practical and comfortable without unnecessary purchases |
+| Positioning | Beautiful and practical home products that solve everyday problems, especially for small living spaces, without unnecessary purchases |
 | Tagline | 우리 집에 들이기 전에, 먼저 보여드릴게요. |
 | Personality | Natural, relatable, practical, warm, conversational. No generic sales pitch. |
 | Differentiators | AI interior visualization (always labelled "AI 시뮬레이션"), practical home products, and occasional real stories of a Korean wife and her foreign husband in Seoul |
@@ -38,11 +38,15 @@ Every product reel follows **PROBLEM → EMPATHY → SOLUTION → DEMONSTRATION 
 | DEMONSTRATION | `DEMO` | Verified features only, each scene citing fact IDs (`F1`…). |
 | CTA | `CTA` | Asks viewers to comment the keyword (`{키워드}`). |
 
-- **Three different scripts per product:** angles A 일상 불편, B 좁은 공간 and C 생활 상황. The three hooks must open differently, and must not repeat this product's earlier hooks.
+- **Five hooks per product, the final pick is yours:** H1 질문형, H2 숫자로 시작하는형, H3 통념을 뒤집는 단정형, H4 상황 묘사형 and H5 결론 먼저 던지는형.
+  - Gemini recommends one and explains why, and the script starts with it.
+  - You choose (and may edit) the final hook in the dashboard. Approval requires that choice.
+  - Full specification and the PRD-001 reference: [five-hook-workflow.md](five-hook-workflow.md).
 - **PRD-001 example hooks:**
   - 급하게 출근할 때마다 우산 깜빡하는 사람?
   - 원룸 살면 우산꽂이 둘 자리도 애매하잖아요.
   - 비 오는 날마다 현관이 지저분해지는 이유.
+- **Length:** 20–40 s, set by the content and never padded. Timing is re-checked on the real Korean TTS voice before rendering.
 - **Rejected hook styles:** ad style (`~니다`), generic questions (`~다면?`, `~하시나요?`), sales words (`하나로`, `소개`, `추천`, `필수템`), result promises, and numbers or specs.
 
 Older rows (HOOK → PROBLEM → DEMO → BENEFIT → CTA) stay valid.
