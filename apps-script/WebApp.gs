@@ -25,6 +25,9 @@ const RF_CLIENT_ACTIONS = [
   'MARK_READY_TO_PUBLISH',
   'CONFIRM_PUBLISHED',
   'CONFIRM_MANYCHAT',
+  'GENERATE_STORYBOARD_IMAGES',
+  'REVIEW_STORYBOARD_IMAGE',
+  'REGENERATE_STORYBOARD_IMAGE',
 ];
 
 function doGet() {
@@ -275,7 +278,7 @@ function pillarMix_(reels) {
 
 function allowedActions_(status) {
   return RF_CLIENT_ACTIONS.filter(function (a) {
-    return RF_ACTIONS[a].from.indexOf(status) !== -1;
+    return RF_ACTIONS[a] && RF_ACTIONS[a].from && RF_ACTIONS[a].from.indexOf(status) !== -1;
   });
 }
 
@@ -431,6 +434,21 @@ function apiGetReel(reelId) {
 function apiAction(reelId, action, input) {
   return api_(function (user) {
     if (RF_CLIENT_ACTIONS.indexOf(action) === -1) throw new Error('허용되지 않은 작업입니다: ' + action);
+    if (action === 'GENERATE_STORYBOARD_IMAGES') {
+      const res = apiGenerateStoryboardImages(reelId, input);
+      if (!res.ok) throw new Error(res.error);
+      return { detail: res.detail };
+    }
+    if (action === 'REVIEW_STORYBOARD_IMAGE') {
+      const res = apiReviewStoryboardImage(reelId, input);
+      if (!res.ok) throw new Error(res.error);
+      return { detail: res.detail };
+    }
+    if (action === 'REGENERATE_STORYBOARD_IMAGE') {
+      const res = apiRegenerateStoryboardImage(reelId, input);
+      if (!res.ok) throw new Error(res.error);
+      return { detail: res.detail };
+    }
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const id = normalizeText(reelId);
     let notice = '';

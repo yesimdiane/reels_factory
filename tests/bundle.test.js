@@ -57,3 +57,94 @@ test('every google.script.run call in the dashboard exists in the bundle as a gu
   const js = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/)[1];
   assert.doesNotThrow(() => new Function(js));
 });
+
+test('dashboard call wrapper defensively guards runner and falls back to apiAction for storyboard calls', async () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'apps-script', 'Dashboard.html'), 'utf8');
+  const callFnMatch = html.match(/function call\(name\) \{[\s\S]*?\n\}/);
+  assert.ok(callFnMatch, 'function call(name) must exist in Dashboard.html');
+  const callSrc = callFnMatch[0];
+
+  function createMockGoogle(runnerProps) {
+    const runner = Object.assign({
+      withSuccessHandler(sh) { this._success = sh; return this; },
+      withFailureHandler(fh) { this._failure = fh; return this; },
+    }, runnerProps);
+    return {
+      script: {
+        run: {
+          withSuccessHandler(sh) { runner._success = sh; return runner; },
+          withFailureHandler(fh) { runner._failure = fh; return runner; },
+        },
+      },
+    };
+  }
+
+  // 1. Direct call when runner[name] exists
+  {
+    let directCalled = false;
+    const mockGoogle = createMockGoogle({
+      apiGenerateStoryboardImages: function (reelId, input) {
+        directCalled = true;
+        this._success({ ok: true, reelId, input });
+      },
+    });
+    const context = { google: mockGoogle, Promise: Promise };
+    vm.createContext(context);
+    vm.runInContext(callSrc, context);
+    const res = await context.call('apiGenerateStoryboardImages', 'PRD-001-R01', { confirmedBilling: true });
+    assert.equal(directCalled, true);
+    assert.equal(res.ok, true);
+  }
+
+  // 2. Fallback to apiAction when runner[name] is undefined (the exact reported bug!)
+  {
+    let apiActionCalledWith = null;
+    const mockGoogle = createMockGoogle({
+      // apiGenerateStoryboardImages is undefined!
+      apiAction: function (reelId, action, input) {
+        apiActionCalledWith = { reelId, action, input };
+        this._success({ ok: true, detail: { reelId } });
+      },
+    });
+    const context = { google: mockGoogle, Promise: Promise };
+    vm.createContext(context);
+    vm.runInContext(callSrc, context);
+    const res = await context.call('apiGenerateStoryboardImages', 'PRD-001-R01', { scene: 1, confirmedBilling: true });
+    assert.deepEqual(apiActionCalledWith, {
+      reelId: 'PRD-001-R01',
+      action: 'GENERATE_STORYBOARD_IMAGES',
+      input: { scene: 1, confirmedBilling: true },
+    });
+    assert.equal(res.ok, true);
+  }
+
+  // 3. Fallback for apiReviewStoryboardImage and apiRegenerateStoryboardImage
+  {
+    const calls = [];
+    const mockGoogle = createMockGoogle({
+      apiAction: function (reelId, action, input) {
+        calls.push({ reelId, action, input });
+        this._success({ ok: true });
+      },
+    });
+    const context = { google: mockGoogle, Promise: Promise };
+    vm.createContext(context);
+    vm.runInContext(callSrc, context);
+    await context.call('apiReviewStoryboardImage', 'PRD-001-R01', { scene: 1, version: 1, decision: 'APPROVE' });
+    await context.call('apiRegenerateStoryboardImage', 'PRD-001-R01', { scene: 1, confirmedBilling: true });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].action, 'REVIEW_STORYBOARD_IMAGE');
+    assert.equal(calls[1].action, 'REGENERATE_STORYBOARD_IMAGE');
+  }
+
+  // 4. Missing runner function without apiAction resolves cleanly without throwing TypeError
+  {
+    const mockGoogle = createMockGoogle({});
+    const context = { google: mockGoogle, Promise: Promise };
+    vm.createContext(context);
+    vm.runInContext(callSrc, context);
+    const res = await context.call('apiUnknownFunction');
+    assert.equal(res.ok, false);
+    assert.match(res.error, /실행할 수 없습니다/);
+  }
+});
