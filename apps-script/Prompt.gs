@@ -42,6 +42,38 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
   required: ['reels'],
 };
 
+/** Response schema for `count` reels (3 for a new product, 1 for a regenerated script). */
+function geminiResponseSchema(count) {
+  const schema = JSON.parse(JSON.stringify(RF_GEMINI_RESPONSE_SCHEMA));
+  schema.properties.reels.minItems = count;
+  schema.properties.reels.maxItems = count;
+  return schema;
+}
+
+/**
+ * Prompt to rewrite ONE script after the reviewer requested changes. Uses the same rules as
+ * buildGeminiPrompt, the current script and the reviewer's note. Costs one Gemini call.
+ */
+function buildRegenerationPrompt(product, currentReel, reviewerNote, previousErrors) {
+  const base = buildGeminiPrompt(product, previousErrors)
+    .replace(
+      '서로 다른 컨셉의 릴스 대본을 정확히 ' + RF_CONFIG.REELS_PER_PRODUCT + '개 작성하세요.',
+      '아래 "현재 대본"을 검토자 요청에 맞게 고쳐 릴스 대본을 정확히 1개 작성하세요.'
+    )
+    .replace(/\n9\. 세 릴스는[^\n]*/, '');
+  return [
+    base,
+    '',
+    '## 현재 대본 (JSON)',
+    JSON.stringify(currentReel),
+    '',
+    '## 검토자 수정 요청',
+    normalizeText(reviewerNote) || '(메모 없음 — 전반적으로 개선)',
+    '',
+    '응답의 reels 배열에는 수정된 대본 1개만 넣으세요.',
+  ].join('\n');
+}
+
 /**
  * Builds the Gemini prompt for one product.
  * `previousErrors` (optional) feeds validation failures back for a corrective retry.

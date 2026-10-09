@@ -41,6 +41,7 @@ class MockSheet {
         return this;
       },
       setFontWeight() { return this; },
+      setNumberFormat() { return this; },
     };
   }
   getActiveRange() { return this.getRange(this.activeRow, 1, 1, 1); }
@@ -88,6 +89,7 @@ function setup({ productRows, reelsRows, geminiPayload, alertAnswer = 'YES', pro
       },
     },
     Utilities: { sleep() {} },
+    Session: { getActiveUser: () => ({ getEmail: () => 'owner@example.com' }) },
   });
   vm.runInContext(fs.readFileSync(BUNDLE, 'utf8'), ctx, { filename: 'ReelsFactory.gs' });
   return { ctx, sheets, products, alerts, fetches: () => fetchCount };

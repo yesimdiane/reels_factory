@@ -1,0 +1,90 @@
+# iPhone approval dashboard
+
+A small web page that lives inside your Apps Script project. On your iPhone you can:
+
+- review, edit, approve or reject the 3 scripts for each product;
+- copy Google Flow prompts and register the finished MP4;
+- watch the finished video and approve or reject it;
+- copy the Instagram caption, ManyChat keyword and DM text, then confirm that you published.
+
+Google Sheets stays the system of record. Every button writes to the **REELS** row and adds a line to **AUDIT**.
+
+## Your four manual steps (nothing else needs you)
+
+| # | You do | Where | What the system blocks until you do it |
+|---|---|---|---|
+| ① | Pick the product. Enter the Coupang Partners link, the verified facts (one per line) and the media permission. | Google Sheets → PRODUCTS (then **상품** tab → *대본 3개 생성*) | No scripts without facts. No video without permission. No publishing pack without a valid `link.coupang.com` / `coupa.ng` link. |
+| ② | Approve, edit, request changes, or reject each script. | **대본** tab | Video work starts only from the **exact approved script version**. If anyone edits the script afterwards (even directly in the sheet), video is blocked until the new version is approved. |
+| ③ | Watch the finished video, then approve, request changes, or reject it. | **영상** tab | Only an approved video can become *게시 준비 완료* (ready to publish). |
+| ④ | Post on Instagram, set up the ManyChat keyword, then tap both confirmations. | **게시** tab | Nothing is ever posted and no DM automation is ever switched on automatically. |
+
+The **기록** tab and each reel's detail page show all four steps, with who did each one and when.
+
+## Status flow
+
+```
+SCRIPT_REVIEW_PENDING ──approve──▶ SCRIPT_APPROVED ──start──▶ VIDEO_IN_PRODUCTION ──register MP4──▶ VIDEO_REVIEW_PENDING
+   │  ▲   │                         │ (cancel approval)          │ error → VIDEO_FAILED (retry)           │
+   │  │   └─reject─▶ SCRIPT_REJECTED                             ▲                                        ├─request changes─▶ VIDEO_CHANGES_REQUESTED ─▶ (start again)
+   │  └─edit (v+1) / regenerate (v+1)                            │                                        ├─reject─▶ VIDEO_REJECTED
+   └─request changes─▶ SCRIPT_CHANGES_REQUESTED ─────────────────┘ (no)                                   └─approve─▶ VIDEO_APPROVED
+                                                                                                                       │ needs: permission, Partners link, disclosure, MP4, keyword
+                                                                                                                       ▼
+                                                                                    READY_TO_PUBLISH ──you confirm posted + ManyChat──▶ COMPLETED
+```
+
+## One-time setup (about 10 minutes, on a computer)
+
+1. **Update the code.**
+   - Open the workbook, then Extensions → Apps Script.
+   - Replace the contents of `ReelsFactory` with the new [`dist/ReelsFactory.gs`](../dist/ReelsFactory.gs), then click Save.
+   - The dashboard page is built into this one file; there is no separate HTML file to add.
+2. **Prepare the sheets.** Reload the spreadsheet, then click **릴스 팩토리 → 시트 준비**.
+   - The script asks before adding the new approval columns to the right end of REELS. Your existing scripts and columns are not changed.
+   - It creates the **AUDIT** sheet.
+   - It registers **your Google account** as the only allowed reviewer.
+3. **Deploy the web app.**
+   - In the Apps Script editor, click **Deploy → New deployment**.
+   - Click the gear icon and choose **Web app**.
+   - Description: `대시보드`.
+   - **Execute as: User accessing the web app.**
+   - **Who has access: Only myself.** Use *Anyone with Google account* only if a second reviewer needs access; see [Access model](#access-model).
+   - Click **Deploy**, approve the permission prompt, and copy the **Web app URL** (it ends in `/exec`).
+4. **Put it on your iPhone.**
+   - Send yourself the URL. You can also see it later via the sheet menu **릴스 팩토리 → iPhone 대시보드 링크 보기**.
+   - Open it in **Safari**, signed in to the same Google account that owns the workbook.
+   - Tap **Share → Add to Home Screen**. It now opens like an app.
+
+### After updating the code later
+
+The `/exec` link keeps serving the **old version** until you redeploy:
+Deploy → **Manage deployments** → ✏️ → Version: **New version** → Deploy. The URL stays the same.
+
+## Access model
+
+- **Who can open it:**
+  - With *Only myself*, only the Google account that owns the script can reach the page. Everyone else is stopped by Google before any code runs.
+  - The script also checks the signed-in email against the Script Property **`RF_REVIEWERS`** (comma-separated). *시트 준비* adds you automatically.
+  - Anyone not on the list sees "접근할 수 없습니다" and gets no data. All write functions check this list again.
+- **Adding a second reviewer:**
+  - Share the workbook with them as an **editor**.
+  - Add their email to `RF_REVIEWERS` (Apps Script → Project Settings → Script Properties).
+  - Change the deployment to *Anyone with Google account*.
+  - Their own account is used for every write, so AUDIT shows who did what.
+- **What the page can see:**
+  - The Gemini API key never leaves the server.
+  - The Coupang Partners link appears only in the publishing pack of a reel that is ready to publish.
+  - Every value from the sheet or Gemini is displayed as plain text, never as HTML.
+- **No open endpoints:** there is no unauthenticated URL that can change data. Each change needs:
+  - the reviewer's Google sign-in;
+  - a matching current status and version (stale or double taps are rejected or ignored);
+  - the document lock.
+
+## Limitations (honest list)
+
+- **Several Google accounts in Safari** can make Apps Script web apps fail with "Sorry, unable to open the file" or a blank page. Use a Safari profile signed in to only the workbook-owner account, or a private tab.
+- **Video preview** is an embedded Google Drive player. If Safari blocks it (cross-site tracking prevention), tap **Google Drive에서 열기** and play it in the Drive app. The Drive file must be viewable by your account.
+- **Google Flow is not automated.** No supported Flow API has been verified for this project. The dashboard gives you the per-scene prompts to paste into Flow by hand.
+- **FFmpeg rendering is the next milestone (Mac).** Until then, *완성 MP4 등록* takes a Google Drive share link to a finished MP4 that you produced yourself. The renderer will later register videos the same way.
+- **Speed:** generating or regenerating scripts calls Gemini and can take up to about a minute. Other dashboard actions take 1–3 seconds (Apps Script is not instant).
+- The dashboard does not edit PRODUCTS. Product data, links and permissions are entered in the sheet (touchpoint ①).

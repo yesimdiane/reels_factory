@@ -7,12 +7,14 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'apps-script');
 // Config first so its constants are defined before anything else is read at load time.
-const ORDER = ['Config.gs', 'Validation.gs', 'Reels.gs', 'Prompt.gs', 'Gemini.gs', 'Sheets.gs', 'Fixtures.gs', 'Code.gs'];
+const ORDER = ['Config.gs', 'Validation.gs', 'States.gs', 'Reels.gs', 'Prompt.gs', 'Gemini.gs', 'Sheets.gs', 'Fixtures.gs', 'Code.gs', 'WebApp.gs'];
+// HTML files are embedded as string constants so the bundle stays a single paste-able file.
+const HTML = { 'Dashboard.html': 'RF_DASHBOARD_HTML' };
 const OUT = path.join(ROOT, 'dist', 'ReelsFactory.gs');
 
 function build() {
-  const present = fs.readdirSync(SRC).filter((f) => f.endsWith('.gs')).sort();
-  const missing = present.filter((f) => !ORDER.includes(f));
+  const present = fs.readdirSync(SRC).filter((f) => f.endsWith('.gs') || f.endsWith('.html')).sort();
+  const missing = present.filter((f) => !ORDER.includes(f) && !HTML[f]);
   if (missing.length) throw new Error('Add to ORDER in scripts/build-bundle.js: ' + missing.join(', '));
   const header = [
     '/**',
@@ -24,7 +26,10 @@ function build() {
     ' */',
     '',
   ].join('\n');
-  return header + ORDER.map((f) => '// ===== ' + f + ' =====\n' + fs.readFileSync(path.join(SRC, f), 'utf8').trimEnd() + '\n').join('\n');
+  const code = ORDER.map((f) => '// ===== ' + f + ' =====\n' + fs.readFileSync(path.join(SRC, f), 'utf8').trimEnd() + '\n');
+  const html = Object.keys(HTML).map((f) =>
+    '// ===== ' + f + ' (embedded) =====\nconst ' + HTML[f] + ' = ' + JSON.stringify(fs.readFileSync(path.join(SRC, f), 'utf8')) + ';\n');
+  return header + code.concat(html).join('\n');
 }
 
 module.exports = { build, OUT };

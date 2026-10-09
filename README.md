@@ -28,8 +28,10 @@ Turn a verified product entry into three distinct 9:16 short-form video concepts
 - [x] Apps Script menu: selected PRODUCTS row → Gemini → 3 validated REELS rows — [`apps-script/`](apps-script)
 - [x] Fact / number / duplicate-ID validation with errors recorded in the LOG sheet
 - [x] Scene-level Google Flow prompts (Flow generation stays **manual**)
-- [ ] FFmpeg render workflow
-- [ ] ManyChat integration
+- [x] Approval state machine + AUDIT log; four human checkpoints (Issue #2)
+- [x] iPhone approval dashboard (Apps Script web app) — [docs/iphone-dashboard.md](docs/iphone-dashboard.md)
+- [ ] FFmpeg render workflow on Mac (Korean TTS, captions, disclosure) — next
+- [ ] ManyChat: stays a manual, operator-confirmed step
 
 Install: paste [`dist/ReelsFactory.gs`](dist/ReelsFactory.gs) into Extensions → Apps Script — step-by-step in [docs/setup.md](docs/setup.md).
 Developers: `npm test` (Node ≥ 20, no dependencies); `npm run build` after editing `apps-script/`.

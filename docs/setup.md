@@ -21,7 +21,9 @@ You only paste **one file**. Nothing in your existing PRODUCTS tab is changed.
 7. **Test without spending API calls.** Click **릴스 팩토리 → 테스트: PRD-001 오프라인 검증**. It should say **통과**.
 8. **Use it.** Click any cell in a product row in PRODUCTS, then click **릴스 팩토리 → 선택한 상품으로 릴스 대본 3개 생성**. After about 10–60 seconds, three new rows appear in REELS.
 
-**To update later**, open `ReelsFactory` in the script editor, select all, paste the new `dist/ReelsFactory.gs`, and save.
+**To update later**, open `ReelsFactory` in the script editor, select all, paste the new `dist/ReelsFactory.gs`, and save. If you use the iPhone dashboard, also redeploy a new version (see [iphone-dashboard.md](iphone-dashboard.md#after-updating-the-code-later)).
+
+**Next: approve on your iPhone.** Follow [iphone-dashboard.md](iphone-dashboard.md) to deploy the approval dashboard.
 
 ## Before you start: things that can block installation in an existing workbook
 
@@ -97,6 +99,14 @@ Requires Node.js ≥ 20 and has no dependencies. It runs three test files:
   - Duplicate checks run.
   - 시트 준비 behaves correctly.
 - `tests/bundle.test.js`: `dist/ReelsFactory.gs` is up to date and has no duplicate top-level names.
+- `tests/states.test.js`: every approval gate in the state machine.
+- `tests/webapp.test.js`: the iPhone dashboard API, run from the bundle. It covers:
+  - access control;
+  - the full lifecycle through all 4 touchpoints;
+  - the audit trail;
+  - legacy MVP rows;
+  - regeneration;
+  - no key or link leaks.
 
 ### In the spreadsheet
 
