@@ -116,10 +116,10 @@ function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
  * Full pure pipeline: raw Gemini text → validated → REELS row objects.
  * Returns { errors: string[], records: object[] }.
  */
-function prepareReelRecords(product, rawText, existingIds, existingKeywords, meta) {
+function prepareReelRecords(product, rawText, existingIds, existingKeywords, meta, options) {
   const parsed = parseModelJson(rawText);
   if (parsed.error) return { errors: [parsed.error], records: [], attempt: null };
-  const result = validateGeminiReels(parsed.value, product);
+  const result = validateGeminiReels(parsed.value, product, null, options);
   // Kept so a later attempt can be combined with this one's valid reels (no extra paid call).
   const attempt = { reels: parsed.value && parsed.value.reels, reelErrors: result.reelErrors };
   if (result.errors.length) return { errors: result.errors, records: [], attempt: attempt };

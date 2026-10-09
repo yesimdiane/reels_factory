@@ -36,6 +36,15 @@
         "미디엄 — 불편한 상황",
         "클로즈업 — 문제 디테일"
       ],
+      "EMPATHY": [
+        "미디엄 — 불편한 상황을 지켜보는 시점",
+        "클로즈업 — 짜증 나는 디테일"
+      ],
+      "SOLUTION": [
+        "미디엄 — 손이 제품을 자연스럽게 가져옴",
+        "클로즈업 — 제품이 놓이는 순간",
+        "POV — 공간에 제품이 있는 모습"
+      ],
       "DEMO": [
         "클로즈업 — 손으로 제품 사용",
         "POV — 사용하는 시점",
@@ -109,6 +118,7 @@
     ],
     "defaultSource": "flow-generated",
     "realProductBeats": [
+      "SOLUTION",
       "DEMO",
       "BENEFIT",
       "CTA"
@@ -116,7 +126,7 @@
     "sceneClipMinSec": 4,
     "maxFlatRatio": 0.5,
     "minMotion": 0.15,
-    "comment": "One clip per scene (Google Flow: 8 s); the renderer takes several cuts from it. DEMO/BENEFIT/CTA must show the product (operator checks it matches the real product at video review ③)."
+    "comment": "One clip per scene (Google Flow: 8 s); the renderer takes several cuts from it. SOLUTION/DEMO/BENEFIT/CTA must show the product (operator checks it matches the real product at video review ③)."
   },
   "audio": {
     "loudnessLufs": -16,

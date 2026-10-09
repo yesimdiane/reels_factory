@@ -89,6 +89,11 @@ test('2–3. script approval works, and Flow prompts appear only after approval'
 test('product keywords: shared by one product, never reused by another product', () => {
   const { env, call } = workbook();
   call('apiGenerateScripts', 'PRD-001');
+  // A second batch needs new hooks (repeating this product's hooks is refused); same keyword is fine.
+  env.gs(`FIXTURE_PRD_001_GEMINI_RESPONSE.reels.forEach(function (r, i) {
+    const h = ['아침마다 우산 어디 뒀는지 헷갈려요', '현관 바닥이 늘 신발로 꽉 차요', '장마철엔 현관이 늘 축축해요'][i];
+    r.hook = h; r.scenes[0].narration = h; r.captions[0] = h;
+  })`);
   const more = call('apiGenerateScripts', 'PRD-001', true);
   assert.equal(more.ok, true, 'a second batch for the same product may reuse 우산');
   env.sheets.PRODUCTS.set(3, 'ManyChat 키워드', '우산');
@@ -146,7 +151,7 @@ test('6–7. full flow: Flow clips → render → final video approval → manua
   const m = await render({ jobFile, secret: env.props.RF_RENDER_SECRET, template: loadTemplate(), tts: ttsService(dir, provider), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: path.join(dir, 'clips'), ffmpeg: FF, font: 'NanumGothic', preset: 'ultrafast', crf: 36 });
   assert.equal(m.qc.postRender.ok, true);
   assert.equal(provider.calls.length, 5, 'TTS once per scene line, only after approval + footage');
-  assert.deepEqual(m.timeline.beats.map((b) => b.subtitle.join(' ')), ['현관 좁은 집은 우산 어디 둬요?', '저는 그냥 문에 붙였어요.', '바닥 공간을 안 차지하니까', '현관이 훨씬 깔끔해져요.', "제품 정보는 댓글에 '우산'"]);
+  assert.deepEqual(m.timeline.beats.map((b) => b.subtitle.join(' ')), ['급하게 출근하면 꼭 까먹는 우산!', '구석에 세워 두면 눈에 안 띄잖아요.', '그래서 현관문에 붙이는 우산꽂이', '장우산도 접이식 우산도 쏙 들어가요.', "제품 정보는 댓글에 '우산'"]);
 
   // Operator uploads the MP4 to Drive and registers it; reviews on iPhone.
   const reg = act('PRD-001-R01', 'REGISTER_VIDEO', { videoUrl: 'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view' });

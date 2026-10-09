@@ -281,12 +281,12 @@ function writeFootage(clipsDir, reelId, ids, over = {}) {
 }
 const okAnalysis = async () => ({ width: 1080, height: 1920, duration: 10, frames: 30, flatRatio: 0, motion: 3 });
 
-test('storyboard: PRD-001 = HOOK → DEMO → DEMO → BENEFIT → CTA, 23 s, 12 cuts at the reference pace, keyword in the CTA', () => {
+test('storyboard: PRD-001 = HOOK → EMPATHY → SOLUTION → DEMO → CTA, 23 s, 12 cuts at the reference pace, keyword in the CTA', () => {
   const { sb } = storyboardOf();
-  assert.deepEqual(sb.beats.map((b) => b.beat), ['HOOK', 'DEMO', 'DEMO', 'BENEFIT', 'CTA']);
+  assert.deepEqual(sb.beats.map((b) => b.beat), ['HOOK', 'EMPATHY', 'SOLUTION', 'DEMO', 'CTA']);
   assert.equal(sb.scriptedTotal, 23);
   assert.deepEqual(sb.beats.map((b) => b.subtitle), [
-    '현관 좁은 집은 우산 어디 둬요?', '저는 그냥 문에 붙였어요.', '바닥 공간을 안 차지하니까', '현관이 훨씬 깔끔해져요.', "제품 정보는 댓글에 '우산'",
+    '급하게 출근하면 꼭 까먹는 우산!', '구석에 세워 두면 눈에 안 띄잖아요.', '그래서 현관문에 붙이는 우산꽂이', '장우산도 접이식 우산도 쏙 들어가요.', "제품 정보는 댓글에 '우산'",
   ]);
   const shots = sb.beats.flatMap((b) => b.shots);
   assert.deepEqual(shots.map((s) => s.id), ['S1-1', 'S1-2', 'S2-1', 'S2-2', 'S3-1', 'S3-2', 'S3-3', 'S4-1', 'S4-2', 'S4-3', 'S5-1', 'S5-2']);
@@ -294,7 +294,8 @@ test('storyboard: PRD-001 = HOOK → DEMO → DEMO → BENEFIT → CTA, 23 s, 12
   const avg = sb.scriptedTotal / shots.length;
   assert.ok(Math.abs(avg - template.shots.targetSec) < 0.3, 'average cut ' + avg + ' s ≈ reference ~1.8 s');
   assert.equal(shots[0].framing, '미디엄 — 사람이 카메라를 보며 반응');
-  assert.equal(sb.beats[2].shots[1].framing, 'POV — 사용하는 시점');
+  assert.equal(sb.beats[2].shots[1].framing, '클로즈업 — 제품이 놓이는 순간');
+  assert.equal(sb.beats[3].shots[1].framing, 'POV — 사용하는 시점');
   assert.deepEqual(sb.removedSymbols, ['☂'], 'emoji removed from burned subtitles and TTS (reported)');
   assert.ok(!sb.beats[4].ttsText.includes('☂'));
 });
@@ -318,7 +319,7 @@ test('pre-flight QC: structure, keyword mapping, cut pacing, single-line caption
   assert.deepEqual(geo.safe, { left: 65, right: 1015, top: 230, bottom: 1536 });
   assert.equal(geo.centerY, 1075, 'captions centred at 56% like the reference');
   assert.equal(ok.checks.filter((c) => /safeArea/.test(c.id)).length, 5);
-  assert.match(ok.checks.find((c) => c.id === 'subtitle.S1.lines').detail, /현관 좁은 집은 \/ 우산 어디 둬요\?/);
+  assert.match(ok.checks.find((c) => c.id === 'subtitle.S1.lines').detail, /급하게 출근하면 \/ 꼭 까먹는 우산!/);
   assert.equal(ok.checks.find((c) => c.id === 'shots.pacing').ok, true);
   assert.equal(ok.checks.find((c) => c.id === 'subtitle.symbols').level, 'warn');
 
@@ -358,7 +359,7 @@ test('ASSETS_REQUIRED: no footage → one Flow clip per scene requested with the
   const reel = path.join(dir, 'clips', 'PRD-001-R01');
   const shotlist = fs.readFileSync(path.join(reel, 'SHOTLIST.md'), 'utf8');
   assert.match(shotlist, /Google Flow 클립 5개\*\* \(각 8초, 세로 9:16\)만 만들면 됩니다/);
-  assert.match(shotlist, /\| S3\.mp4 \| DEMO · 제품 등장 \| 바닥 공간을 안 차지하니까 \|.*\| 3컷 \(/);
+  assert.match(shotlist, /\| S3\.mp4 \| SOLUTION · 제품 등장 \| 그래서 현관문에 붙이는 우산꽂이 \|.*\| 3컷 \(/);
   assert.match(shotlist, /마켓\(쿠팡 등\) 상세페이지 영상은 사용 금지/);
   const flow = fs.readFileSync(path.join(reel, 'FLOW_PROMPTS.md'), 'utf8');
   assert.equal((flow.match(/^## S\d/gm) || []).length, 5);
@@ -389,9 +390,9 @@ test('asset provenance: marketplace video rejected, licensed needs rights, produ
   const msg = v.problems.join('\n');
   assert.equal(v.ok, false);
   assert.doesNotMatch(msg, /S1 /, 'AI-generated scene clips are allowed');
-  assert.match(msg, /S2 \[DEMO\] source "marketplace"/);
-  assert.match(msg, /S3 \[DEMO\] licensed 영상은 rights/);
-  assert.match(msg, /S4 \[BENEFIT\] 이 장면은 제품이 보여야 합니다/);
+  assert.match(msg, /S2 \[EMPATHY\] source "marketplace"/);
+  assert.match(msg, /S3 \[SOLUTION\] licensed 영상은 rights/);
+  assert.match(msg, /S4 \[DEMO\] 이 장면은 제품이 보여야 합니다/);
   assert.match(msg, /S5 \[CTA\] 클립이 없습니다: S5\.mp4/);
   assert.equal(v.shots['S3-2'].source, 'own-footage', 'per-cut override used');
   assert.equal(v.shots['S3-1'].file, path.join(reel, 'S3.mp4'));
@@ -457,7 +458,7 @@ test('Flow coverage after TTS: a voice longer than predicted stops at ASSETS_REQ
   const slowVoice = Object.assign({}, provider, {
     async synthesize(req) {
       provider.calls.push(req.text);
-      return silentWav(req.text.startsWith('바닥 공간') ? 9 : 1.5);
+      return silentWav(req.text.startsWith('그래서 현관문') ? 9 : 1.5);
     },
   });
   const opts = { jobFile, secret, template, tts: service(slowVoice, dir), storage: createLocalStorage({ outputDir: path.join(dir, 'out') }), clipsDir: clips, ffmpeg: FF, font: 'NanumGothic', analyze: async () => ({ width: 1080, height: 1920, duration: 8, frames: 30, flatRatio: 0, motion: 3 }) };
@@ -478,7 +479,7 @@ test('timeline: beats stretch only for the voice, hard cuts split evenly, short 
   assert.ok(Math.abs(tl.beats[4].duration - (0.15 + 7 + 0.35)) < 1e-9, 'CTA stretched for a long line');
   assert.equal(tl.shots.length, 12);
   assert.deepEqual(tl.beats[2].shots.map((s) => s.duration), [2, 2, 2]);
-  assert.deepEqual(tl.beats[0].subtitle.captions.map((c) => c.text), ['현관 좁은 집은', '우산 어디 둬요?']);
+  assert.deepEqual(tl.beats[0].subtitle.captions.map((c) => c.text), ['급하게 출근하면', '꼭 까먹는 우산!']);
   tl.beats.forEach((b) => {
     const caps = b.subtitle.captions;
     assert.ok(caps[0].start >= b.start && caps[caps.length - 1].end <= b.end + 1e-9);
@@ -507,7 +508,8 @@ test('ASS matches the reference: regular-weight white single-line captions at 56
   assert.equal(sub[16], '2', 'thin edge');
   assert.equal(sub[17], '1', 'soft shadow');
   const subs = ass.split('\n').filter((l) => /^Dialogue: .*,Sub,/.test(l));
-  assert.equal(subs.length, 6, '5 lines → 6 single-line captions');
+  assert.equal(subs.length, tl.beats.reduce((n, b) => n + b.subtitle.captions.length, 0), 'one Dialogue per single-line caption');
+  assert.ok(subs.length >= 5, '5 lines → at least 5 captions');
   assert.ok(subs.every((l) => l.includes('{\\pos(540,1075)}') && !l.includes('\\N')));
   assert.doesNotMatch(ass, /While|English/, 'Korean only');
   const cta = ass.split('\n').filter((l) => /^Dialogue: .*,Cta,/.test(l));

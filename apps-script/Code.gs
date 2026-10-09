@@ -118,7 +118,8 @@ function promptForGeminiApiKey() {
  * Generates up to MAX_GEMINI_ATTEMPTS Gemini responses until one passes validation,
  * then returns { records, attempts }. Throws with all validation errors otherwise.
  */
-function generateValidatedRecords_(product, existingIds, existingKeywords) {
+function generateValidatedRecords_(product, existingIds, existingKeywords, previousHooks) {
+  const vopts = { avoidHooks: previousHooks || [] };
   let lastErrors = [];
   let lastRaw = '';
   const attempts = [];
@@ -127,8 +128,8 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
   };
   for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
     // A retry gets the exact failing claims and the previous response, so Gemini fixes only those.
-    const raw = callGemini_(buildGeminiPrompt(product, lastErrors, lastRaw));
-    const result = prepareReelRecords(product, raw, existingIds, existingKeywords, meta());
+    const raw = callGemini_(buildGeminiPrompt(product, lastErrors, lastRaw, vopts.avoidHooks));
+    const result = prepareReelRecords(product, raw, existingIds, existingKeywords, meta(), vopts);
     if (!result.errors.length) return { records: result.records, attempts: attempt };
     attempts.push(result.attempt);
     lastErrors = result.errors;
@@ -141,7 +142,7 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
       result.errors.join('\n') + '\n\n--- 원본 응답 ---\n' + raw
     );
     // Free rescue: if every position has a reel that passed in some attempt, use those.
-    const combined = attempts.length > 1 ? combineValidReels(attempts, product) : null;
+    const combined = attempts.length > 1 ? combineValidReels(attempts, product, null, vopts) : null;
     if (combined) {
       logEvent_('INFO', 'validateGemini', product.id, '시도별로 검증을 통과한 대본을 합쳐 사용합니다 (추가 호출 없음).', '');
       return { records: buildReelRecords(product, combined.reels, existingIds, existingKeywords, meta()), attempts: attempt };
@@ -239,7 +240,15 @@ function generateScriptsForProduct_(ss, rowNumber, options) {
   }).length;
   if (already > 0 && !options.allowAdditional) return { needsConfirm: already, product: product };
 
-  const result = generateValidatedRecords_(product, existingIds, existingKeywords);
+  // Hooks this product already has: Gemini is asked not to repeat them, and exact repeats are refused.
+  const previousHooks = readRecords_(reelsSheet, ['후킹', '상품ID'])
+    .filter(function (r) {
+      return normalizeText(r['상품ID']) === product.id && normalizeText(r['후킹']);
+    })
+    .map(function (r) {
+      return normalizeText(r['후킹']);
+    });
+  const result = generateValidatedRecords_(product, existingIds, existingKeywords, previousHooks);
   appendRecords_(reelsSheet, result.records, RF_SCRIPT_FIELDS);
 
   const now = new Date();

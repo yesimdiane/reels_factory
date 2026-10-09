@@ -40,8 +40,8 @@ One row per reel script. Three rows are appended per generation run, in a single
 | 릴스ID | code | `{상품ID}-R{nn}` e.g. `PRD-001-R01`. Continues after the highest existing number for that product; never reused. |
 | 상품ID | PRODUCTS | |
 | 버전 | code | 1–3 within the generation run. |
-| 컨셉 | Gemini | Distinct per reel. |
-| 후킹 | Gemini | ≤ 40 chars. Distinct per reel. |
+| 컨셉 | Gemini | Distinct per reel. New scripts start with their creative angle: `A 일상 불편 · …`, `B 좁은 공간 · …`, `C 생활 상황 · …`. |
+| 후킹 | Gemini | ≤ 40 chars (new Gemini scripts: ≤ 25, spoken in the first 2–3 s). Distinct per reel and from the product's earlier hooks. |
 | 내레이션 | Gemini | ≤ 300 chars voiceover. |
 | 자막 | Gemini | On-screen caption lines, newline separated, each ≤ 40 chars. |
 | 장면(JSON) | Gemini | JSON array of `{scene_no, beat, narration, duration_sec, visual, on_screen_text, flow_prompt, facts}`; 3–6 scenes, 10–40 s total. `facts` holds the exact 확인된 기능 lines the scene relies on (Gemini sends IDs such as `F1`; they are converted before writing). Rows written before this change have no `facts` and remain valid. |
@@ -123,11 +123,13 @@ A run writes nothing to REELS unless **all** of these pass. On failure, one corr
 - Length limits for hook, narration and captions.
 - 3–6 scenes numbered 1..n, with a total duration of 10–40 s. Every scene has a Flow prompt (≥ 30 chars).
 - Concepts and hooks are distinct across the three reels.
+- **Story (new scripts):** HOOK (a relatable problem) → EMPATHY (why it is annoying) → SOLUTION (the product appears naturally) → DEMO (verified features) → CTA (comment keyword). An optional BENEFIT may follow DEMO. Older rows (HOOK → PROBLEM → DEMO → BENEFIT → CTA) stay valid for approval and rendering.
+- **Three angles, one each:** `EVERYDAY_FRUSTRATION` (A 일상 불편), `SMALL_SPACE` (B 좁은 공간), `LIFESTYLE_SITUATION` (C 생활 상황). The three hooks must not open with the same two words.
 - New 릴스ID / ManyChat 키워드 do not collide with existing rows. Existing duplicates in REELS, or a duplicate 상품ID in PRODUCTS, stop the run.
 
 ### Facts: references, not wording
 - Gemini sees 확인된 기능 as `F1: …`, `F2: …` (one ID per line of the cell).
-- It returns `facts_used` (IDs for the whole reel) and `fact_ids` per scene. Every DEMO and BENEFIT scene must cite at least one ID.
+- It returns `facts_used` (IDs for the whole reel) and `fact_ids` per scene. Every DEMO and BENEFIT scene must cite at least one ID; SOLUTION cites one when it states a feature.
 - References must resolve to a verified fact. Accepted forms:
   - an ID;
   - the exact sheet wording;
@@ -151,6 +153,22 @@ Each of these needs support in 확인된 기능. A term that also appears in the
 | Reviews / popularity | 후기, 리뷰, 별점, 인기, 품절, 다들 사요 |
 | Certification | 특허, 인증, KC, 친환경, 최고 |
 | Colours | any colour not in the facts (synonyms count: 흰색 = 화이트, 회색 = 그레이) |
+
+### Hook style (new Gemini scripts only)
+The account is about Korean home decor, small-space living and organization. A hook should sound like a lifestyle creator describing a moment the viewer recognises, not like an ad. Rules are in `CONFIG.HOOK_STYLE`. Each failure tells Gemini how to fix it on the retry.
+
+| Rejected | Example |
+|---|---|
+| Starts with the product name | 우산꽂이 하나로 현관이 달라집니다. |
+| Corporate "~니다" ending | …달라집니다. / …해결합니다. |
+| Generic rhetorical question | …없다면? / …고민이신가요? / …하시나요? |
+| Ad wording | 하나로, 소개, 추천, 필수템, 꿀템, ~하세요, ~이 달라져요 |
+| Too long for the first 2–3 s | more than 25 characters |
+| Same as one of this product's earlier hooks | the prompt also lists them so Gemini avoids them |
+
+Accepted examples: 급하게 출근하면 꼭 까먹는 우산! · 원룸 살 때 제일 애매한 게 우산꽂이였어요. · 좁은 현관에 우산꽂이까지 놓기 싫잖아요.
+
+Invented experiences or results (한 달 써 보니, 붙였더니 …, 바꿨더니 …) are rejected anywhere in the script. Reviewer edits are not held to the hook-style rules, because the reviewer decides; fact and claim rules still apply to edits.
 
 ### Numbers and measurements (strict)
 - Every number must appear in 확인된 기능 or 상품명.

@@ -155,6 +155,8 @@ const RF_CONFIG = {
     CAMERA: {
       HOOK: 'handheld medium shot at eye level, slight natural movement; ends with a quick natural whip pan',
       PROBLEM: 'handheld medium shot that slowly moves closer to the problem detail',
+      EMPATHY: 'handheld medium shot that slowly moves closer to the annoying detail, as if the viewer is standing there',
+      SOLUTION: 'handheld medium shot; the product comes into frame naturally in the same place as the problem',
       DEMO: 'starts as a close-up of the hands using the product, then slowly pulls back to show the product in place; handheld, smooth',
       BENEFIT: 'slow handheld walk-through: wide view of the space first, then a closer look at the tidy result',
       CTA: 'slow push-in to a close-up of the product in place, then hold steady for the last 2 seconds',
@@ -162,14 +164,41 @@ const RF_CONFIG = {
     INTERACTION: {
       HOOK: 'show the everyday situation; the product may be absent or only in the background',
       PROBLEM: 'show the problem clearly; do not show the product solving it yet',
+      EMPATHY: 'show why the situation is annoying (clutter, no space, things in the way); no product yet',
+      SOLUTION: 'a person\'s hands bring in or place the product in the space from the earlier scenes; calm and natural, no presenting gesture',
       DEMO: 'a person\'s hands use the product exactly as described, only in ways the verified features allow',
       BENEFIT: 'show the result with the product in place and being used naturally',
       CTA: 'the product is the clear subject, mounted or placed exactly as in the earlier scenes',
     },
   },
 
-  // Story structure. PROBLEM may be folded into the HOOK scene; DEMO and BENEFIT are required.
-  BEATS: ['HOOK', 'PROBLEM', 'DEMO', 'BENEFIT', 'CTA'],
+  // Story structure. New scripts: HOOK → EMPATHY → SOLUTION → DEMO → CTA (BENEFIT optional before CTA).
+  // Older scripts (HOOK → PROBLEM → DEMO → BENEFIT → CTA) stay valid. PROBLEM and EMPATHY share a slot.
+  BEATS: ['HOOK', 'PROBLEM', 'EMPATHY', 'SOLUTION', 'DEMO', 'BENEFIT', 'CTA'],
+  BEAT_RANK: { HOOK: 0, PROBLEM: 1, EMPATHY: 1, SOLUTION: 2, DEMO: 3, BENEFIT: 4, CTA: 5 },
+  // Beats where the product is on screen (Flow prompts and the renderer's footage check).
+  PRODUCT_BEATS: ['SOLUTION', 'DEMO', 'BENEFIT', 'CTA'],
+
+  // Creative angles: one reel each, so the three scripts never feel alike.
+  ANGLES: {
+    EVERYDAY_FRUSTRATION: 'A 일상 불편',
+    SMALL_SPACE: 'B 좁은 공간',
+    LIFESTYLE_SITUATION: 'C 생활 상황',
+  },
+
+  // Hook style for new Gemini scripts (not applied to reviewer edits): a relatable problem, spoken in
+  // the first ~2–3 seconds — not an ad. Each pattern is a common ad-style hook.
+  HOOK_STYLE: {
+    MAX_CHARS: 25,
+    AD_PATTERNS: [
+      { pattern: /니다[.!?~…]*$/, why: '광고 문구 같은 "~니다" 말투' },
+      { pattern: /(다면|라면|이라면)\s*[?？]*[.!~…]*$/, why: '"~다면?" 같은 뻔한 질문형' },
+      { pattern: /(하시나요|시나요|신가요|있나요|아시나요|어떨까요|어떠세요|궁금하지\s*않|해\s*보셨나요)\s*[?？]*[.!~…]*$/, why: '"~하시나요?" 같은 뻔한 질문형' },
+      { pattern: /(하세요|해\s*보세요|만나\s*보세요|확인하세요)[.!~…]*$/, why: '광고 같은 권유형' },
+      { pattern: /(하나로|소개|추천|필수템|꿀템|신박템|강추|이것만|역대)/, why: '광고 문구' },
+      { pattern: /달라(집니다|져요|졌어요|지는)/, why: '"~이 달라집니다" 같은 결과 약속' },
+    ],
+  },
   // Written by Gemini in the CTA line; replaced with the reel's ManyChat keyword at render time.
   KEYWORD_PLACEHOLDER: '{키워드}',
 
@@ -205,6 +234,7 @@ const RF_CONFIG = {
     { type: '수납 용량', pattern: /(대용량|여러\s*개|몇\s*개(?:든|라도)|가득|\d+\s*개까지)/ },
     { type: '가격', pattern: /(가격|할인|세일|쿠폰|특가|무료\s*배송|로켓|가성비|저렴|(?<![가-힣])싸(?:요|다|게|고)|(?:만|천)\s*원|공짜|이벤트|혜택)/ },
     { type: '후기·인기', pattern: /(후기|리뷰|별점|평점|구매평|만족도|재구매|판매량|인기|베스트|입소문|난리|품절|대박|핫한|다들\s*(?:사|쓰))/ },
+    { type: '체험·결과', pattern: /(써\s*보니|써\s*봤|써\s*본\s|사용해\s*보니|사용해\s*봤|\d+\s*(?:일|주|달|개월)\s*(?:째|동안|간)|한\s*달\s*(?:째|동안|간|써)|일주일\s*(?:째|동안|간|써)|바꿨더니|붙였더니|샀더니)/ },
     { type: '인증', pattern: /(특허|인증|KC|FDA|친환경|무독성|국내산|국산|최고|최강)/ },
   ],
 };
@@ -564,7 +594,7 @@ function validateReelContent(reel, product, label, options) {
         }
       }
     });
-    if (storyboard) storyboardErrors_(reel.scenes).forEach(function (e) {
+    if (storyboard) storyboardErrors_(reel.scenes, options && options.newStructure).forEach(function (e) {
       errors.push(p + e);
     });
     if (total < L.MIN_TOTAL_SEC || total > L.MAX_TOTAL_SEC) {
@@ -626,8 +656,9 @@ function validateReelContent(reel, product, label, options) {
  * Validates the parsed Gemini payload: exactly `expectedCount` reels (default 3), each passing
  * validateReelContent, with distinct concepts and hooks. Returns { errors: string[], reels: object[] }.
  */
-function validateGeminiReels(payload, product, expectedCount) {
+function validateGeminiReels(payload, product, expectedCount, options) {
   const count = expectedCount || RF_CONFIG.REELS_PER_PRODUCT;
+  const avoidHooks = (options && options.avoidHooks) || [];
   const errors = [];
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.reels)) {
     return { errors: ['응답에 "reels" 배열이 없습니다.'], reels: [], reelErrors: [] };
@@ -637,7 +668,13 @@ function validateGeminiReels(payload, product, expectedCount) {
     errors.push('릴스 대본은 정확히 ' + count + '개여야 합니다 (받은 개수: ' + reels.length + ').');
   }
   const reelErrors = reels.map(function (reel, i) {
-    return dedupe_(validateReelContent(reel, product, '릴스 ' + (i + 1), { requireStoryboard: true, requireFactRefs: true }));
+    const label = '릴스 ' + (i + 1);
+    const opts = { requireStoryboard: true, requireFactRefs: true, newStructure: true };
+    const errs = validateReelContent(reel, product, label, opts).concat(hookStyleErrors_(reel, product, label, avoidHooks));
+    if (count > 1 && reel && !RF_CONFIG.ANGLES[reel.angle]) {
+      errs.push(label + ': angle은 ' + Object.keys(RF_CONFIG.ANGLES).join(', ') + ' 중 하나여야 합니다.');
+    }
+    return dedupe_(errs);
   });
   reelErrors.forEach(function (list) {
     list.forEach(function (e) {
@@ -657,6 +694,23 @@ function validateGeminiReels(payload, product, expectedCount) {
     if (h) seenHooks[h] = i + 1;
     if (c) seenConcepts[c] = i + 1;
   });
+  // Three different angles and three different openings.
+  if (count > 1) {
+    const seenAngles = {};
+    const seenOpenings = {};
+    reels.forEach(function (reel, i) {
+      if (!reel) return;
+      if (RF_CONFIG.ANGLES[reel.angle] && seenAngles[reel.angle]) {
+        errors.push('릴스 ' + (i + 1) + ': angle ' + reel.angle + '이 릴스 ' + seenAngles[reel.angle] + '와 같습니다. 세 릴스는 A·B·C 각도를 하나씩 써야 합니다.');
+      }
+      if (reel.angle) seenAngles[reel.angle] = i + 1;
+      const o = hookOpening_(reel.hook);
+      if (o && seenOpenings[o]) {
+        errors.push('릴스 ' + (i + 1) + ': hook이 릴스 ' + seenOpenings[o] + '와 같은 말("' + o + '")로 시작합니다. 서로 다른 첫마디로 쓰세요.');
+      }
+      if (o) seenOpenings[o] = i + 1;
+    });
+  }
 
   // De-duplicate identical messages (e.g. the same number repeated).
   const unique = dedupe_(errors);
@@ -683,6 +737,10 @@ function dedupe_(list) {
 function canonicalReel_(reel, product) {
   const ctx = factContext_(product);
   const out = JSON.parse(JSON.stringify(reel));
+  // The creative angle is shown in 컨셉 (no new column), e.g. "A 일상 불편 · 출근길 우산".
+  const angleLabel = RF_CONFIG.ANGLES[out.angle];
+  if (angleLabel && normalizeText(out.concept).indexOf(angleLabel) !== 0) out.concept = angleLabel + ' · ' + normalizeText(out.concept);
+  delete out.angle;
   const used = [];
   const add = function (ref) {
     const i = resolveFactRef_(ref, ctx);
@@ -714,7 +772,7 @@ function canonicalReel_(reel, product) {
  * Builds the best payload from several attempts without another paid call: for each position the
  * latest reel that passed on its own. Returns { errors, reels } like validateGeminiReels, or null.
  */
-function combineValidReels(attempts, product, expectedCount) {
+function combineValidReels(attempts, product, expectedCount, options) {
   const count = expectedCount || RF_CONFIG.REELS_PER_PRODUCT;
   const picked = [];
   for (let i = 0; i < count; i++) {
@@ -727,25 +785,37 @@ function combineValidReels(attempts, product, expectedCount) {
     }
     if (!picked[i]) return null;
   }
-  const res = validateGeminiReels({ reels: picked }, product, count);
+  const res = validateGeminiReels({ reels: picked }, product, count, options);
   return res.errors.length ? null : res;
 }
 
-/** HOOK first, CTA last, DEMO and BENEFIT present, beats in story order, keyword placeholder in the CTA. */
-function storyboardErrors_(scenes) {
+/**
+ * HOOK first, CTA last, beats in story order, keyword placeholder in the CTA.
+ * New scripts (newStructure): HOOK → EMPATHY → SOLUTION → DEMO → CTA (BENEFIT optional).
+ * Other scripts (older rows, reviewer edits): DEMO plus BENEFIT or SOLUTION.
+ */
+function storyboardErrors_(scenes, newStructure) {
   const errors = [];
   const beats = scenes.map(function (sc) {
     return sc ? sc.beat : '';
   });
-  const order = RF_CONFIG.BEATS;
+  const rank = RF_CONFIG.BEAT_RANK;
   if (beats[0] !== 'HOOK') errors.push('첫 장면은 HOOK이어야 합니다.');
   if (beats[beats.length - 1] !== 'CTA') errors.push('마지막 장면은 CTA여야 합니다.');
-  ['DEMO', 'BENEFIT'].forEach(function (b) {
-    if (beats.indexOf(b) === -1) errors.push(b + ' 장면이 필요합니다.');
-  });
+  const has = function (b) {
+    return beats.indexOf(b) !== -1;
+  };
+  if (newStructure) {
+    if (!has('EMPATHY') && !has('PROBLEM')) errors.push('EMPATHY 장면(이 상황이 왜 불편한지)이 필요합니다.');
+    if (!has('SOLUTION')) errors.push('SOLUTION 장면(제품을 자연스럽게 등장)이 필요합니다.');
+    if (!has('DEMO')) errors.push('DEMO 장면(확인된 기능 시연)이 필요합니다.');
+  } else {
+    if (!has('DEMO')) errors.push('DEMO 장면이 필요합니다.');
+    if (!has('BENEFIT') && !has('SOLUTION')) errors.push('BENEFIT 또는 SOLUTION 장면이 필요합니다.');
+  }
   for (let i = 1; i < beats.length; i++) {
-    if (order.indexOf(beats[i]) < order.indexOf(beats[i - 1])) {
-      errors.push('장면 순서는 HOOK → PROBLEM → DEMO → BENEFIT → CTA여야 합니다.');
+    if (rank[beats[i]] < rank[beats[i - 1]]) {
+      errors.push('장면 순서는 HOOK → EMPATHY → SOLUTION → DEMO → (BENEFIT) → CTA여야 합니다.');
       break;
     }
   }
@@ -753,6 +823,44 @@ function storyboardErrors_(scenes) {
   if (cta && typeof cta.narration === 'string' && cta.narration.indexOf(RF_CONFIG.KEYWORD_PLACEHOLDER) === -1) {
     errors.push('CTA 내레이션에 댓글 키워드 자리 "' + RF_CONFIG.KEYWORD_PLACEHOLDER + '"가 필요합니다.');
   }
+  return errors;
+}
+
+/** The first two words of a hook, for spotting three reels that open the same way. */
+function hookOpening_(hook) {
+  return normalizeText(hook).replace(/[^\s가-힣A-Za-z0-9]/g, '').split(' ').slice(0, 2).join(' ');
+}
+
+/**
+ * Hook style for new Gemini scripts: short, starts from a relatable problem, not an ad.
+ * Not applied to reviewer edits (the reviewer decides). Returns error strings with a fix.
+ */
+function hookStyleErrors_(reel, product, label, avoidHooks) {
+  const errors = [];
+  const hook = normalizeText(reel && reel.hook);
+  if (!hook) return errors;
+  const H = RF_CONFIG.HOOK_STYLE;
+  const p = label + ': hook "' + hook + '" — ';
+  const fix = ' 시청자가 겪는 구체적인 불편·상황으로 시작하는 짧은 구어체로 다시 쓰세요 (예: "급하게 출근하면 꼭 까먹는 우산!").';
+  if ([...hook].length > H.MAX_CHARS) {
+    errors.push(p + '첫 2~3초에 말할 수 있게 ' + H.MAX_CHARS + '자 이내여야 합니다.');
+  }
+  // Problem first: the hook must not open with the product.
+  const nameTokens = normalizeText(product && product.name).split(' ').filter(function (t) {
+    return [...t].length >= 2;
+  });
+  const first = hook.split(' ')[0];
+  if (nameTokens.some(function (t) { return first.indexOf(t) === 0; })) {
+    errors.push(p + '제품 이름으로 시작합니다. 제품이 아니라 상황·불편으로 시작하세요.' + fix);
+  }
+  H.AD_PATTERNS.forEach(function (rule) {
+    if (rule.pattern.test(hook)) errors.push(p + rule.why + '입니다.' + fix);
+  });
+  (avoidHooks || []).forEach(function (old) {
+    if (normalizeText(old) && looseText_(old) === looseText_(hook)) {
+      errors.push(p + '이 상품의 기존 릴스 hook과 같습니다. 새로운 hook을 쓰세요.');
+    }
+  });
   return errors;
 }
 
@@ -1439,10 +1547,10 @@ function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
  * Full pure pipeline: raw Gemini text → validated → REELS row objects.
  * Returns { errors: string[], records: object[] }.
  */
-function prepareReelRecords(product, rawText, existingIds, existingKeywords, meta) {
+function prepareReelRecords(product, rawText, existingIds, existingKeywords, meta, options) {
   const parsed = parseModelJson(rawText);
   if (parsed.error) return { errors: [parsed.error], records: [], attempt: null };
-  const result = validateGeminiReels(parsed.value, product);
+  const result = validateGeminiReels(parsed.value, product, null, options);
   // Kept so a later attempt can be combined with this one's valid reels (no extra paid call).
   const attempt = { reels: parsed.value && parsed.value.reels, reelErrors: result.reelErrors };
   if (result.errors.length) return { errors: result.errors, records: [], attempt: attempt };
@@ -1469,6 +1577,8 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
       items: {
         type: 'OBJECT',
         properties: {
+          // Creative angle: one reel each (A 일상 불편, B 좁은 공간, C 생활 상황).
+          angle: { type: 'STRING', enum: ['EVERYDAY_FRUSTRATION', 'SMALL_SPACE', 'LIFESTYLE_SITUATION'] },
           concept: { type: 'STRING' },
           hook: { type: 'STRING' },
           narration: { type: 'STRING' },
@@ -1479,7 +1589,7 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
               type: 'OBJECT',
               properties: {
                 scene_no: { type: 'INTEGER' },
-                beat: { type: 'STRING', enum: ['HOOK', 'PROBLEM', 'DEMO', 'BENEFIT', 'CTA'] },
+                beat: { type: 'STRING', enum: ['HOOK', 'EMPATHY', 'SOLUTION', 'DEMO', 'BENEFIT', 'CTA'] },
                 narration: { type: 'STRING' },
                 duration_sec: { type: 'NUMBER' },
                 visual: { type: 'STRING' },
@@ -1495,8 +1605,8 @@ const RF_GEMINI_RESPONSE_SCHEMA = {
           // IDs (F1, F2 …) of every verified fact the reel relies on.
           facts_used: { type: 'ARRAY', items: { type: 'STRING' } },
         },
-        required: ['concept', 'hook', 'narration', 'captions', 'scenes', 'facts_used'],
-        propertyOrdering: ['concept', 'hook', 'narration', 'captions', 'scenes', 'facts_used'],
+        required: ['angle', 'concept', 'hook', 'narration', 'captions', 'scenes', 'facts_used'],
+        propertyOrdering: ['angle', 'concept', 'hook', 'narration', 'captions', 'scenes', 'facts_used'],
       },
     },
   },
@@ -1521,7 +1631,8 @@ function buildRegenerationPrompt(product, currentReel, reviewerNote, previousErr
       '서로 다른 컨셉의 릴스 대본을 정확히 ' + RF_CONFIG.REELS_PER_PRODUCT + '개 작성하세요.',
       '아래 "현재 대본"을 검토자 요청에 맞게 고쳐 릴스 대본을 정확히 1개 작성하세요.'
     )
-    .replace(/\n9\. 세 릴스는[^\n]*/, '');
+    .replace(/\n9\. 세 릴스는[^\n]*/, '')
+    .replace(/\n## 세 가지 각도[\s\S]*?\n\n/, '\n## 각도\n- 현재 대본과 같은 angle을 유지하세요.\n\n');
   return [
     base,
     '',
@@ -1540,11 +1651,12 @@ function buildRegenerationPrompt(product, currentReel, reviewerNote, previousErr
  * `previousErrors` (optional) feeds validation failures back for a corrective retry, together with
  * the previous response (`previousResponse`, optional) so Gemini edits only what failed.
  */
-function buildGeminiPrompt(product, previousErrors, previousResponse) {
+function buildGeminiPrompt(product, previousErrors, previousResponse, avoidHooks) {
   const L = RF_CONFIG.LIMITS;
   const facts = parseConfirmedFeatures(product.features);
   const lines = [
-    '당신은 한국 인스타그램 홈데코 릴스(9:16 세로 숏폼) 대본 작가입니다.',
+    '당신은 한국 인스타그램 릴스(9:16 세로 숏폼) 대본 작가입니다. 계정 주제는 한국 홈데코, 작은 집·원룸 살이, 정리 수납, 생활에 쓸모 있는 물건입니다.',
+    '광고 문구가 아니라 실제 한국 라이프스타일 크리에이터가 친구에게 말하듯 쓰세요.',
     '아래 상품에 대해 서로 다른 컨셉의 릴스 대본을 정확히 ' + RF_CONFIG.REELS_PER_PRODUCT + '개 작성하세요.',
     '',
     '## 상품',
@@ -1564,22 +1676,37 @@ function buildGeminiPrompt(product, previousErrors, previousResponse) {
     '1. 제품에 대한 사실은 위 확인된 기능(' + factId(0) + '~' + factId(facts.length - 1) + ')만 사용하세요. 목록에 없는 기능, 소재, 내구성·강도, 호환 표면(냉장고·벽·타일 등), 설치 방식(무타공·공구 등), 수납 개수, 가격, 할인, 순위, 후기, 인증, 색상, 수치는 절대 만들지 마세요.',
     '2. 확인된 기능을 자연스러운 한국어 구어체로 바꿔 말하세요. 기술 설명 문구를 그대로 읽지 마세요. 예: "자석 부착형 거치 방식" → "자석으로 붙여서 쓰는 우산꽂이", "철제 도어 부착" → "철제 현관문에 붙일 수 있어요". 뜻을 넓히거나 보태지는 마세요.',
     '3. 숫자·치수·단위는 확인된 기능에 적힌 그대로만 쓰세요. 상단/하단 치수를 바꾸거나 반올림·환산하지 마세요. 가격·할인·퍼센트는 쓰지 마세요.',
-    '4. 각 장면의 fact_ids에는 그 장면이 말하거나 보여 주는 확인된 기능 ID를 넣으세요 (예: ["' + factId(0) + '"]). DEMO·BENEFIT 장면은 최소 1개, HOOK·PROBLEM·CTA는 해당 없으면 []. facts_used에는 릴스 전체에서 사용한 ID를 넣으세요. 기능 문장을 직접 쓰지 말고 ID만 쓰세요.',
+    '4. 각 장면의 fact_ids에는 그 장면이 말하거나 보여 주는 확인된 기능 ID를 넣으세요 (예: ["' + factId(0) + '"]). DEMO·BENEFIT 장면은 최소 1개, SOLUTION은 기능을 말하면 넣고, HOOK·EMPATHY·CTA는 보통 []. facts_used에는 릴스 전체에서 사용한 ID를 넣으세요. 기능 문장을 직접 쓰지 말고 ID만 쓰세요.',
     '5. 과장 표현(최저가, 100%, 무조건, 완벽, 평생, 절대, 1위, 최고, 튼튼, 강력 등)과 후기·인기 표현(후기, 리뷰, 다들 사요, 품절 등)을 쓰지 마세요.',
     '6. URL, 가격, 광고 표기는 쓰지 마세요. 댓글 키워드는 CTA 장면에서 자리표시자 ' + RF_CONFIG.KEYWORD_PLACEHOLDER + ' 로만 쓰세요.',
     '7. hook은 ' + L.HOOK_MAX_CHARS + '자 이내, narration은 ' + L.NARRATION_MAX_CHARS + '자 이내의 자연스러운 한국어 구어체. captions는 화면 자막 줄 목록이며 각 ' + L.CAPTION_MAX_CHARS + '자 이내.',
     '8. scenes는 ' + L.MIN_SCENES + '~' + L.MAX_SCENES + '개, scene_no는 1부터 순서대로, duration_sec 합계는 ' + L.MIN_TOTAL_SEC + '~' + L.MAX_TOTAL_SEC + '초.',
-    '9. 세 릴스는 concept과 hook이 서로 달라야 합니다 (예: 문제 해결, 설치 과정, 공간 비포/애프터).',
+    '9. 세 릴스는 angle, concept, hook, hook의 첫마디가 모두 서로 달라야 합니다.',
     '10. 시연은 실제로 가능한 사용 장면만 묘사하세요.',
+    '11. 경험담·사용 결과를 지어내지 마세요 ("한 달 써 보니", "바꿨더니 ~됐어요", "저는 ~했더니" 금지). 상황은 시청자 입장에서 "~잖아요", "~죠", "~할 때"처럼 말하세요.',
+    '',
+    '## 세 가지 각도 (릴스마다 하나씩, angle 필드에 표시)',
+    '- EVERYDAY_FRUSTRATION (A 일상 불편): 매일 겪는 짜증·깜빡함에서 시작. 예: "급하게 출근하면 꼭 까먹는 우산!"',
+    '- SMALL_SPACE (B 좁은 공간): 원룸·좁은 현관·수납 부족 문제에서 시작. 예: "좁은 현관에 우산꽂이까지 놓기 싫잖아요."',
+    '- LIFESTYLE_SITUATION (C 생활 상황): 비 오는 날 귀가, 손님 올 때, 이사 직후 같은 구체적인 장면에서 시작. 예: "원룸 살 때 제일 애매한 게 우산꽂이였어요."',
+    '',
+    '## hook (첫 장면, 첫 2~3초)',
+    '- ' + RF_CONFIG.HOOK_STYLE.MAX_CHARS + '자 이내. 첫 2초 안에 "어, 나도 그래" 싶은 구체적인 불편이나 상황을 말하세요.',
+    '- 제품 이름으로 시작하지 마세요. 제품 소개·결과 약속으로 시작하지 마세요.',
+    '- 쓰지 말 것: "~니다" 광고 말투, "~다면?"·"~하시나요?" 같은 뻔한 질문, "~하세요" 권유, "하나로", "소개", "추천", "필수템", "꿀템", "~이 달라집니다".',
+    '- 나쁜 예: "현관이 좁아 우산 둘 곳이 없다면?", "우산꽂이 하나로 현관이 달라집니다."',
+    '- 좋은 예: "급하게 출근하면 꼭 까먹는 우산!", "원룸 살 때 제일 애매한 게 우산꽂이였어요.", "좁은 현관에 우산꽂이까지 놓기 싫잖아요."',
+    '- 첫 장면 visual은 첫 프레임부터 그 불편한 상황을 보여 주세요 (느린 도입·로고·제품 클로즈업 금지).',
     '',
     '## 스토리보드 (영상이 이야기를 이끌고, 자막은 보조)',
-    '- 장면 순서: HOOK → (PROBLEM) → DEMO → BENEFIT → CTA. 첫 장면 HOOK, 마지막 장면 CTA, DEMO와 BENEFIT은 반드시 포함. PROBLEM은 HOOK 장면에 합쳐도 됩니다.',
+    '- 장면 순서: HOOK(공감 가는 불편·상황, 2~3초) → EMPATHY(왜 짜증 나는지) → SOLUTION(제품을 자연스럽게 등장) → DEMO(확인된 기능 시연) → CTA(댓글 키워드). 필요하면 DEMO 뒤에 BENEFIT 1개를 더할 수 있습니다.',
+    '- SOLUTION은 "그래서 ~" 처럼 자연스럽게 이어 주세요. 제품을 광고처럼 소개하지 마세요.',
     '- 각 장면의 narration은 그 장면에서 말하는 한 문장이며 그대로 자막이 됩니다: ' + L.SCENE_NARRATION_MAX_CHARS + '자 이내, 짧고 자연스러운 구어체.',
     '- 장면 길이 ' + L.SCENE_MIN_SEC + '~' + L.SCENE_MAX_SEC + '초, 전체 20~25초. hook = 첫 장면 narration. narration(전체) = 장면 narration을 순서대로 이은 것, captions = 장면 narration 목록.',
-    '- 말투: 크리에이터가 직접 말하듯 짧은 구어체 구절 (예: "인테리어 하면서", "나무 질감을 중요하게 생각해서"). 자막은 한 줄씩 짧게 바뀝니다.',
+    '- 말투: 크리에이터가 직접 말하듯 짧은 구어체 구절 (예: "인테리어 하면서", "나무 질감을 중요하게 생각해서"). 자막은 한 줄씩 짧게 바뀝니다. 기업 광고 말투(~합니다, ~드립니다)는 쓰지 마세요.',
     '- visual은 실제 생활 공간에서 사람이 제품을 쓰는 모습을 구체적으로: 카메라를 보는 사람, 손으로 제품 사용 클로즈업, 발·손 POV, 질감 클로즈업, 공간 와이드. 자연광, 핸드헬드. 글자만 있는 화면·단색 배경·그래픽 금지.',
     '- on_screen_text는 빈 문자열로 두세요 (자막은 narration으로 충분합니다).',
-    '- CTA 장면 narration 예: "제품 정보는 댓글에 \'' + RF_CONFIG.KEYWORD_PLACEHOLDER + '\'" — 과장 없이 자연스럽게.',
+    '- CTA 장면 narration 예: "제품 정보는 댓글에 \'' + RF_CONFIG.KEYWORD_PLACEHOLDER + '\' 남겨 주세요" — 과장 없이 자연스럽게, 댓글로 키워드를 남기도록.',
     '',
     '## flow_prompt (Google Flow 수동 생성용, 영어)',
     '- 각 장면마다 Google Flow에 붙여넣을 영어 영상 프롬프트를 작성하세요.',
@@ -1589,6 +1716,12 @@ function buildGeminiPrompt(product, previousErrors, previousResponse) {
     '',
     'JSON 스키마에 맞춰 JSON만 출력하세요.'
   );
+  if (avoidHooks && avoidHooks.length) {
+    lines.push('', '## 이 상품에 이미 쓴 hook (비슷하게 쓰지 마세요)');
+    avoidHooks.slice(-12).forEach(function (h) {
+      lines.push('- ' + normalizeText(h));
+    });
+  }
   if (previousErrors && previousErrors.length) {
     lines.push(
       '',
@@ -2021,8 +2154,9 @@ function logEvent_(level, action, productId, message, detail) {
  * URLs are intentionally blank and permission is "미확인" — they must be verified by the operator.
  *
  * FIXTURE_PRD_001_GEMINI_RESPONSE is a hand-written sample in the expected schema,
- * NOT a recorded Gemini response. Reel 1 is the operator's approved PRD-001 storyboard
- * (HOOK → DEMO → DEMO → BENEFIT → CTA, 23 s). Facts are referenced by ID (F1 = first line of
+ * NOT a recorded Gemini response, written in the account's style: each reel opens with a relatable
+ * problem (angles A/B/C) and follows HOOK → EMPATHY → SOLUTION → DEMO → CTA. Reel 1 keeps the timing
+ * of the operator's approved PRD-001 storyboard (3+4+6+6+4 = 23 s). Facts are referenced by ID (F1 = first line of
  * 확인된 기능 …), as Gemini returns them; REELS stores the matching sheet wording.
  *
  * FIXTURE_PRD_001_SHEET_FEATURES is the operator's real PRODUCTS wording for PRD-001 (regression
@@ -2054,8 +2188,9 @@ const FIXTURE_PRD_001_PRODUCT = {
   status: '',
 };
 
-function fixtureReel_(concept, scenes, factsUsed) {
+function fixtureReel_(angle, concept, scenes, factsUsed) {
   return {
+    angle: angle,
     concept: concept,
     hook: scenes[0][2],
     narration: scenes.map(function (s) { return s[2]; }).join(' '),
@@ -2069,42 +2204,42 @@ function fixtureReel_(concept, scenes, factsUsed) {
 
 const FIXTURE_PRD_001_GEMINI_RESPONSE = {
   reels: [
-    fixtureReel_('문제 해결: 좁은 현관의 우산 자리', [
-      ['HOOK', 3, '현관 좁은 집은 우산 어디 둬요?', '좁은 현관 바닥에 젖은 장우산과 접이식 우산이 어지럽게 놓인 모습',
-        'Vertical 9:16 handheld phone footage, narrow Korean apartment entryway, several wet umbrellas lying messily on the floor tiles, soft daylight, realistic, no text, no logos.'],
-      ['DEMO', 4, '저는 그냥 문에 붙였어요.', '손으로 자석 우산꽂이를 철제 현관문 아래쪽에 붙이는 클로즈업',
+    fixtureReel_('EVERYDAY_FRUSTRATION', '출근길에 깜빡하는 우산', [
+      ['HOOK', 3, '급하게 출근하면 꼭 까먹는 우산!', '현관문을 급히 나서다 멈칫하고 뒤돌아보는 사람, 신발장 구석에 세워 둔 우산',
+        'Vertical 9:16 handheld shot, a person in work clothes hurrying out of a small Korean apartment front door, stopping and looking back at an umbrella leaning in the corner, natural light, no text.'],
+      ['EMPATHY', 4, '구석에 세워 두면 눈에 안 띄잖아요.', '신발장 옆 구석에 기대 세워 둔 우산 클로즈업, 신발에 가려 잘 안 보임',
+        'Vertical 9:16 close-up, an umbrella leaning in a dim corner beside a shoe cabinet, partly hidden behind shoes, realistic, no text.'],
+      ['SOLUTION', 6, '그래서 현관문에 붙이는 우산꽂이', '손이 슬림한 다크그레이 우산꽂이를 철제 현관문 아래쪽에 자석으로 붙이는 모습',
         'Vertical 9:16 close-up, a hand placing a slim dark gray magnetic umbrella holder onto the lower part of a steel apartment front door, natural light, realistic, no text.', ['F1']],
-      ['DEMO', 6, '바닥 공간을 안 차지하니까', '문에 붙은 우산꽂이에 장우산과 접이식 우산을 차례로 꽂는 모습',
+      ['DEMO', 6, '장우산도 접이식 우산도 쏙 들어가요.', '문에 붙은 우산꽂이에 장우산과 접이식 우산을 차례로 꽂는 모습',
         'Vertical 9:16 medium shot, a person sliding a long umbrella and then a folding umbrella into a slim dark gray holder attached to a steel front door, natural light, no text.', ['F3', 'F1']],
-      ['BENEFIT', 6, '현관이 훨씬 깔끔해져요.', '우산이 문에 정리되고 바닥이 비어 있는 깔끔한 현관 전체 모습',
-        'Vertical 9:16 wide shot, tidy small Korean apartment entryway, umbrellas neatly held by a holder on the steel front door, clear floor, warm daylight, no text.', ['F1', 'F3']],
       ['CTA', 4, "제품 정보는 댓글에 '{키워드}' ☂️", '현관문에 붙은 우산꽂이 제품 클로즈업',
         'Vertical 9:16 slow close-up of a slim dark gray umbrella holder mounted on a steel door with one umbrella inside, soft light, shallow depth of field, no text.'],
     ], ['F1', 'F3']),
-    fixtureReel_('구성 소개: 상단·하단 분리형', [
-      ['HOOK', 3, '우산꽂이가 두 조각인 이유', '두 조각으로 된 우산꽂이 부품을 양손에 하나씩 든 모습',
-        'Vertical 9:16 close-up, two hands each holding one piece of a two-piece dark gray umbrella holder in a bright entryway, realistic, no text.'],
-      ['DEMO', 5, '상단 190×55×50mm,', '상단 부품을 철제 문 위쪽에 붙이는 손',
-        'Vertical 9:16 close-up, a hand attaching the upper piece of a dark gray umbrella holder to a steel door, natural light, no text.', ['F2']],
-      ['DEMO', 5, '하단 188×55×82mm, 따로 분리돼요.', '하단 부품을 철제 문 아래쪽에 붙이는 손',
-        'Vertical 9:16 close-up, a hand attaching the lower tray piece of a dark gray umbrella holder near the bottom of a steel door, natural light, no text.', ['F2']],
-      ['BENEFIT', 5, '철제 문에 자석으로 착.', '위아래 부품이 붙은 문에 장우산 하나가 서 있는 모습',
-        'Vertical 9:16 medium shot, steel apartment door with a two-piece umbrella holder, a long umbrella standing in it, tidy floor, daylight, no text.', ['F1']],
-      ['CTA', 4, "제품 정보는 댓글에 '{키워드}'", '문에 붙은 다크그레이 우산꽂이 클로즈업',
+    fixtureReel_('SMALL_SPACE', '좁은 현관 바닥 비우기', [
+      ['HOOK', 3, '좁은 현관에 우산꽂이까지 놓기 싫잖아요.', '신발로 가득 찬 좁은 현관 바닥을 내려다보는 POV',
+        'Vertical 9:16 top-down POV, a tiny Korean apartment entryway floor crowded with shoes, no free space, natural light, realistic, no text.'],
+      ['EMPATHY', 4, '신발 둘 자리도 빠듯한데 말이죠.', '신발을 발로 밀어 자리를 만드는 모습',
+        'Vertical 9:16 close-up, a foot pushing shoes aside to make room on a small entryway floor, realistic, no text.'],
+      ['SOLUTION', 5, '바닥 말고 철제 문에 붙이면 돼요.', '두 조각 우산꽂이를 철제 문에 붙이는 손',
+        'Vertical 9:16 close-up, a hand attaching a dark gray two-piece umbrella holder to a steel door, natural light, no text.', ['F1']],
+      ['DEMO', 5, '상단 190×55×50mm, 하단 188×55×82mm', '위아래로 나뉜 두 부품을 하나씩 보여 주고 문에 붙인 모습',
+        'Vertical 9:16 medium shot, steel apartment door with the upper and lower pieces of a dark gray umbrella holder, a long umbrella standing in it, tidy floor, daylight, no text.', ['F2']],
+      ['CTA', 4, "궁금하면 댓글에 '{키워드}' 남겨 주세요", '문에 붙은 다크그레이 우산꽂이 클로즈업',
         'Vertical 9:16 slow close-up of a dark gray two-piece umbrella holder on a steel door, soft light, no text.'],
-    ], ['F2', 'F1']),
-    fixtureReel_('인테리어: 현관 색에 맞춰 고르기', [
-      ['HOOK', 3, '현관 분위기에 맞는 우산꽂이?', '밝은 현관 문 앞에서 우산꽂이 색상을 고민하는 손',
-        'Vertical 9:16 close-up, a hand holding a small umbrella holder against a light-colored steel front door, bright natural light, no text.'],
-      ['PROBLEM', 4, '기대 세운 우산, 자꾸 쓰러지죠.', '벽에 기대 세워 둔 우산이 미끄러져 쓰러지는 모습',
-        'Vertical 9:16 medium shot, an umbrella leaning on an entryway wall slowly sliding and falling to the floor, realistic, no text.'],
-      ['DEMO', 5, '다크그레이, 그레이, 화이트 중에', '다크그레이·그레이·화이트 우산꽂이 세 개를 나란히 보여 주는 손',
+    ], ['F1', 'F2']),
+    fixtureReel_('LIFESTYLE_SITUATION', '비 오는 날 귀가', [
+      ['HOOK', 3, '비 오는 날 집에 오면 젖은 우산부터 문제', '비 오는 날 현관에 들어서며 젖은 장우산을 든 채 둘 곳을 찾는 사람',
+        'Vertical 9:16 handheld shot, a person stepping into a small Korean apartment entryway on a rainy day holding a wet long umbrella, looking for a place to put it, no text.'],
+      ['EMPATHY', 4, '바닥에 눕혀 두면 현관이 금방 어수선해요.', '현관 바닥에 아무렇게나 놓인 젖은 우산들',
+        'Vertical 9:16 close-up, wet umbrellas lying messily on entryway floor tiles, realistic, no text.'],
+      ['SOLUTION', 5, '문에 붙여 쓰는 우산꽂이로 정리해요.', '흰 철제 문에 붙은 흰색 우산꽂이에 젖은 우산을 꽂는 손',
+        'Vertical 9:16 close-up, a hand putting a wet umbrella into a white umbrella holder attached to a white steel door, natural light, no text.', ['F1']],
+      ['DEMO', 5, '다크그레이, 그레이, 화이트 중에 골라요.', '다크그레이·그레이·화이트 우산꽂이 세 개를 나란히 보여 주는 손',
         'Vertical 9:16 top-down shot, three plain umbrella holders in dark gray, gray and white side by side on a wooden shoe bench, soft light, no text.', ['F4']],
-      ['BENEFIT', 5, '문 색에 맞춰 골라 붙이면 돼요.', '흰 철제 문에 흰색 우산꽂이가 붙어 정돈된 현관',
-        'Vertical 9:16 wide shot, white steel apartment door with a white umbrella holder holding umbrellas, tidy floor, warm light, no text.', ['F4', 'F1']],
-      ['CTA', 4, "제품 정보는 댓글에 '{키워드}'", '문에 붙은 흰색 우산꽂이 클로즈업',
+      ['CTA', 4, "색상 정보는 댓글에 '{키워드}'", '문에 붙은 흰색 우산꽂이 클로즈업',
         'Vertical 9:16 slow close-up of a white umbrella holder on a white steel door, one umbrella inside, soft light, no text.'],
-    ], ['F4', 'F1']),
+    ], ['F1', 'F4']),
   ],
 };
 
@@ -2392,7 +2527,8 @@ function promptForGeminiApiKey() {
  * Generates up to MAX_GEMINI_ATTEMPTS Gemini responses until one passes validation,
  * then returns { records, attempts }. Throws with all validation errors otherwise.
  */
-function generateValidatedRecords_(product, existingIds, existingKeywords) {
+function generateValidatedRecords_(product, existingIds, existingKeywords, previousHooks) {
+  const vopts = { avoidHooks: previousHooks || [] };
   let lastErrors = [];
   let lastRaw = '';
   const attempts = [];
@@ -2401,8 +2537,8 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
   };
   for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
     // A retry gets the exact failing claims and the previous response, so Gemini fixes only those.
-    const raw = callGemini_(buildGeminiPrompt(product, lastErrors, lastRaw));
-    const result = prepareReelRecords(product, raw, existingIds, existingKeywords, meta());
+    const raw = callGemini_(buildGeminiPrompt(product, lastErrors, lastRaw, vopts.avoidHooks));
+    const result = prepareReelRecords(product, raw, existingIds, existingKeywords, meta(), vopts);
     if (!result.errors.length) return { records: result.records, attempts: attempt };
     attempts.push(result.attempt);
     lastErrors = result.errors;
@@ -2415,7 +2551,7 @@ function generateValidatedRecords_(product, existingIds, existingKeywords) {
       result.errors.join('\n') + '\n\n--- 원본 응답 ---\n' + raw
     );
     // Free rescue: if every position has a reel that passed in some attempt, use those.
-    const combined = attempts.length > 1 ? combineValidReels(attempts, product) : null;
+    const combined = attempts.length > 1 ? combineValidReels(attempts, product, null, vopts) : null;
     if (combined) {
       logEvent_('INFO', 'validateGemini', product.id, '시도별로 검증을 통과한 대본을 합쳐 사용합니다 (추가 호출 없음).', '');
       return { records: buildReelRecords(product, combined.reels, existingIds, existingKeywords, meta()), attempts: attempt };
@@ -2513,7 +2649,15 @@ function generateScriptsForProduct_(ss, rowNumber, options) {
   }).length;
   if (already > 0 && !options.allowAdditional) return { needsConfirm: already, product: product };
 
-  const result = generateValidatedRecords_(product, existingIds, existingKeywords);
+  // Hooks this product already has: Gemini is asked not to repeat them, and exact repeats are refused.
+  const previousHooks = readRecords_(reelsSheet, ['후킹', '상품ID'])
+    .filter(function (r) {
+      return normalizeText(r['상품ID']) === product.id && normalizeText(r['후킹']);
+    })
+    .map(function (r) {
+      return normalizeText(r['후킹']);
+    });
+  const result = generateValidatedRecords_(product, existingIds, existingKeywords, previousHooks);
   appendRecords_(reelsSheet, result.records, RF_SCRIPT_FIELDS);
 
   const now = new Date();

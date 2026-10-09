@@ -25,7 +25,8 @@ function preflight(storyboard, template, job) {
   const maxW = captionMaxWidth(template);
   const beats = storyboard.beats;
   const checks = [];
-  checks.push(check('story.structure', beats[0].beat === 'HOOK' && beats[beats.length - 1].beat === 'CTA' && beats.some((b) => b.beat === 'DEMO') && beats.some((b) => b.beat === 'BENEFIT'),
+  // New scripts: HOOK → EMPATHY → SOLUTION → DEMO → CTA; older ones: HOOK → (PROBLEM) → DEMO → BENEFIT → CTA.
+  checks.push(check('story.structure', beats[0].beat === 'HOOK' && beats[beats.length - 1].beat === 'CTA' && beats.some((b) => b.beat === 'DEMO') && beats.some((b) => b.beat === 'BENEFIT' || b.beat === 'SOLUTION'),
     beats.map((b) => b.beat).join(' → ')));
   const cta = beats[beats.length - 1];
   checks.push(check('cta.keyword', storyboard.keyword && cta.subtitle.includes(storyboard.keyword),
