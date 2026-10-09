@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
+const path = require('node:path');
 const { build, OUT } = require('../scripts/build-bundle.js');
 
 test('dist/ReelsFactory.gs is up to date (run `npm run build`)', () => {
@@ -43,4 +44,16 @@ test('public server functions that write or spend quota are guarded', () => {
   }
   assert.ok(!('callGemini' in fns), 'callGemini must stay private');
   assert.ok(exposed.length >= 5, 'sanity: found ' + exposed.join(', '));
+});
+
+// The iPhone page only works if every server function it calls exists (a typo would fail only on the phone).
+test('every google.script.run call in the dashboard exists in the bundle as a guarded api function', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'apps-script', 'Dashboard.html'), 'utf8');
+  const src = fs.readFileSync(OUT, 'utf8');
+  const called = [...new Set([...html.matchAll(/call\('(api\w+)'/g)].map((m) => m[1]))];
+  assert.ok(called.includes('apiStartClipUpload') && called.includes('apiUploadClipChunk') && called.includes('apiReviewClip'));
+  for (const n of called) assert.match(src, new RegExp('^function ' + n + '\\(', 'm'), n + ' is missing from the bundle');
+  // The page script itself must parse.
+  const js = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/)[1];
+  assert.doesNotThrow(() => new Function(js));
 });

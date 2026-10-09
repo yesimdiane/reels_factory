@@ -34,6 +34,7 @@ Turn a verified product entry into three distinct 9:16 short-form video concepts
 - [x] iPhone approval dashboard (Apps Script web app) — [docs/iphone-dashboard.md](docs/iphone-dashboard.md)
 - [x] FFmpeg renderer (Mac now, container later): Google Cloud TTS Korean narration, voice-synced subtitles, disclosure, CTA — [docs/rendering.md](docs/rendering.md)
 - [x] Gemini production planner after `SCRIPT_APPROVED`: Flow prompts matched to verified product images, voice rate/pauses, subtitle emphasis, cuts; Drive folder + clip tracker; `fetch-clips`; advisory Gemini check of the final video — [docs/gemini-orchestration.md](docs/gemini-orchestration.md)
+- [x] Mobile Flow media workspace: product photo upload, per-scene prompt/Flow link, chunked clip upload from iPhone, per-clip approval with versions, render only when every clip is approved (Mac re-checks IDs and checksums) — [docs/media-workspace.md](docs/media-workspace.md)
 - [ ] ManyChat: stays a manual, operator-confirmed step
 
 Cost safety (Gemini model check, 8 s Flow clip coverage, TTS ledger vs Google billing, quotas and alerts): [docs/cost-safety.md](docs/cost-safety.md).

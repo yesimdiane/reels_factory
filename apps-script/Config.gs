@@ -8,7 +8,7 @@
 const RF_CONFIG = {
   // Shown in the dashboard header and in 릴스 팩토리 → 코드 버전 확인. If the two differ, the web app
   // was not redeployed after the code was replaced (Deploy → Manage deployments → New version).
-  CODE_VERSION: '2026-10-10 · gemini-orchestrator 4',
+  CODE_VERSION: '2026-10-11 · flow-media-workspace 5',
 
   // Instagram brand. Used in the Gemini prompt and shown in the dashboard; edit here to reuse the
   // factory for another account. See docs/brand.md.
@@ -106,9 +106,11 @@ const RF_CONFIG = {
   ],
 
   // Added by 시트 준비 when missing; never required, so older sheets and the live dashboard keep working.
-  REELS_OPTIONAL_HEADERS: ['콘텐츠 기둥', '확인 필요', '훅 후보(JSON)', '선택한 훅', '제작 계획(JSON)', '에셋 현황(JSON)'],
+  REELS_OPTIONAL_HEADERS: ['콘텐츠 기둥', '확인 필요', '훅 후보(JSON)', '선택한 훅', '제작 계획(JSON)', '에셋 현황(JSON)', '장면 클립(JSON)'],
   // Production planning (after SCRIPT_APPROVED) needs these; checked before any Gemini call.
   REELS_PRODUCTION_HEADERS: ['제작 계획(JSON)', '에셋 현황(JSON)'],
+  // Scene clip versions and per-clip approvals (Media.gs). Checked before any upload or review.
+  REELS_MEDIA_HEADERS: ['장면 클립(JSON)'],
   // New scripts need these to keep the five hooks and the operator's choice (checked before any Gemini call).
   REELS_HOOK_HEADERS: ['훅 후보(JSON)', '선택한 훅'],
 
@@ -243,6 +245,26 @@ const RF_CONFIG = {
     PLAN_STATUSES: ['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'],
     // Attributes a Flow scene description must never add (the verified facts are the only source).
     SCENE_PROMPT_FORBIDDEN: ['refrigerator', 'fridge', 'drill', 'screw', 'nail ', 'adhesive', 'glue', 'suction', 'waterproof', 'heavy-duty', 'brand name', 'price', 'discount', 'sale '],
+  },
+
+  // Mobile media workspace (Media.gs): reference photos, Flow clip uploads from iPhone Safari, per-clip review.
+  // Google Flow stays manual: nothing here calls Flow or Veo.
+  MEDIA: {
+    // Flow lives at flow.google (labs.google/fx redirects there). Override with Script Property RF_FLOW_URL.
+    FLOW_URL: 'https://flow.google',
+    REF_PHOTOS_MAX: 4,
+    REF_FOLDER_NAME: 'references',
+    VERSIONS_FOLDER_NAME: 'versions',
+    CLIP_MIN_BYTES: 10 * 1024,
+    CLIP_MAX_BYTES: 100 * 1024 * 1024,
+    CLIP_EXTENSIONS: ['mp4', 'mov', 'm4v'],
+    CLIP_MIME: ['video/mp4', 'video/quicktime', 'video/x-m4v'],
+    // Each google.script.run call carries one chunk (base64 adds a third; a single call is limited to ~50 MB).
+    // Drive's resumable protocol needs every non-final chunk to be a multiple of 256 KiB.
+    CHUNK_BYTES: 6 * 256 * 1024,
+    UPLOAD_TTL_SEC: 6 * 60 * 60,
+    DRIVE_API: 'https://www.googleapis.com/drive/v3/files/',
+    DRIVE_UPLOAD_API: 'https://www.googleapis.com/upload/drive/v3/files',
   },
 
   // Story structure. New scripts: HOOK → EMPATHY → SOLUTION → DEMO → CTA (BENEFIT optional before CTA).

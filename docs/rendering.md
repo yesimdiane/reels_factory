@@ -80,6 +80,10 @@ There is **no code path that draws coloured slides or placeholder visuals**. Wit
 - **8 s clip coverage:** every scene must fit its clip. The renderer predicts each scene's length from its narration **before TTS** and, if a scene would outgrow one clip (7.5 s usable), asks for an extra clip `S3b.mp4`. It re-checks with the real voice after TTS; the voice is cached, so the rerun is free. Details: [cost-safety.md](cost-safety.md#2-google-flow-clips-are-8-seconds).
 - **Clip checks:** ≥720p, at least the covered length + 0.5 s (≥4 s, ≤8 s), not a single colour, not a still image. Any problem → `ASSETS_REQUIRED`, and `SHOTLIST.md` + `FLOW_PROMPTS.md` are written next to the clips. Both are written once and not rewritten if unchanged.
 
+## Approved clips (media workspace)
+
+For a job with a Gemini production plan the signed job carries `clipManifest` (every approved clip's Drive file ID, MD5 and size). `fetch-clips` downloads exactly those files by ID and verifies size and MD5; `render` then refuses, **before any TTS**, if a clip it would use is not in the manifest or its bytes differ from the approved file (swapped file, older version, unapproved per-cut override, extra clip such as `S3b`). Jobs without a plan keep using local clips as before. See [media-workspace.md](media-workspace.md).
+
 ## Gemini's production plan in the render, and the final check
 
 If the signed job carries a production plan for **this** approval, the renderer applies it within fixed limits (invalid parts are skipped with a log line; a plan for another approval or with different spoken text is ignored):

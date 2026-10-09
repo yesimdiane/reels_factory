@@ -60,6 +60,8 @@ The **official** programmatic route to the same model family is Veo through the 
 
 Decision: Flow generation stays **manual** (`PRODUCTION.FLOW_PROVIDER = 'manual'`), and clips come back through Google Drive. Nothing here claims Flow is available through an API, and no paid video generation is wired in. Veo-by-API could be added later as an explicit, cost-gated provider; that needs your decision on budget and rights first.
 
+> **Update (issue #12):** clips are now uploaded, versioned and approved per scene from the iPhone dashboard, and the render job needs every clip approved — see [media-workspace.md](media-workspace.md). The tracker below remains the fallback path (Drive app upload + *이 파일 연결*).
+
 ## Google Drive asset planning and tracking
 
 - **Prepare:** *Drive 폴더 준비* creates `Reels Factory / <상품ID> / <릴스ID>` (root can be pinned with Script Property `RF_DRIVE_FOLDER_ID`) and lists one tracker row per Flow clip with its expected file name (`S1.mp4`, `S3b.mp4` …).
