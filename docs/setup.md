@@ -1,0 +1,123 @@
+# Setup — Sheets → Gemini → 3 reel scripts
+
+## Easiest install (about 10 minutes, no tools)
+
+You only paste **one file**. Nothing in your existing PRODUCTS tab is changed.
+
+1. **Get a Gemini API key.** Go to [Google AI Studio → API keys](https://aistudio.google.com/apikey), click **Create API key**, and copy it.
+   Keep it private: don't paste it into the sheet, a chat, or an email.
+2. **Open the script editor.** Open your workbook, then go to **Extensions → Apps Script**. A new browser tab opens.
+3. **Paste the code.**
+   - In the left panel, click **＋** next to *Files* → **Script**, and name it `ReelsFactory`.
+   - Open [`dist/ReelsFactory.gs`](../dist/ReelsFactory.gs) on GitHub, click **Copy raw file** (the copy icon), and paste it into the new file, replacing the empty `function myFunction() {}`.
+   - Click **💾 Save**.
+   - If the left panel already had a file with its own `function onOpen()`, see [Existing Apps Script code](#existing-apps-script-code) before continuing.
+4. **Reload the spreadsheet tab.** After a few seconds a **릴스 팩토리** menu appears to the right of *Help*.
+5. **Allow access.** Click **릴스 팩토리 → Gemini API 키 설정**. Google asks for permission the first time:
+   - Choose your account.
+   - If you see **"Google hasn't verified this app"**, click **Advanced → Go to (project name) (unsafe)**. This is normal: the script is your own, inside your workbook, and was never published.
+   - Click **Allow**. Then click the menu item again, paste the API key, and press **OK**.
+6. **Prepare the sheets.** Click **릴스 팩토리 → 시트 준비**. The result window should show ✓ PRODUCTS and ✓ for REELS / PERFORMANCE / LOG.
+7. **Test without spending API calls.** Click **릴스 팩토리 → 테스트: PRD-001 오프라인 검증**. It should say **통과**.
+8. **Use it.** Click any cell in a product row in PRODUCTS, then click **릴스 팩토리 → 선택한 상품으로 릴스 대본 3개 생성**. After about 10–60 seconds, three new rows appear in REELS.
+
+**To update later**, open `ReelsFactory` in the script editor, select all, paste the new `dist/ReelsFactory.gs`, and save.
+
+## Before you start: things that can block installation in an existing workbook
+
+| Check | What goes wrong | Fix |
+|---|---|---|
+| The product tab is named **PRODUCTS** | *"PRODUCTS 시트를 찾을 수 없습니다"* | Rename the tab. Extra spaces and upper/lower case are tolerated (`Products ` works); a Korean name like `상품` is not. |
+| Headers are in **row 1** of PRODUCTS | Missing-header error, even though the headers exist | Headers must be in row 1. A title row above them breaks lookup. Spaces inside a header are tolerated (`상품 ID` = `상품ID`), but the words must match. |
+| **확인된 기능** has one fact per line | Script rejected as "확인되지 않은 기능" | Put each fact on its own line in the cell (Ctrl/⌘ + Enter inside the cell), or separate facts with `;`. |
+| You are an **editor** of the workbook | The menu never appears | Viewers and commenters can't run scripts. |
+| **Work / school Google account** | *"This app is blocked"*, or *Allow* is greyed out | Your Workspace admin restricts Apps Script or external requests. Ask them to allow Apps Script for your account, or use a personal Gmail copy of the workbook. |
+| A tab named **REELS**, **PERFORMANCE** or **LOG** already exists with different headers | Generation stops with a missing-header error | Run **시트 준비**. It asks before adding only the missing headers to the right end of row 1. Existing cells are never changed. |
+| Old Apps Script project (pre-2020) | `SyntaxError` on save | In **Project Settings ⚙**, tick **Enable Chrome V8 runtime**. |
+| Gemini model retired | *"Gemini API 오류 HTTP 404 … 모델을 사용할 수 없습니다"* | The default is `gemini-3.5-flash`. If Google retires it, add the Script Property `GEMINI_MODEL` with a current model ID from AI Studio. No code change is needed. |
+
+### Existing Apps Script code
+
+If the workbook already has Apps Script code:
+
+- **Another `function onOpen()`:** Apps Script keeps only one of them, so one menu would silently disappear.
+  Delete the `onOpen` at the bottom of `ReelsFactory`, and add this line inside your existing `onOpen()`:
+  ```js
+  addReelsFactoryMenu();
+  ```
+- **Your project lists `oauthScopes` in `appsscript.json`** (you'd know if you set this up): add
+  `"https://www.googleapis.com/auth/script.external_request"` and
+  `"https://www.googleapis.com/auth/script.container.ui"` to that list. Otherwise the Gemini call fails with a permission error.
+- All Reels Factory constants are prefixed `RF_` / `FIXTURE_` to avoid name clashes with your code.
+
+## Settings (Script Properties)
+
+These are under Apps Script → **Project Settings ⚙ → Script Properties**.
+
+| Property | Required | Default | Notes |
+|---|---|---|---|
+| `GEMINI_API_KEY` | yes | — | Set it via the menu or here. It is never stored in the sheet or in Git. |
+| `GEMINI_MODEL` | no | `gemini-3.5-flash` | Any model ID that supports `generateContent` with a JSON `responseSchema`. |
+
+## Permissions requested
+
+- **See, edit… spreadsheets that this application has been installed in.** Only this workbook (`@OnlyCurrentDoc`).
+- **Connect to an external service.** Used only to call `generativelanguage.googleapis.com` (Gemini).
+- **Display and run third-party web content in prompts and sidebars.** Used for the menu dialogs.
+
+## Developer install (clasp, multi-file)
+
+```bash
+npm install -g @google/clasp
+clasp login
+clasp clone <SCRIPT_ID> --rootDir apps-script   # creates .clasp.json (git-ignored)
+clasp push                                       # pushes apps-script/*.gs + appsscript.json
+```
+
+Use either the bundle **or** the multi-file sources in a given project, not both: duplicate `const` declarations would stop the whole project from loading.
+
+After editing `apps-script/*.gs`, run `npm run build` to regenerate `dist/ReelsFactory.gs`. The tests fail if you forget.
+
+## Tests
+
+### Local (no Google account, no API key)
+
+```bash
+npm test
+```
+
+Requires Node.js ≥ 20 and has no dependencies. It runs three test files:
+
+- `tests/reels.test.js`: validation, IDs, ManyChat keywords and the prompt, using the PRD-001 fixture.
+- `tests/workflow.test.js`: the menu actions, run from the **installed bundle** against in-memory Sheets / Gemini mocks. It covers:
+  - PRODUCTS is never modified.
+  - Writes are done by header name.
+  - Spaced headers and tab names are handled.
+  - Retry and failure paths work, including network timeouts.
+  - Duplicate checks run.
+  - 시트 준비 behaves correctly.
+- `tests/bundle.test.js`: `dist/ReelsFactory.gs` is up to date and has no duplicate top-level names.
+
+### In the spreadsheet
+
+- **테스트: PRD-001 오프라인 검증** validates the bundled sample response. It makes no API call and writes nothing to the sheets.
+- **테스트: PRD-001 Gemini 실제 호출 (시트에 쓰지 않음)** calls Gemini with the PRD-001 fixture and validates the real response. It writes only to LOG.
+
+### PRD-001 manual acceptance test
+
+Add this row to PRODUCTS (if PRD-001 is not already there), select it, and run the generate menu:
+
+| 상품ID | 상품명 | 확인된 기능 (one per line) | 영상 사용 허가 상태 |
+|---|---|---|---|
+| PRD-001 | 리템 우산꽂이 자석형 | 호환되는 철제 표면에 자석으로 부착 가능<br>상단·하단 분리형 (상단 190×55×50mm, 하단 188×55×82mm)<br>장우산과 접이식 우산 모두 수납 가능<br>색상: 다크그레이, 그레이, 화이트 | 미확인 |
+
+Expected results:
+- REELS gains `PRD-001-R01..R03` (or the next free numbers) with keywords `PRD001R01..R03`. Each row has:
+  - the affiliate disclosure,
+  - a CTA containing its keyword,
+  - `Flow 생성 = 수동 생성 필요 …`,
+  - a 검토 메모 warning that video permission is unverified.
+- No number other than 190, 55, 50, 188 and 82 appears in hooks, narration, captions or on-screen text.
+- PRODUCTS is unchanged.
+
+If generation fails, open the **LOG** tab. The 상세 column lists every rejected rule and the raw Gemini response.
