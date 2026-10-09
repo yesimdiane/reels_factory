@@ -81,6 +81,7 @@ These are under Apps Script → **Project Settings ⚙ → Script Properties**.
 |---|---|---|---|
 | `GEMINI_API_KEY` | yes | — | Set it via the menu or here. It is never stored in the sheet or in Git. |
 | `GEMINI_MODEL` | no | `gemini-3.5-flash` | Any model ID that supports `generateContent` with a JSON `responseSchema`. |
+| `GEMINI_IMAGE_MODEL` | no | `gemini-2.5-flash-image` | Model ID for 9:16 vertical storyboard image generation using reference image bytes. |
 | `RF_DRIVE_FOLDER_ID` | no | a folder named `Reels Factory` in My Drive (created if missing) | Pin the Drive root folder for the per-reel clip folders. |
 
 ## Permissions requested

@@ -368,6 +368,7 @@ function renderDetail() {
 
   renderHooks(main);
   renderProduction(main);
+  renderStoryboard(main);
   renderMedia(main);
   renderActions(main);
 
@@ -754,6 +755,173 @@ function uiFor(box, controls) {
     progress: function (n) { bar.style.display = 'block'; bar.value = n; },
     disabled: function (on) { controls.forEach(function (el) { el.disabled = on; }); },
   };
+}
+
+function generateStoryboard(sceneNo) {
+  const d = S.detail;
+  const label = sceneNo ? '장면 S' + sceneNo : '모든 장면(S1~S' + (d.storyboard && d.storyboard.totalCount || 5) + ')';
+  if (!confirm(label + ' 9:16 스토리보드 이미지를 Gemini로 생성할까요? (실제 제품 사진이 전송됩니다)')) return;
+  busy(true, label + ' 이미지 생성 중… (최대 1분)');
+  call('apiGenerateStoryboardImages', d.summary.reelId, {
+    scene: sceneNo || undefined,
+    expectedStatus: d.summary.status,
+    expectedScriptVersion: d.summary.scriptVersion
+  }).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 9000); return; }
+    S.detail = res.detail; renderDetail();
+    toast('스토리보드 이미지를 생성했습니다.');
+    refreshAround();
+  });
+}
+
+function reviewStoryboard(c, decision) {
+  const d = S.detail;
+  let note = '';
+  if (decision === 'REJECT') {
+    note = askNote(c.key + ' v' + c.current.v + ' — 수정할 내용을 적어 주세요 (재생성에 반영됩니다):', true);
+    if (note === null) return;
+  } else if (!confirm(c.key + ' v' + c.current.v + ' 이미지를 승인할까요? 제품 외형과 연출이 대본 및 실제 제품과 일치하는지 확인했나요?')) {
+    return;
+  }
+  busy(true, '저장 중…');
+  call('apiReviewStoryboardImage', d.summary.reelId, {
+    scene: c.scene,
+    version: c.current.v,
+    decision: decision,
+    note: note,
+    expectedStatus: d.summary.status,
+    expectedScriptVersion: d.summary.scriptVersion
+  }).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 8000); return; }
+    S.detail = res.detail; renderDetail();
+    toast(c.key + (decision === 'APPROVE' ? ' 이미지 승인됨' : ' 이미지 수정 요청됨 (종속 비디오 승인 취소)'));
+    refreshAround();
+  });
+}
+
+function regenerateStoryboard(c) {
+  const d = S.detail;
+  const note = askNote(c.key + ' 재생성 메모 (선택사항 — 비워두면 이전 메모 또는 대본을 바탕으로 재생성합니다):', false);
+  if (note === null) return;
+  busy(true, c.key + ' 이미지 재생성 중…');
+  call('apiRegenerateStoryboardImage', d.summary.reelId, {
+    scene: c.scene,
+    note: note || undefined,
+    expectedStatus: d.summary.status,
+    expectedScriptVersion: d.summary.scriptVersion
+  }).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 9000); return; }
+    S.detail = res.detail; renderDetail();
+    toast(c.key + ' 새 이미지가 생성되었습니다 (이전 승인은 무효화됨).');
+    refreshAround();
+  });
+}
+
+const STORYBOARD_STATUS = {
+  MISSING: ['chip', '이미지 없음'],
+  PENDING_REVIEW: ['chip warn', '검토 대기'],
+  APPROVED: ['chip ok', '승인됨'],
+  REJECTED: ['chip bad', '수정 요청됨'],
+};
+
+function renderStoryboard(main) {
+  const d = S.detail;
+  const sb = d.storyboard;
+  if (!sb || !sb.visible) return;
+  const card = h('div', { class: 'card' });
+  card.appendChild(h('h3', { style: 'margin-top:0', text: '🖼️ 9:16 스토리보드 이미지 (Gemini 2.5 Flash Image)' }));
+  card.appendChild(h('div', { class: 'muted', text: '실제 제품 사진과 승인된 대본으로 9:16 스토리보드 이미지를 생성하고 승인합니다. 완성된 이미지는 다운로드하여 Google Flow 이미지-투-비디오에 사용하세요.' }));
+
+  if (sb.blocker) {
+    card.appendChild(h('div', { class: 'banner warn', style: 'margin-top:8px', text: sb.blocker }));
+    main.appendChild(card);
+    return;
+  }
+
+  card.appendChild(h('div', { class: 'row', style: 'margin:8px 0' }, [
+    h('span', { class: 'chip ' + (sb.referencesCount ? 'ok' : 'warn'), text: '참고 사진 ' + sb.referencesCount + '장' }),
+    h('span', { class: 'chip ' + (sb.allApproved ? 'ok' : 'warn'), text: '스토리보드 승인 ' + sb.approvedCount + '/' + sb.totalCount }),
+  ]));
+
+  if (sb.allApproved) {
+    card.appendChild(h('div', { class: 'banner ok', text: '모든 장면의 9:16 이미지가 승인되었습니다. 아래에서 각 장면의 이미지를 다운로드하고 모션 프롬프트를 복사하여 Google Flow에서 영상을 제작하세요.' }));
+  }
+
+  card.appendChild(h('div', { class: 'btns one', style: 'margin-bottom:12px' }, [
+    h('button', {
+      class: 'b primary', type: 'button', disabled: !sb.canGenerate,
+      onclick: function () { generateStoryboard(0); },
+      text: '전체 스토리보드 생성 (S1~S' + sb.totalCount + ' · Gemini)',
+    }),
+  ]));
+
+  (sb.images || []).forEach(function (c) {
+    const st = STORYBOARD_STATUS[c.status] || ['chip', c.status];
+    const box = h('div', { class: 'scene' });
+    box.appendChild(h('div', { class: 'row', style: 'justify-content:space-between' }, [
+      h('strong', { text: c.key + ' · ' + c.beat + ' · ' + c.duration_sec + '초' }),
+      h('span', { class: st[0], text: st[1] + (c.current ? ' · v' + c.current.v : '') }),
+    ]));
+    if (c.narration) box.appendChild(h('div', { class: 'hook', text: '“' + c.narration + '”' }));
+    if (c.visual) box.appendChild(h('div', { class: 'muted', text: '연출: ' + c.visual }));
+
+    if (c.current) {
+      const previewBox = h('div', { style: 'text-align:center;margin:8px 0' });
+      previewBox.appendChild(h('img', {
+        src: 'https://drive.google.com/thumbnail?id=' + c.current.fileId + '&sz=w800',
+        style: 'width:100%;max-width:220px;aspect-ratio:9/16;border-radius:12px;object-fit:cover;display:inline-block;background:#111;box-shadow:0 2px 8px rgba(0,0,0,.15)',
+        alt: c.key + ' 스토리보드 이미지',
+      }));
+      box.appendChild(previewBox);
+
+      box.appendChild(h('div', { class: 'muted', text: c.current.name + ' · 생성: ' + fmt(c.current.generatedAt) + (c.current.reviewedBy ? ' · 검토자: ' + c.current.reviewedBy : '') }));
+      if (c.current.note) {
+        box.appendChild(h('div', { class: 'banner warn', style: 'margin:6px 0', text: '수정 요청 메모: ' + c.current.note }));
+      }
+
+      const btnRow = h('div', { class: 'btns' });
+      if (c.status === 'PENDING_REVIEW') {
+        btnRow.appendChild(h('button', { class: 'b ok', type: 'button', text: '승인', onclick: function () { reviewStoryboard(c, 'APPROVE'); } }));
+        btnRow.appendChild(h('button', { class: 'b bad', type: 'button', text: '수정 요청', onclick: function () { reviewStoryboard(c, 'REJECT'); } }));
+        btnRow.appendChild(h('button', { class: 'b primary', type: 'button', text: '재생성', onclick: function () { regenerateStoryboard(c); } }));
+      } else if (c.status === 'APPROVED') {
+        btnRow.appendChild(h('button', { class: 'b bad', type: 'button', text: '승인 취소·수정 요청', onclick: function () { reviewStoryboard(c, 'REJECT'); } }));
+        btnRow.appendChild(h('button', { class: 'b primary', type: 'button', text: '재생성', onclick: function () { regenerateStoryboard(c); } }));
+      } else if (c.status === 'REJECTED') {
+        btnRow.appendChild(h('button', { class: 'b primary', type: 'button', text: '수정 반영 재생성', onclick: function () { regenerateStoryboard(c); } }));
+      }
+      box.appendChild(btnRow);
+
+      box.appendChild(h('div', { class: 'row', style: 'margin-top:8px' }, [
+        h('a', { class: 'b', href: c.current.downloadUrl, target: '_blank', rel: 'noopener', text: '이미지 다운로드 ↓' }),
+        h('button', { class: 'b', type: 'button', text: '모션 프롬프트 복사', onclick: function () { copyText(c.motionPrompt); } }),
+        h('a', { class: 'b', href: sb.flowUrl, target: '_blank', rel: 'noopener', text: 'Google Flow 열기 ↗' }),
+      ]));
+
+      box.appendChild(h('details', { style: 'margin-top:8px' }, [
+        h('summary', { text: '프롬프트 및 버전 기록 (' + c.versions.length + ')' }),
+        copyBlock('Google Flow 모션 프롬프트', c.motionPrompt, true),
+        copyBlock('Gemini 2.5 Flash Image 생성 프롬프트', c.current.prompt, true),
+        h('div', { class: 'muted', style: 'white-space:pre-wrap;margin-top:6px', text: c.versions.map(function (v) {
+          return 'v' + v.v + ' · ' + v.status + ' · ' + fmt(v.generatedAt) + (v.reviewedBy ? ' · ' + v.reviewedBy : '') + (v.note ? ' · ' + v.note : '');
+        }).join('\n') }),
+      ]));
+    } else {
+      box.appendChild(h('div', { class: 'btns one', style: 'margin-top:8px' }, [
+        h('button', {
+          class: 'b', type: 'button', disabled: !sb.canGenerate,
+          onclick: function () { generateStoryboard(c.scene); },
+          text: c.key + ' 이미지 생성 (Gemini)',
+        }),
+      ]));
+    }
+    card.appendChild(box);
+  });
+
+  main.appendChild(card);
 }
 
 function renderMedia(main) {

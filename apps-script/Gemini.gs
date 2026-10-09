@@ -28,10 +28,25 @@ function getGeminiModel() {
   );
 }
 
+function getGeminiImageModel() {
+  return (
+    PropertiesService.getScriptProperties().getProperty('GEMINI_IMAGE_MODEL') ||
+    RF_CONFIG.DEFAULT_IMAGE_MODEL
+  );
+}
+
 /** Configured model first, then the fallbacks (no duplicates). */
 function geminiModelChain_() {
   const chain = [getGeminiModel()];
   RF_CONFIG.GEMINI_FALLBACK_MODELS.forEach(function (m) {
+    if (chain.indexOf(m) === -1) chain.push(m);
+  });
+  return chain;
+}
+
+function geminiImageModelChain_() {
+  const chain = [getGeminiImageModel()];
+  (RF_CONFIG.GEMINI_IMAGE_FALLBACK_MODELS || []).forEach(function (m) {
     if (chain.indexOf(m) === -1) chain.push(m);
   });
   return chain;
@@ -130,6 +145,86 @@ function callGemini_(promptText, responseSchema, extraParts) {
       return p.text || '';
     })
     .join('');
+}
+
+/**
+ * Calls gemini-2.5-flash-image with reference product image bytes and 9:16 aspect ratio.
+ * Returns { model, mimeType, data (base64), text }.
+ */
+function callGeminiImage_(promptText, referenceImages, options) {
+  options = options || {};
+  const imageParts = (referenceImages || []).map(function (r) {
+    return {
+      inlineData: {
+        mimeType: r.mimeType || 'image/jpeg',
+        data: r.data,
+      },
+    };
+  });
+  const body = {
+    contents: [{
+      role: 'user',
+      parts: [{ text: promptText }].concat(imageParts),
+    }],
+    generationConfig: {
+      responseModalities: ['TEXT', 'IMAGE'],
+      imageConfig: {
+        aspectRatio: options.aspectRatio || (RF_CONFIG.STORYBOARD && RF_CONFIG.STORYBOARD.ASPECT_RATIO) || '9:16',
+      },
+    },
+  };
+  const chain = geminiImageModelChain_();
+  let model;
+  let res;
+  for (let i = 0; i < chain.length; i++) {
+    model = chain[i];
+    res = requestGemini_(model, body);
+    if (res.code !== 404 || i === chain.length - 1) break;
+    logEvent_('WARN', 'geminiImageModel', '', '이미지 모델 "' + model + '"을 찾을 수 없어 "' + chain[i + 1] + '"로 대체합니다 (404).', String(res.text).slice(0, 500));
+  }
+  const code = res.code;
+  const text = res.text;
+  if (code !== 200) {
+    let detail = text;
+    try {
+      detail = JSON.parse(text).error.message;
+    } catch (e) {}
+    let hint = '';
+    if (code === 400) hint = ' (요청 형식 또는 모델명 GEMINI_IMAGE_MODEL을 확인하세요)';
+    if (code === 401 || code === 403) hint = ' (GEMINI_API_KEY가 유효한지 확인하세요)';
+    if (code === 404) hint = ' (모델 ' + chain.join(', ') + ' 모두 사용할 수 없습니다)';
+    if (code === 429) hint = ' (요청 한도 초과 — 잠시 후 다시 시도하세요)';
+    throw new Error('Gemini 이미지 생성 오류 HTTP ' + code + hint + ': ' + String(detail).slice(0, 500));
+  }
+  RF_GEMINI_STATE.lastModel = model;
+
+  const json = JSON.parse(text);
+  if (json.promptFeedback && json.promptFeedback.blockReason) {
+    throw new Error('Gemini가 요청을 차단했습니다: ' + json.promptFeedback.blockReason);
+  }
+  const candidate = json.candidates && json.candidates[0];
+  if (!candidate || !candidate.content || !candidate.content.parts) {
+    throw new Error('Gemini 응답에 candidates가 없습니다: ' + text.slice(0, 500));
+  }
+  let imagePart = null;
+  let textPart = '';
+  candidate.content.parts.forEach(function (p) {
+    const d = p.inlineData || p.inline_data;
+    if (d && d.data) {
+      imagePart = d;
+    } else if (p.text) {
+      textPart += p.text;
+    }
+  });
+  if (!imagePart) {
+    throw new Error('Gemini 이미지 응답에 이미지가 포함되지 않았습니다: ' + textPart.slice(0, 500));
+  }
+  return {
+    model: model,
+    mimeType: imagePart.mimeType || 'image/png',
+    data: imagePart.data,
+    text: textPart,
+  };
 }
 
 /**

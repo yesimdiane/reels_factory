@@ -161,6 +161,7 @@ function loadData_(ss) {
   let hookColumnsMissing = true;
   let productionColumnsMissing = RF_CONFIG.REELS_PRODUCTION_HEADERS.slice();
   let mediaColumnsMissing = RF_CONFIG.REELS_MEDIA_HEADERS.slice();
+  let imageColumnsMissing = RF_CONFIG.REELS_IMAGE_HEADERS.slice();
   const reelsSheet = findSheet_(ss, RF_CONFIG.SHEETS.REELS);
   let reels = [];
   if (reelsSheet && reelsSheet.getLastColumn() > 0) {
@@ -171,6 +172,7 @@ function loadData_(ss) {
     hookColumnsMissing = missingHeaders_(reelsSheet, RF_CONFIG.REELS_HOOK_HEADERS).length > 0;
     productionColumnsMissing = missingHeaders_(reelsSheet, RF_CONFIG.REELS_PRODUCTION_HEADERS);
     mediaColumnsMissing = missingHeaders_(reelsSheet, RF_CONFIG.REELS_MEDIA_HEADERS);
+    imageColumnsMissing = missingHeaders_(reelsSheet, RF_CONFIG.REELS_IMAGE_HEADERS);
     if (!missing.length && missingHeaders_(reelsSheet, RF_CONFIG.REELS_OPTIONAL_HEADERS).length) {
       warnings.push('REELS에 브랜드·훅·제작 열(' + missingHeaders_(reelsSheet, RF_CONFIG.REELS_OPTIONAL_HEADERS).join(', ') + ')이 없습니다. "릴스 팩토리 → 시트 준비"를 실행하세요 — 훅 5개 저장·대본 승인·제작 계획에 필요합니다. 기존 데이터는 바뀌지 않습니다.');
     }
@@ -178,7 +180,7 @@ function loadData_(ss) {
       return normalizeText(r['릴스ID']);
     });
   }
-  return { products: products, productById: byId, reels: reels, reelsSheet: reelsSheet, warnings: warnings, hookColumnsMissing: hookColumnsMissing, productionColumnsMissing: productionColumnsMissing, mediaColumnsMissing: mediaColumnsMissing,
+  return { products: products, productById: byId, reels: reels, reelsSheet: reelsSheet, warnings: warnings, hookColumnsMissing: hookColumnsMissing, productionColumnsMissing: productionColumnsMissing, mediaColumnsMissing: mediaColumnsMissing, imageColumnsMissing: imageColumnsMissing,
     referenceColumnPresent: !!colOf_(getHeaderMap_(productsSheet), RF_CONFIG.PRODUCT_OPTIONAL_FIELDS.referenceImages) };
 }
 
@@ -351,6 +353,8 @@ function reelDetail_(ss, reelId) {
     pillars: brandSummary_().pillars,
     // Gemini's production plan (after approval), Drive folder and clip tracker.
     production: productionView_(row, product, data.productionColumnsMissing),
+    // 9:16 Storyboard images via Gemini 2.5 Flash Image and manual Google Flow handoff
+    storyboard: storyboardView_(row, product, data),
     // Reference photos, per-scene clip uploads and review (the final render needs every clip approved).
     media: mediaView_(row, product, data),
     // Recomputed from the current script, so an edit made in the sheet is reflected too.

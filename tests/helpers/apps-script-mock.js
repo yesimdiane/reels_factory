@@ -213,6 +213,29 @@ function createEnv(opts = {}) {
         state.fetches.push(body);
         let payload = typeof opts.gemini === 'function' ? opts.gemini(state.fetches.length, body) : opts.gemini;
         if (payload instanceof Error) throw payload;
+        if (payload && payload.candidates) {
+          return { getResponseCode: () => 200, getContentText: () => JSON.stringify(payload) };
+        }
+        const isImageCall = body.generationConfig &&
+          Array.isArray(body.generationConfig.responseModalities) &&
+          body.generationConfig.responseModalities.indexOf('IMAGE') !== -1;
+        if (isImageCall) {
+          const imgPart = (payload && (payload.inlineData || payload.image))
+            ? (payload.inlineData || { mimeType: 'image/png', data: payload.image })
+            : { mimeType: 'image/png', data: Buffer.from('mock-storyboard-image-' + state.fetches.length).toString('base64') };
+          const text = JSON.stringify({
+            candidates: [{
+              finishReason: 'STOP',
+              content: {
+                parts: [
+                  { text: 'Mock 9:16 storyboard image' },
+                  { inlineData: imgPart },
+                ],
+              },
+            }],
+          });
+          return { getResponseCode: () => 200, getContentText: () => text };
+        }
         const text = JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(payload) }] } }] });
         return { getResponseCode: () => 200, getContentText: () => text };
       },
