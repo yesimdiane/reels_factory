@@ -27,7 +27,7 @@ If a required header is missing it stops with an error naming the missing header
 |---|---|
 | ManyChat 키워드 | A product-level comment keyword (e.g. `우산`). All reels of this product use it in the CTA line, caption and ManyChat. It must be one word (≤20 chars, no spaces or quotes) and is never reused by another product; this is checked **before** any Gemini call. Without it, each reel gets a code like `PRD001R01`. |
 | 제품 외형 | A short visual description (e.g. `슬림한 사각 두 조각, 무광 플라스틱`) added to the Google Flow prompts. Only describe what is true of the real product. |
-| 검증된 제품 이미지 | Google Drive links (or file IDs), one per line, of images you verified show the **real** product and may be used as references (max 4; PNG/JPEG/WebP, ≤ 3 MB each and ≤ 10 MB total; the Apps Script user needs access). **Required before Gemini plans the production**: product visuals must match these images. Sent to Gemini only for the production plan; read-only, never written. |
+| 검증된 제품 이미지 | Google Drive links (or file IDs), one per line, of images you verified show the **real** product and may be used as references (max 4; PNG/JPEG/WebP, ≤ 3 MB each and ≤ 10 MB total; the Apps Script user needs access). **Required before Gemini plans the production**: product visuals must match these images. Sent to Gemini only for the production plan. The dashboard can **append** a link to this one cell of one product row when you upload a reference photo (existing text, other cells and other rows are never changed); the column itself is never created for you. |
 
 ## REELS (created by the script if missing)
 
@@ -91,7 +91,13 @@ One row per reel script. One row (five hooks + one script) is appended per gener
 | 제작 계획(JSON) | Gemini (validated), after `SCRIPT_APPROVED` | The production plan: product look (from the verified images), per-scene Flow description / continuity / what to verify, voice rate and pause per line, subtitle emphasis, cut framing, risks, plus `scriptVersion` and `approvedHash`. A plan whose hash is not the current approval is ignored; it is cleared when the approval is withdrawn or the script changes. AUDIT: `SET_PRODUCTION_PLAN`. |
 | 에셋 현황(JSON) | code (Drive sync) | Drive folder ID/URL and one row per Flow clip: `MISSING` / `UPLOADED` (+ Drive file ID, size, modified), unexpected files, last sync. Tracking only: no AUDIT rows. |
 
-Both are needed before the production plan or the Drive folder (checked before any Gemini or Drive call). Existing scripts keep working without them. The `Flow 장면 프롬프트` cell is overwritten with the plan-based prompts when a plan is made (it is not part of the approved fingerprint).
+### Media column (added by 시트 준비)
+
+| Header | Written by | Description |
+|---|---|---|
+| 장면 클립(JSON) | code (dashboard uploads and reviews) | Per Flow clip (`S1` …): every uploaded version with Drive file ID, MD5, size, uploader, rights confirmation, and its status (`PENDING_REVIEW` / `APPROVED` / `REJECTED` / `SUPERSEDED`), reviewer and note. An approval counts only for the approved-script fingerprint it was given under. Needed before any upload or review (checked before Drive is touched). AUDIT: `CLIP_UPLOADED`, `CLIP_APPROVED`, `CLIP_REJECTED`. See [media-workspace.md](media-workspace.md). |
+
+Both production columns are needed before the production plan or the Drive folder (checked before any Gemini or Drive call). Existing scripts keep working without them. The `Flow 장면 프롬프트` cell is overwritten with the plan-based prompts when a plan is made (it is not part of the approved fingerprint).
 
 If `콘텐츠 기둥` / `확인 필요` are missing, the dashboard and approvals keep working, and the dashboard shows a warning. If the two hook columns are missing, **new generation** stops before calling Gemini and asks you to run 시트 준비. Existing rows keep working. `장면(JSON)` may also carry `ai_visualization: true` for AI interior-visualization scenes. Their `on_screen_text` then includes `AI 시뮬레이션`.
 

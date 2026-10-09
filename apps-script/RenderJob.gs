@@ -22,7 +22,8 @@ function renderJobBlocker(row, product) {
   if (!isPermissionApproved(product.permission)) {
     return 'PRODUCTS의 "영상 사용 허가 상태"가 확인되지 않았습니다.';
   }
-  return '';
+  // Reels with a Gemini production plan: every Flow clip must be APPROVED in the dashboard (Media.gs).
+  return clipGateBlocker_(row);
 }
 
 /**
@@ -67,6 +68,9 @@ function buildRenderJobPayload(row, product, issuedAtIso, ttlHours) {
     // Gemini's production plan (only if it belongs to THIS approved script): TTS rate/pauses, cuts,
     // subtitle emphasis, the product's visual spec and what to check in the finished video.
     productionPlan: validProductionPlan(row),
+    // Every approved clip with its Drive file ID and checksum. The renderer refuses a job whose plan has no
+    // complete manifest, and checks each local clip against it before any paid step.
+    clipManifest: buildClipManifest_(row),
     // Verified product images (Drive file IDs) the renderer's final check compares the video against.
     referenceImages: parseReferenceImages(product.referenceImages),
     // Where the Flow clips live in Google Drive (tracked by the dashboard), for `fetch-clips`.

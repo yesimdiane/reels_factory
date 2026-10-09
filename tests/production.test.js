@@ -257,6 +257,9 @@ test('render job carries the plan, product images and Drive clips — and only f
   d = s.detail();
   s.call('apiPrepareAssets', 'PRD-001-R01', { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion });
   assert.equal(s.act('START_VIDEO').ok, true);
+  // The clip gate: no job file until every Flow clip is uploaded and approved in the dashboard.
+  assert.match(s.call('apiGetRenderJob', 'PRD-001-R01').error, /모든 장면 클립이 승인되어야/);
+  require('./helpers/media').api(s.env).approveAll();
   const job = s.call('apiGetRenderJob', 'PRD-001-R01');
   assert.equal(job.ok, true, job.error);
   const payload = JSON.parse(JSON.parse(job.jobFile).payload);
@@ -267,6 +270,7 @@ test('render job carries the plan, product images and Drive clips — and only f
   assert.deepEqual(payload.drive.files.map((f) => f.clip), ['S1.mp4']);
   assert.equal(payload.flowPrompts.length, 6);
   assert.ok(payload.flowPrompts.every((p) => p.planned));
+  assert.equal(payload.clipManifest.clips.length, 6);
   assert.ok(!JSON.stringify(payload).includes('link.coupang.com'), 'no affiliate URL in the job');
 });
 

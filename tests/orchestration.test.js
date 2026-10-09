@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { createEnv, prd001Row } = require('./helpers/apps-script-mock');
+const { api } = require('./helpers/media');
 const { verifyJob } = require('../renderer/lib/job');
 const { buildStoryboard, planClips } = require('../renderer/lib/storyboard');
 const { applyProductionPlan } = require('../renderer/lib/production-plan');
@@ -34,7 +35,7 @@ try {
 }
 
 // Real server flow: approve → Gemini production plan (verified product image) → Drive folder → job.
-function issueJob({ withPlan = true, uploads = [] } = {}) {
+function issueJob({ withPlan = true, uploads = [], clipBytes } = {}) {
   let env;
   env = createEnv({
     gemini: (n, body) => (body.generationConfig.responseSchema.properties.product_visual
@@ -57,6 +58,8 @@ function issueJob({ withPlan = true, uploads = [] } = {}) {
     const folder = env.drive.folderByPath('Reels Factory', 'PRD-001', 'PRD-001-R01');
     uploads.forEach((n) => env.drive.addFile(folder.id, n, 'clip-' + n));
     if (uploads.length) call('apiPrepareAssets', 'PRD-001-R01', { expectedStatus: s.status, expectedScriptVersion: s.scriptVersion });
+    // Every clip must be uploaded and APPROVED in the dashboard before a job file is issued.
+    api(env).approveAll({ bytesFor: clipBytes });
   }
   assert.equal(call('apiAction', 'PRD-001-R01', 'START_VIDEO', { expectedStatus: 'SCRIPT_APPROVED', expectedScriptVersion: 1, expectedVideoVersion: 0 }).ok, true);
   const res = call('apiGetRenderJob', 'PRD-001-R01');
@@ -195,8 +198,9 @@ function fakeDrive(files, contents = {}) {
   };
 }
 
-test('fetch-clips: only the clips the job needs are downloaded from its Drive folder; newest upload wins; existing files are kept', async () => {
-  const { job } = board({ uploads: ['S1.mp4'] });
+test('fetch-clips (jobs without a production plan): only the clips the job needs are downloaded from its Drive folder; newest upload wins; existing files are kept', async () => {
+  const { job: planned } = board({ uploads: ['S1.mp4'] });
+  const job = Object.assign({}, planned, { productionPlan: null, clipManifest: null });
   assert.ok(job.drive.folderId);
   const dir = tmp();
   const drive = fakeDrive([
@@ -213,13 +217,11 @@ test('fetch-clips: only the clips the job needs are downloaded from its Drive fo
   assert.deepEqual(r.ignored.sort(), ['../../evil.mp4', 'S3b.mp4', 'notes.txt']);
   assert.equal(fs.readFileSync(path.join(dir, 'PRD-001-R01', 'S1.mp4'), 'utf8'), 'video-a2', 'newest upload');
   assert.deepEqual(fs.readdirSync(path.join(dir, 'PRD-001-R01')).sort(), ['S1.mp4', 'S2.mov']);
-  // Second run: identical sizes → nothing downloaded again.
   drive.calls.length = 0;
   const again = await fetchClips({ drive, job, clipsDir: dir });
   assert.deepEqual(again.downloaded, []);
   assert.deepEqual(again.kept.sort(), ['S1.mp4', 'S2.mov']);
   assert.ok(drive.calls.every((c) => c[0] === 'list'));
-  // No folder in the job → actionable error.
   await assert.rejects(fetchClips({ drive, job: Object.assign({}, job, { drive: null }), clipsDir: dir }), /Drive 폴더 정보가 없습니다/);
   assert.ok(CLIP_RE.test('S2-1.mp4') && !CLIP_RE.test('x/S1.mp4') && !CLIP_RE.test('S1.exe'));
 });
@@ -345,14 +347,16 @@ test('Gemini client: key in a header (not the URL), JSON out, clear errors', asy
 
 function makeClip(file, sec = 8) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', `testsrc2=s=720x1280:d=${sec}:r=30`, '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', file]);
+  // Same picture, different container metadata: each clip is a distinct file (identical files are refused as duplicates).
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', `testsrc2=s=720x1280:d=${sec}:r=30`, '-metadata', 'comment=' + path.basename(file), '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', file]);
 }
 
 test('render with a production plan: planned rates reach TTS, cuts follow the plan, Gemini review is recorded and advisory', { skip: !hasFfmpeg && 'FFmpeg not installed' }, async () => {
-  const { jobFile, secret } = issueJob();
   const dir = tmp();
   const clips = path.join(dir, 'clips');
   for (const id of ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']) makeClip(path.join(clips, 'PRD-001-R01', id + '.mp4'));
+  // The very same files are uploaded and approved in the dashboard; the job's manifest carries their checksums.
+  const { jobFile, secret } = issueJob({ clipBytes: (key) => fs.readFileSync(path.join(clips, 'PRD-001-R01', key + '.mp4')) });
   const rates = [];
   const inner = createSilentTts();
   const provider = { name: 'spy', paid: false, synthesize: async (a) => { rates.push(a.speakingRate); return inner.synthesize(a); } };

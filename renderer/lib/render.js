@@ -10,6 +10,7 @@ const path = require('node:path');
 const { verifyJob } = require('./job');
 const { buildStoryboard, planClips } = require('./storyboard');
 const { applyProductionPlan } = require('./production-plan');
+const { checkClipManifest } = require('./clip-manifest');
 const { buildTimeline } = require('./plan');
 const { buildAss } = require('./ass');
 const { loadAssetManifest, validateAssets, writeAssetsRequired, spreadIn, AssetsRequiredError } = require('./assets');
@@ -73,6 +74,8 @@ async function render(opts) {
   if (opts.dryRun) return { dryRun: true, job, storyboard, preflight: pre, assets, estimate };
   if (!pre.ok) throw new qc.QcError(pre, '사전 점검');
   if (!assets.ok) throw assetsRequired(assets);
+  // Media-workspace jobs: every clip used must be an approved file, byte for byte (before any paid step).
+  checkClipManifest(job, assets);
 
   // 5. Subtitle font and FFmpeg capabilities (a wrong font would silently change the brand look).
   const font = template.subtitle.font || opts.font;
@@ -112,6 +115,7 @@ async function render(opts) {
   if (replanned.beats.some((b, i) => b.clips.length > storyboard.beats[i].clips.length)) {
     storyboard = replanned;
     assets = await validateAssets(loadAssetManifest(opts.clipsDir, job.reelId), storyboard, template, opts.ffmpeg, opts.analyze, opts.defaultSource);
+    if (assets.ok) checkClipManifest(job, assets);
     if (!assets.ok) throw assetsRequired(assets, '실제 음성이 예상보다 길어 Flow 클립을 더 나눠야 합니다 (음성은 캐시됨 — 다시 실행해도 추가 비용 없음).');
   }
 

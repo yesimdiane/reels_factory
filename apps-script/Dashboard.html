@@ -47,6 +47,9 @@
   .btns.one { grid-template-columns: 1fr; }
   button.b { min-height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--card);
     color: var(--text); font-size: 16px; font-weight: 600; padding: 8px 12px; }
+  a.b { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--card); color: var(--accent); font-size: 16px; font-weight: 600; padding: 8px 12px; text-decoration: none; }
+  button.b:disabled { opacity: .45; }
   button.b.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   button.b.ok { background: var(--ok); color: #fff; border-color: var(--ok); }
   button.b.bad { color: var(--bad); }
@@ -365,6 +368,7 @@ function renderDetail() {
 
   renderHooks(main);
   renderProduction(main);
+  renderMedia(main);
   renderActions(main);
 
   // Product facts (what the script may claim).
@@ -480,7 +484,8 @@ function renderActions(main) {
     const b = h('div', { class: 'btns' });
     if (can('START_VIDEO')) b.appendChild(h('button', { class: 'b primary', type: 'button', text: '영상 제작 시작', disabled: !d.product.permissionOk || !d.approvedIntact,
       onclick: function () { act('START_VIDEO', {}); } }));
-    if (st === 'VIDEO_IN_PRODUCTION') b.appendChild(h('button', { class: 'b', type: 'button', text: '렌더 작업 파일 (Mac)', onclick: openRenderJob }));
+    const clipGate = d.media && d.media.gated && !d.media.allApproved;
+    if (st === 'VIDEO_IN_PRODUCTION') b.appendChild(h('button', { class: 'b', type: 'button', text: '렌더 작업 파일 (Mac)' + (clipGate ? ' — 클립 ' + d.media.approved + '/' + d.media.total + ' 승인' : ''), disabled: clipGate, onclick: openRenderJob }));
     if (can('REGISTER_VIDEO')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '완성 MP4 등록',
       onclick: function () { const u = askNote('Google Drive MP4 공유 링크를 붙여넣으세요', true); if (u !== null) act('REGISTER_VIDEO', { videoUrl: u }); } }));
     if (can('MARK_VIDEO_FAILED')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '제작 오류 기록',
@@ -614,6 +619,237 @@ function syncAssets() {
     const a = res.detail.production.assets;
     toast('Drive 클립 ' + a.uploaded + '/' + a.total + ' 확인');
   });
+}
+
+// 📱 Media workspace: verified product photos, Google Flow clips (copy prompt → open Flow by hand → upload
+// from this phone), per-clip review. Flow is never automated. The server checks everything again.
+const MEDIA_RETRIES = 3;
+const CLIP_STATUS = { MISSING: ['clip', '클립 없음'], PENDING_REVIEW: ['warn', '검토 대기'], APPROVED: ['ok', '승인됨'], REJECTED: ['bad', '다시 만들기'] };
+
+function reloadDetail(msg) {
+  return call('apiGetReel', S.detail.summary.reelId).then(function (res) {
+    if (res.ok) { S.detail = res.detail; renderDetail(); }
+    if (msg) toast(msg, 5000);
+  });
+}
+function guardOf() {
+  const d = S.detail;
+  return { expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion };
+}
+function readChunkB64(file, off, len) {
+  return new Promise(function (resolve, reject) {
+    const fr = new FileReader();
+    fr.onload = function () { resolve(String(fr.result).split(',')[1] || ''); };
+    fr.onerror = function () { reject(fr.error || new Error('파일을 읽지 못했습니다')); };
+    fr.readAsDataURL(file.slice(off, off + len));
+  });
+}
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+// Shrinks a phone photo (max 2048 px, JPEG) so it fits the size limit; returns a base64 string.
+function photoToB64(file, maxBytes) {
+  return new Promise(function (resolve, reject) {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = function () {
+      let side = 2048, q = 0.85;
+      for (let i = 0; i < 6; i++) {
+        const k = Math.min(1, side / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const b64 = c.toDataURL('image/jpeg', q).split(',')[1];
+        if (b64.length * 0.75 <= maxBytes) { URL.revokeObjectURL(url); return resolve(b64); }
+        side = Math.round(side * 0.75); q = Math.max(0.6, q - 0.05);
+      }
+      URL.revokeObjectURL(url); reject(new Error('사진을 충분히 줄이지 못했습니다.'));
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('이 사진을 열 수 없습니다. JPEG 또는 PNG로 올려 주세요.')); };
+    img.src = url;
+  });
+}
+
+async function uploadPhoto(input, rights, ui) {
+  const md = S.detail.media;
+  const file = input.files && input.files[0];
+  if (!file) { toast('사진을 고르세요.'); return; }
+  if (!rights.checked) { toast('사진 권리 확인에 체크하세요.'); return; }
+  ui.disabled(true); ui.say('줄이는 중…');
+  try {
+    const data = await photoToB64(file, md.limits.refMaxKB * 1024 * 0.95);
+    ui.say('올리는 중…');
+    const res = await call('apiUploadReferencePhoto', S.detail.product.id, { data: data, rightsConfirmed: true });
+    if (!res.ok) { ui.say(res.error, true); ui.disabled(false); return; }
+    toast('제품 참고 사진을 저장했습니다 (' + res.reference.count + '장).', 5000);
+    await reloadDetail();
+  } catch (e) { ui.say(e.message, true); ui.disabled(false); }
+}
+
+// One clip, in chunks. Each chunk is retried; after a doubtful failure the server is asked where to resume.
+async function uploadClip(c, file, rights, ui) {
+  if (!file) { toast('영상을 고르세요.'); return; }
+  if (!rights.checked) { toast('영상 권리 확인에 체크하세요.'); return; }
+  const mime = file.type || (/\.mov$/i.test(file.name) ? 'video/quicktime' : /\.mp4$/i.test(file.name) ? 'video/mp4' : '');
+  ui.disabled(true); ui.say('시작 중…'); ui.progress(0);
+  const start = await call('apiStartClipUpload', S.detail.summary.reelId, Object.assign({ clip: c.key, fileName: file.name, mime: mime, size: file.size, rightsConfirmed: true }, guardOf()));
+  if (!start.ok) { ui.say(start.error, true); ui.disabled(false); return; }
+  let off = 0, last = null;
+  while (off < file.size) {
+    const len = Math.min(start.chunkBytes, file.size - off);
+    let res = null;
+    for (let attempt = 1; attempt <= MEDIA_RETRIES; attempt++) {
+      const data = await readChunkB64(file, off, len);
+      res = await call('apiUploadClipChunk', start.uploadId, off, data);
+      if (res.ok) break;
+      if (/^RETRY:/.test(res.error)) { ui.say('다시 시도 중 (' + attempt + '/' + MEDIA_RETRIES + ')…'); await sleep(1500 * attempt); continue; }
+      // Unsure what Drive has: ask, then continue from its answer.
+      const st = await call('apiClipUploadStatus', start.uploadId);
+      if (st.ok && st.done) { res = st; break; }
+      if (st.ok && st.next !== off) { res = { ok: true, done: false, next: st.next }; break; }
+      if (!st.ok && !/RETRY:/.test(st.error)) break;
+    }
+    if (!res || !res.ok) {
+      ui.say((res && res.error ? res.error.replace(/^RETRY:\s*/, '') : '업로드에 실패했습니다.') + '\n같은 영상을 다시 고르고 올리면 처음부터 새로 시작합니다. 계속 실패하면 아래 "Drive 앱으로 올린 파일 연결"을 쓰세요.', true);
+      ui.disabled(false); return;
+    }
+    last = res;
+    off = res.done ? file.size : res.next;
+    ui.progress(Math.round(off * 100 / file.size));
+    ui.say(Math.round(off / 1048576 * 10) / 10 + ' / ' + Math.round(file.size / 1048576 * 10) / 10 + ' MB');
+  }
+  if (!last || !last.done) { ui.say('업로드가 끝났지만 등록되지 않았습니다. 새로고침 후 다시 확인하세요.', true); ui.disabled(false); return; }
+  toast(c.key + ' v' + last.version + ' 업로드 완료' + (last.invalidated ? ' — 이전 승인은 무효가 되었습니다' : '') + '. 미리보고 승인하세요.', 6000);
+  await reloadDetail();
+}
+
+function reviewClip(c, decision) {
+  let note = '';
+  if (decision === 'REJECT') { note = askNote(c.key + ' v' + c.current.v + ' — 무엇을 다시 만들까요? (필수)', true); if (note === null) return; }
+  else if (!confirm(c.key + ' v' + c.current.v + '을(를) 승인할까요? 제품 모양·색, 자막과 말이 대본과 맞는지, 권리 문제가 없는지 확인했나요?')) return;
+  busy(true, '저장 중…');
+  call('apiReviewClip', S.detail.summary.reelId, Object.assign({ clip: c.key, version: c.current.v, decision: decision, note: note }, guardOf())).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 8000); return; }
+    S.detail = res.detail; renderDetail();
+    toast(c.key + (decision === 'APPROVE' ? ' 승인됨' : ' 반려됨 — 다시 만들어 올리세요'));
+  });
+}
+
+function attachClip(c, a, rights) {
+  if (!rights.checked) { toast('영상 권리 확인에 체크하세요.'); return; }
+  busy(true, '연결 중…');
+  call('apiAttachDriveClip', S.detail.summary.reelId, Object.assign({ clip: c.key, fileId: a.fileId, rightsConfirmed: true }, guardOf())).then(function (res) {
+    busy(false);
+    if (!res.ok) { toast(res.error, 8000); return; }
+    S.detail = res.detail; renderDetail(); toast(c.key + ' 연결됨 — 미리보고 승인하세요.');
+  });
+}
+
+function uiFor(box, controls) {
+  const msg = h('div', { class: 'muted', style: 'white-space:pre-wrap' });
+  const bar = h('progress', { max: '100', value: '0', style: 'width:100%;display:none' });
+  box.appendChild(bar); box.appendChild(msg);
+  return {
+    say: function (t, bad) { msg.textContent = t; msg.style.color = bad ? '#c62828' : ''; },
+    progress: function (n) { bar.style.display = 'block'; bar.value = n; },
+    disabled: function (on) { controls.forEach(function (el) { el.disabled = on; }); },
+  };
+}
+
+function renderMedia(main) {
+  const d = S.detail;
+  const md = d.media;
+  if (!md || !md.visible) return;
+  const card = h('div', { class: 'card' });
+  card.appendChild(h('h3', { style: 'margin-top:0', text: '📱 Flow 클립 작업실 (휴대폰에서 업로드·검토)' }));
+  card.appendChild(h('div', { class: 'muted', text: md.flowNote }));
+  if (md.blocker) { card.appendChild(h('div', { class: 'banner warn', text: md.blocker })); main.appendChild(card); return; }
+
+  // Verified product reference photos (max 4): saved in Drive, linked into this product's PRODUCTS cell.
+  const ref = md.references;
+  card.appendChild(h('h3', { text: '제품 참고 사진 ' + ref.count + '/' + ref.max }));
+  (ref.items || []).forEach(function (it, i) {
+    card.appendChild(h('div', {}, [h('a', { href: it.url, target: '_blank', rel: 'noopener', text: '사진 ' + (i + 1) + ' 열기' })]));
+  });
+  if (!ref.columnPresent) {
+    card.appendChild(h('div', { class: 'banner warn', text: 'PRODUCTS에 "' + d.production.referenceImagesField + '" 열이 없어 사진을 올릴 수 없습니다. 열 머리글을 오른쪽에 직접 추가하세요.' }));
+  } else if (ref.count < ref.max) {
+    const pick = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp' });
+    const ok = h('input', { type: 'checkbox' });
+    const btn = h('button', { class: 'b', type: 'button', text: '사진 올리기' });
+    const box = h('div', {});
+    const ui = uiFor(box, [pick, ok, btn]);
+    btn.addEventListener('click', function () { uploadPhoto(pick, ok, ui); });
+    card.appendChild(h('div', { class: 'muted', text: '실제 제품을 보여 주는 사진만. 사진은 줄여서 비공개 Drive 폴더에 저장하고, 제품 모양·색은 이 사진 기준으로 계획·점검합니다.' }));
+    card.appendChild(pick);
+    card.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:flex-start' }, [ok, h('span', { text: '내가 직접 찍었거나 사용 권한을 확인한 실제 제품 사진입니다 (제품을 샀다고 타인 이미지의 권리가 생기지는 않습니다)' })]));
+    card.appendChild(h('div', { class: 'btns one' }, [btn]));
+    card.appendChild(box);
+  }
+
+  // Scenes: prompt → Flow (manual) → upload → review.
+  card.appendChild(h('h3', { text: '장면 클립 ' + md.approved + '/' + md.total + ' 승인' + (md.gated ? '' : ' (제작 계획 전: 이 승인은 렌더 조건이 아님)') }));
+  if (md.gated && !md.allApproved) card.appendChild(h('div', { class: 'banner warn', text: '모든 장면이 승인되어야 렌더 작업 파일을 받을 수 있습니다. 클립을 교체하면 그 장면의 승인은 무효가 됩니다.' }));
+  if (md.gated && md.allApproved) card.appendChild(h('div', { class: 'banner ok', text: '모든 장면이 승인되었습니다. 이제 렌더 작업 파일을 받을 수 있습니다 (최종 영상 승인과 게시는 직접).' }));
+  const prompts = {};
+  (d.flowScenePrompts || []).forEach(function (p) { prompts[p.file] = p.prompt; });
+  md.clips.forEach(function (c) {
+    const st = CLIP_STATUS[c.status];
+    const box = h('div', { class: 'scene' });
+    box.appendChild(h('div', { class: 'row' }, [
+      h('strong', { text: c.key + ' · ' + c.beat + (c.parts > 1 ? ' (' + c.part + '/' + c.parts + ')' : '') }),
+      h('span', { class: 'chip ' + st[0], text: st[1] + (c.current ? ' · v' + c.current.v : '') }),
+    ]));
+    box.appendChild(h('div', { class: 'row', style: 'margin:6px 0' }, [
+      prompts[c.file] ? h('button', { class: 'b', type: 'button', text: '프롬프트 복사', onclick: function () { copyText(prompts[c.file]); } }) : null,
+      h('a', { class: 'b', href: md.flowUrl, target: '_blank', rel: 'noopener', text: 'Google Flow 열기' }),
+    ]));
+    if (c.current) {
+      const prev = h('div', {});
+      box.appendChild(h('div', { class: 'muted', text: c.current.name + ' · ' + Math.round(c.current.size / 1048576 * 10) / 10 + 'MB · ' + c.current.uploadedBy + ' · ' + fmt(c.current.uploadedAt) + (c.current.note ? '\n메모: ' + c.current.note : '') }));
+      box.appendChild(h('div', { class: 'row' }, [
+        h('button', { class: 'b', type: 'button', text: '미리보기', onclick: function () {
+          if (prev.firstChild) { clear(prev); return; }
+          prev.appendChild(h('iframe', { src: c.current.previewUrl, style: 'width:100%;aspect-ratio:9/16;max-height:70vh;border:0;border-radius:10px', allow: 'autoplay', allowfullscreen: true }));
+        } }),
+        h('a', { href: c.current.url, target: '_blank', rel: 'noopener', text: 'Drive에서 열기' }),
+      ]));
+      box.appendChild(prev);
+      if (c.status === 'PENDING_REVIEW' || c.status === 'APPROVED') {
+        box.appendChild(h('div', { class: 'btns' }, [
+          c.status === 'PENDING_REVIEW' ? h('button', { class: 'b ok', type: 'button', text: '승인', onclick: function () { reviewClip(c, 'APPROVE'); } }) : null,
+          h('button', { class: 'b bad', type: 'button', text: c.status === 'APPROVED' ? '승인 취소·다시 만들기' : '반려·다시 만들기', onclick: function () { reviewClip(c, 'REJECT'); } }),
+        ]));
+      }
+    }
+    // Upload (or replace). The rights confirmation is required for every upload.
+    const pick = h('input', { type: 'file', accept: 'video/mp4,video/quicktime,.mp4,.mov' });
+    const ok = h('input', { type: 'checkbox' });
+    const btn = h('button', { class: 'b primary', type: 'button', text: c.current ? '교체 업로드 (새 버전)' : '영상 업로드' });
+    const ubox = h('div', {});
+    const ui = uiFor(ubox, [pick, ok, btn]);
+    btn.addEventListener('click', function () { uploadClip(c, pick.files && pick.files[0], ok, ui); });
+    box.appendChild(h('div', { style: 'margin-top:8px' }, [pick]));
+    box.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:flex-start' }, [ok, h('span', { text: 'Google Flow로 직접 만들었거나 사용 권한을 확인한 영상입니다' })]));
+    box.appendChild(h('div', { class: 'btns one' }, [btn]));
+    box.appendChild(ubox);
+    // Fallback: a file put into this reel's Drive folder with the Drive app.
+    (c.attachable || []).forEach(function (a) {
+      box.appendChild(h('div', { class: 'row', style: 'margin-top:6px' }, [
+        h('span', { class: 'muted', text: 'Drive 앱으로 올린 파일: ' + a.name }),
+        h('button', { class: 'b', type: 'button', text: '이 파일 연결', onclick: function () { attachClip(c, a, ok); } }),
+      ]));
+    });
+    if (c.versions.length > 1 || (c.versions[0] && c.versions[0].status !== 'PENDING_REVIEW')) {
+      box.appendChild(h('details', { style: 'margin-top:6px' }, [
+        h('summary', { text: '버전 기록 (' + c.versions.length + ')' }),
+        h('div', { class: 'muted', style: 'white-space:pre-wrap', text: c.versions.map(function (v) { return 'v' + v.v + ' · ' + v.status + ' · ' + fmt(v.uploadedAt) + ' · ' + v.source + (v.note ? ' · ' + v.note : ''); }).join('\n') }),
+      ]));
+    }
+    card.appendChild(box);
+  });
+  card.appendChild(h('div', { class: 'muted', text: '업로드가 계속 실패하면 Drive 앱으로 "Reels Factory/' + d.product.id + '/' + d.summary.reelId + '" 폴더에 올린 뒤 위 "이 파일 연결"을 쓰세요 (제작 계획 카드의 "Drive 동기화" 후 표시).' }));
+  main.appendChild(card);
 }
 
 // ② Five hooks (H1–H5): Gemini recommends, the operator chooses (and may edit the wording).
@@ -751,7 +987,7 @@ function openRenderJob() {
     if (!res.ok) { toast(res.error, 8000); return; }
     const main = clear(document.getElementById('main'));
     main.appendChild(h('button', { class: 'link', type: 'button', onclick: renderDetail, text: '‹ ' + S.detail.summary.reelId }));
-    main.appendChild(h('div', { class: 'banner warn', text: '이 파일은 72시간 동안 유효합니다. Mac에서 renderer/jobs/' + res.fileName + ' 로 저장한 뒤:\n\nnpm run render -- --job renderer/jobs/' + res.fileName + ' --dry-run\n(비용·계획 확인 후) --dry-run 없이 다시 실행' }));
+    main.appendChild(h('div', { class: 'banner warn', text: '이 파일은 72시간 동안 유효합니다. Mac에서 renderer/jobs/' + res.fileName + ' 로 저장한 뒤:\n\nnpm run render:fetch-clips -- --job renderer/jobs/' + res.fileName + '\n(승인한 클립을 Drive에서 내려받음)\nnpm run render -- --job renderer/jobs/' + res.fileName + ' --dry-run\n(비용·계획 확인 후) --dry-run 없이 다시 실행' }));
     const a = h('a', { href: 'data:application/json;charset=utf-8,' + encodeURIComponent(res.jobFile), download: res.fileName, text: '파일 다운로드 ↓' });
     main.appendChild(h('div', { class: 'card' }, [a, copyBlock(res.fileName, res.jobFile, true)]));
     window.scrollTo(0, 0);

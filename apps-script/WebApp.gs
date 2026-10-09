@@ -160,6 +160,7 @@ function loadData_(ss) {
   const warnings = [];
   let hookColumnsMissing = true;
   let productionColumnsMissing = RF_CONFIG.REELS_PRODUCTION_HEADERS.slice();
+  let mediaColumnsMissing = RF_CONFIG.REELS_MEDIA_HEADERS.slice();
   const reelsSheet = findSheet_(ss, RF_CONFIG.SHEETS.REELS);
   let reels = [];
   if (reelsSheet && reelsSheet.getLastColumn() > 0) {
@@ -169,6 +170,7 @@ function loadData_(ss) {
     }
     hookColumnsMissing = missingHeaders_(reelsSheet, RF_CONFIG.REELS_HOOK_HEADERS).length > 0;
     productionColumnsMissing = missingHeaders_(reelsSheet, RF_CONFIG.REELS_PRODUCTION_HEADERS);
+    mediaColumnsMissing = missingHeaders_(reelsSheet, RF_CONFIG.REELS_MEDIA_HEADERS);
     if (!missing.length && missingHeaders_(reelsSheet, RF_CONFIG.REELS_OPTIONAL_HEADERS).length) {
       warnings.push('REELS에 브랜드·훅·제작 열(' + missingHeaders_(reelsSheet, RF_CONFIG.REELS_OPTIONAL_HEADERS).join(', ') + ')이 없습니다. "릴스 팩토리 → 시트 준비"를 실행하세요 — 훅 5개 저장·대본 승인·제작 계획에 필요합니다. 기존 데이터는 바뀌지 않습니다.');
     }
@@ -176,7 +178,8 @@ function loadData_(ss) {
       return normalizeText(r['릴스ID']);
     });
   }
-  return { products: products, productById: byId, reels: reels, reelsSheet: reelsSheet, warnings: warnings, hookColumnsMissing: hookColumnsMissing, productionColumnsMissing: productionColumnsMissing };
+  return { products: products, productById: byId, reels: reels, reelsSheet: reelsSheet, warnings: warnings, hookColumnsMissing: hookColumnsMissing, productionColumnsMissing: productionColumnsMissing, mediaColumnsMissing: mediaColumnsMissing,
+    referenceColumnPresent: !!colOf_(getHeaderMap_(productsSheet), RF_CONFIG.PRODUCT_OPTIONAL_FIELDS.referenceImages) };
 }
 
 function findReel_(data, reelId) {
@@ -348,6 +351,8 @@ function reelDetail_(ss, reelId) {
     pillars: brandSummary_().pillars,
     // Gemini's production plan (after approval), Drive folder and clip tracker.
     production: productionView_(row, product, data.productionColumnsMissing),
+    // Reference photos, per-scene clip uploads and review (the final render needs every clip approved).
+    media: mediaView_(row, product, data),
     // Recomputed from the current script, so an edit made in the sheet is reflected too.
     verificationFlags: reel.scenes ? verificationLines_(reel, reel.pillar, row) : [],
     brand: brandSummary_(),
@@ -750,6 +755,11 @@ function apiGetRenderJob(reelId) {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const data = loadData_(ss);
     const found = findReel_(data, normalizeText(reelId));
+    const gate = renderJobBlocker(found.row, found.product);
+    if (gate) throw new Error(gate);
+    // Approved clips must still be the same bytes in Drive (network check, only when the clip gate applies).
+    const driveErr = verifyApprovedClipFiles_(found.row);
+    if (driveErr) throw new Error(driveErr);
     const payload = buildRenderJobPayload(found.row, found.product, new Date().toISOString(), RF_RENDER_JOB_TTL_HOURS);
     const job = JSON.parse(payload);
     appendAudit_(ss, [{
