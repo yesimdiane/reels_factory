@@ -85,18 +85,193 @@ function viewerFacingTexts_(reel) {
   });
 }
 
-/** Facts and numbers a script may rely on, derived from PRODUCTS.확인된 기능 and 상품명. */
+/** Loose form for matching references and measurements: no spaces or punctuation, × → x, lower case. */
+function looseText_(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[×✕✖*]/g, 'x')
+    .replace(/[\s·.,:;()\[\]{}'"`~!?\/\\|_\-–—]+/g, '');
+}
+
+/** Stable reference for the i-th (0-based) verified fact, as shown to Gemini: F1, F2, … */
+function factId(i) {
+  return 'F' + (i + 1);
+}
+
+/**
+ * Measurements in text: tuples like 190x55x50mm (with an optional 상단/하단 label before them)
+ * and single numbers with a unit (82mm, 9,900원, 30%). Korean unit words after a number are normalised.
+ */
+function extractMeasures_(text) {
+  let t = String(text == null ? '' : text)
+    .replace(/[×✕✖*]/g, 'x')
+    .replace(/(\d)\s*(밀리미터|밀리|미리)/g, '$1mm')
+    .replace(/(\d)\s*(센티미터|센티|센치)/g, '$1cm')
+    .replace(/(\d)\s*(킬로그램|킬로|키로)/g, '$1kg')
+    .replace(/(\d)\s*그램/g, '$1g')
+    .replace(/(\d)\s*미터/g, '$1m')
+    .replace(/(\d)\s*퍼센트/g, '$1%')
+    .replace(/(\d),(\d{3})/g, '$1$2');
+  const tuples = [];
+  const tupleRe = /(상단|하단|윗부분|아랫부분|위쪽|아래쪽)?[\s:：]*(\d+(?:\.\d+)?(?:\s*[xX]\s*\d+(?:\.\d+)?){1,2})\s*(mm|cm|m(?![a-z])|kg|g(?![a-z]))?/g;
+  t = t.replace(tupleRe, function (all, label, nums, unit) {
+    tuples.push({ text: all.trim(), label: label ? label.charAt(0) : '', nums: nums.replace(/\s+/g, '').toLowerCase(), unit: (unit || '').toLowerCase() });
+    return ' ';
+  });
+  const singles = [];
+  const singleRe = /(\d+(?:\.\d+)?)\s*(mm|cm|kg|ml|원|%|m(?![a-z])|g(?![a-z])|l(?![a-z]))/gi;
+  let m;
+  while ((m = singleRe.exec(t))) singles.push({ text: m[0].trim(), num: m[1], unit: m[2].toLowerCase() });
+  return { tuples: tuples, singles: singles };
+}
+
+/** Facts, IDs, numbers and measurements a script may rely on, from PRODUCTS.확인된 기능 and 상품명. */
 function factContext_(product) {
   const facts = parseConfirmedFeatures(product.features);
   const factSet = {};
-  facts.forEach(function (f) {
+  const byLoose = {};
+  facts.forEach(function (f, i) {
     factSet[f] = true;
+    byLoose[looseText_(f)] = i;
   });
   const allowedNumbers = {};
   extractNumbers(facts.join(' ') + ' ' + product.name).forEach(function (n) {
     allowedNumbers[n] = true;
   });
-  return { facts: facts, factSet: factSet, allowedNumbers: allowedNumbers };
+  const measures = extractMeasures_(facts.join('\n') + '\n' + product.name);
+  const unitNumbers = {};
+  measures.singles.forEach(function (x) {
+    unitNumbers[x.num + x.unit] = true;
+  });
+  measures.tuples.forEach(function (x) {
+    if (x.unit) x.nums.split('x').forEach(function (n) {
+      unitNumbers[n + x.unit] = true;
+    });
+  });
+  return {
+    facts: facts,
+    factSet: factSet,
+    byLoose: byLoose,
+    allowedNumbers: allowedNumbers,
+    tuples: measures.tuples,
+    unitNumbers: unitNumbers,
+    looseAll: looseText_(facts.join(' ') + ' ' + product.name),
+  };
+}
+
+/**
+ * Resolves a fact reference from Gemini or the sheet to the index of a verified fact, or -1.
+ * Accepts the ID ("F2", "F2: …"), the exact sheet wording, or the same wording with different
+ * spacing/punctuation. A paraphrase is NOT a reference: unknown references are rejected.
+ */
+function resolveFactRef_(ref, ctx) {
+  const r = normalizeText(ref);
+  const id = r.match(/^\[?F\s*(\d+)\]?(?:$|[\s:：.)\]-])/i);
+  if (id) {
+    const i = Number(id[1]) - 1;
+    return i >= 0 && i < ctx.facts.length ? i : -1;
+  }
+  const loose = looseText_(r);
+  return loose && ctx.byLoose[loose] !== undefined ? ctx.byLoose[loose] : -1;
+}
+
+/** Fact references of a scene: Gemini's fact_ids (IDs) or the stored facts (sheet wording). */
+function sceneFactRefs_(scene) {
+  if (!scene) return [];
+  if (Array.isArray(scene.fact_ids)) return scene.fact_ids;
+  if (Array.isArray(scene.facts)) return scene.facts;
+  return [];
+}
+
+const RF_COLOR_GROUPS_ = [
+  ['화이트', '흰색', '흰', '하얀', '하양', '백색'],
+  ['그레이', '회색', '그레이색'],
+  ['다크그레이', '진회색', '짙은 회색', '차콜'],
+  ['블랙', '검정', '검은', '검은색', '흑색'],
+  ['베이지'], ['아이보리'], ['네이비', '남색'], ['핑크', '분홍'], ['민트'], ['실버', '은색'], ['골드', '금색'],
+  ['브라운', '갈색'], ['레드', '빨간', '빨강'], ['블루', '파란', '파랑'], ['그린', '초록'], ['옐로', '노란', '노랑'], ['퍼플', '보라'],
+];
+
+/**
+ * Product claims in viewer-facing text that need support in 확인된 기능: invented features,
+ * compatibility, performance, material, price, reviews, certifications, colours. A term that also
+ * appears in the verified facts (or product name) is allowed. Returns error strings.
+ */
+function unsupportedClaims_(text, ctx, where) {
+  const errors = [];
+  const t = normalizeText(text);
+  if (!t) return errors;
+  const hint = ' — "' + t + '". 확인된 기능(' + factId(0) + '~' + factId(Math.max(0, ctx.facts.length - 1)) + ')에 없는 내용이니 빼거나 확인된 기능만으로 다시 쓰세요.';
+  RF_CONFIG.CLAIM_RULES.forEach(function (rule) {
+    const re = new RegExp(rule.pattern.source, 'g');
+    let m;
+    while ((m = re.exec(t))) {
+      const term = m[1] || m[0];
+      if (ctx.looseAll.indexOf(looseText_(term)) !== -1) continue;
+      errors.push(where + '확인되지 않은 ' + rule.type + ' 주장 "' + term + '"' + hint);
+    }
+  });
+  RF_COLOR_GROUPS_.forEach(function (group) {
+    // Longest first, so "다크그레이" is not also read as "그레이".
+    const words = group.slice().sort(function (a, b) {
+      return b.length - a.length;
+    });
+    const hit = words.filter(function (w) {
+      return t.indexOf(w) !== -1;
+    })[0];
+    if (!hit) return;
+    if (hit === '그레이' && t.indexOf('다크그레이') !== -1 && t.replace(/다크그레이/g, '').indexOf('그레이') === -1) return;
+    const known = group.some(function (w) {
+      return ctx.looseAll.indexOf(looseText_(w)) !== -1;
+    });
+    if (!known) errors.push(where + '확인되지 않은 색상 "' + hit + '"' + hint);
+  });
+  return errors;
+}
+
+/** Dimensions, units, prices and percentages must match 확인된 기능 exactly (including 상단/하단). */
+function measurementErrors_(text, ctx, where) {
+  const errors = [];
+  const found = extractMeasures_(text);
+  found.tuples.forEach(function (x) {
+    const same = ctx.tuples.filter(function (f) {
+      return f.nums === x.nums;
+    });
+    if (!same.length) {
+      errors.push(where + '확인된 기능과 다른 치수입니다: "' + x.text + '". 치수는 확인된 기능에 적힌 그대로만 쓰세요.');
+      return;
+    }
+    if (x.unit && !same.some(function (f) { return !f.unit || f.unit === x.unit; })) {
+      errors.push(where + '치수 단위가 확인된 기능과 다릅니다: "' + x.text + '" (확인된 단위: ' + same[0].unit + ').');
+    }
+    if (x.label && !same.some(function (f) { return !f.label || f.label === x.label; })) {
+      errors.push(where + '상단/하단 치수가 바뀌었습니다: "' + x.text + '". 확인된 기능의 구분 그대로 쓰세요.');
+    }
+  });
+  found.singles.forEach(function (x) {
+    if (x.unit === '원') {
+      errors.push(where + '확인되지 않은 가격입니다: "' + x.text + '". 가격·할인은 쓰지 마세요.');
+    } else if (!ctx.unitNumbers[x.num + x.unit]) {
+      errors.push(where + '확인된 기능에 없는 수치/단위입니다: "' + x.text + '".');
+    }
+  });
+  return errors;
+}
+
+/** Viewer-facing texts with a label for error messages. */
+function labelledViewerTexts_(reel) {
+  const out = [{ where: 'hook', text: reel.hook }, { where: 'narration', text: reel.narration }];
+  (Array.isArray(reel.captions) ? reel.captions : []).forEach(function (c, i) {
+    out.push({ where: 'captions[' + i + ']', text: c });
+  });
+  (Array.isArray(reel.scenes) ? reel.scenes : []).forEach(function (s, i) {
+    if (!s) return;
+    out.push({ where: '장면 ' + (i + 1) + ' narration', text: s.narration });
+    out.push({ where: '장면 ' + (i + 1) + ' on_screen_text', text: s.on_screen_text });
+  });
+  return out.filter(function (x) {
+    return typeof x.text === 'string' && normalizeText(x.text);
+  });
 }
 
 /**
@@ -113,7 +288,6 @@ function validateReelContent(reel, product, label, options) {
     }));
   const L = RF_CONFIG.LIMITS;
   const ctx = factContext_(product);
-  const factSet = ctx.factSet;
   const allowedNumbers = ctx.allowedNumbers;
   const p = label + ': ';
   if (!reel || typeof reel !== 'object') {
@@ -186,15 +360,38 @@ function validateReelContent(reel, product, label, options) {
     }
   }
 
+  // Fact references: IDs (F1…) from Gemini or the sheet wording stored in REELS. Never free paraphrases.
+  const idRange = factId(0) + '~' + factId(Math.max(0, ctx.facts.length - 1));
   if (!Array.isArray(reel.facts_used) || reel.facts_used.length === 0) {
-    errors.push(p + '"facts_used"가 비어 있습니다. 확인된 기능 중 최소 1개를 사용해야 합니다.');
+    errors.push(p + '"facts_used"가 비어 있습니다. 확인된 기능 ID(' + idRange + ') 중 최소 1개를 넣으세요.');
   } else {
     reel.facts_used.forEach(function (fact) {
-      if (!factSet[normalizeText(fact)]) {
-        errors.push(p + '확인되지 않은 기능을 사용했습니다: "' + fact + '". "확인된 기능" 문구를 그대로 사용해야 합니다.');
+      if (resolveFactRef_(fact, ctx) === -1) {
+        errors.push(p + '확인되지 않은 기능을 참조했습니다: "' + fact + '". facts_used에는 확인된 기능 ID(' + idRange + ')만 넣으세요.');
       }
     });
   }
+  if (Array.isArray(reel.scenes)) {
+    reel.scenes.forEach(function (s, si) {
+      if (!s || typeof s !== 'object') return;
+      const refs = sceneFactRefs_(s);
+      refs.forEach(function (ref) {
+        if (resolveFactRef_(ref, ctx) === -1) {
+          errors.push(p + '장면 ' + (si + 1) + ': 확인되지 않은 기능을 참조했습니다: "' + ref + '". fact_ids에는 ' + idRange + '만 넣으세요.');
+        }
+      });
+      if (options && options.requireFactRefs && (s.beat === 'DEMO' || s.beat === 'BENEFIT') && !refs.length) {
+        errors.push(p + '장면 ' + (si + 1) + ' (' + s.beat + '): 이 장면이 근거로 삼는 확인된 기능 ID를 fact_ids에 넣으세요.');
+      }
+    });
+  }
+
+  labelledViewerTexts_(reel).forEach(function (x) {
+    const where = p + x.where + ': ';
+    unsupportedClaims_(x.text, ctx, where).concat(measurementErrors_(x.text, ctx, where)).forEach(function (e) {
+      errors.push(e);
+    });
+  });
 
   const viewerText = viewerFacingTexts_(reel).join('\n');
   extractNumbers(viewerText).forEach(function (n) {
@@ -221,14 +418,17 @@ function validateGeminiReels(payload, product, expectedCount) {
   const count = expectedCount || RF_CONFIG.REELS_PER_PRODUCT;
   const errors = [];
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.reels)) {
-    return { errors: ['응답에 "reels" 배열이 없습니다.'], reels: [] };
+    return { errors: ['응답에 "reels" 배열이 없습니다.'], reels: [], reelErrors: [] };
   }
   const reels = payload.reels;
   if (reels.length !== count) {
     errors.push('릴스 대본은 정확히 ' + count + '개여야 합니다 (받은 개수: ' + reels.length + ').');
   }
-  reels.forEach(function (reel, i) {
-    validateReelContent(reel, product, '릴스 ' + (i + 1), { requireStoryboard: true }).forEach(function (e) {
+  const reelErrors = reels.map(function (reel, i) {
+    return dedupe_(validateReelContent(reel, product, '릴스 ' + (i + 1), { requireStoryboard: true, requireFactRefs: true }));
+  });
+  reelErrors.forEach(function (list) {
+    list.forEach(function (e) {
       errors.push(e);
     });
   });
@@ -247,10 +447,76 @@ function validateGeminiReels(payload, product, expectedCount) {
   });
 
   // De-duplicate identical messages (e.g. the same number repeated).
-  const unique = errors.filter(function (e, idx) {
-    return errors.indexOf(e) === idx;
+  const unique = dedupe_(errors);
+  return {
+    errors: unique,
+    reels: unique.length ? [] : reels.map(function (r) {
+      return canonicalReel_(r, product);
+    }),
+    reelErrors: reelErrors,
+  };
+}
+
+function dedupe_(list) {
+  return list.filter(function (e, idx) {
+    return list.indexOf(e) === idx;
   });
-  return { errors: unique, reels: unique.length ? [] : reels };
+}
+
+/**
+ * A validated reel with fact references replaced by the exact PRODUCTS wording, so REELS keeps
+ * human-readable facts (and the same columns and fingerprint as before). Scene references go to
+ * scene.facts; facts_used also includes every fact a scene relies on.
+ */
+function canonicalReel_(reel, product) {
+  const ctx = factContext_(product);
+  const out = JSON.parse(JSON.stringify(reel));
+  const used = [];
+  const add = function (ref) {
+    const i = resolveFactRef_(ref, ctx);
+    if (i !== -1 && used.indexOf(i) === -1) used.push(i);
+    return i;
+  };
+  (out.facts_used || []).forEach(add);
+  (out.scenes || []).forEach(function (s) {
+    if (!s) return;
+    const idx = [];
+    sceneFactRefs_(s).forEach(function (ref) {
+      const i = add(ref);
+      if (i !== -1 && idx.indexOf(i) === -1) idx.push(i);
+    });
+    delete s.fact_ids;
+    s.facts = idx.map(function (i) {
+      return ctx.facts[i];
+    });
+  });
+  out.facts_used = used.sort(function (a, b) {
+    return a - b;
+  }).map(function (i) {
+    return ctx.facts[i];
+  });
+  return out;
+}
+
+/**
+ * Builds the best payload from several attempts without another paid call: for each position the
+ * latest reel that passed on its own. Returns { errors, reels } like validateGeminiReels, or null.
+ */
+function combineValidReels(attempts, product, expectedCount) {
+  const count = expectedCount || RF_CONFIG.REELS_PER_PRODUCT;
+  const picked = [];
+  for (let i = 0; i < count; i++) {
+    for (let a = attempts.length - 1; a >= 0; a--) {
+      const at = attempts[a];
+      if (at && at.reels && at.reels[i] && at.reelErrors && at.reelErrors[i] && !at.reelErrors[i].length) {
+        picked[i] = at.reels[i];
+        break;
+      }
+    }
+    if (!picked[i]) return null;
+  }
+  const res = validateGeminiReels({ reels: picked }, product, count);
+  return res.errors.length ? null : res;
 }
 
 /** HOOK first, CTA last, DEMO and BENEFIT present, beats in story order, keyword placeholder in the CTA. */

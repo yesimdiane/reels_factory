@@ -118,11 +118,14 @@ function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
  */
 function prepareReelRecords(product, rawText, existingIds, existingKeywords, meta) {
   const parsed = parseModelJson(rawText);
-  if (parsed.error) return { errors: [parsed.error], records: [] };
+  if (parsed.error) return { errors: [parsed.error], records: [], attempt: null };
   const result = validateGeminiReels(parsed.value, product);
-  if (result.errors.length) return { errors: result.errors, records: [] };
+  // Kept so a later attempt can be combined with this one's valid reels (no extra paid call).
+  const attempt = { reels: parsed.value && parsed.value.reels, reelErrors: result.reelErrors };
+  if (result.errors.length) return { errors: result.errors, records: [], attempt: attempt };
   return {
     errors: [],
     records: buildReelRecords(product, result.reels, existingIds, existingKeywords, meta),
+    attempt: attempt,
   };
 }
