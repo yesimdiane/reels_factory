@@ -1,6 +1,6 @@
 # Seoul Home Reels Factory
 
-Instagram account: **서울에서 집꾸미기** — "우리 집에 들이기 전에, 먼저 보여드릴게요." Brand rules, content pillars and script logic: [docs/brand.md](docs/brand.md). Five-hook script workflow (H1–H5, operator picks the hook): [docs/five-hook-workflow.md](docs/five-hook-workflow.md).
+Instagram account: **서울에서 집꾸미기** — "우리 집에 들이기 전에, 먼저 보여드릴게요." Brand rules, content pillars and script logic: [docs/brand.md](docs/brand.md). Five-hook script workflow (H1–H5, operator picks the hook): [docs/five-hook-workflow.md](docs/five-hook-workflow.md). **Gemini is the production orchestrator** (plans; code and the renderer execute; Claude Code only maintains the code): [docs/gemini-orchestration.md](docs/gemini-orchestration.md).
 
 Low-cost Instagram home-decor affiliate reels production workflow.
 
@@ -9,9 +9,9 @@ Turn a verified product entry into three distinct 9:16 short-form video concepts
 
 ## Stack
 - Google Sheets: PRODUCTS, REELS, PERFORMANCE
-- Gemini: structured script and Flow scene prompts
-- Google Flow: manually generate supplemental video clips within available credits
-- Google Drive: licensed source assets and generated outputs
+- Gemini: production orchestrator — hooks and script, then (after approval) Flow scene prompts, voice pacing, subtitle/edit plan and the final video check
+- Google Flow: clips generated **manually** (no public API) and imported through Drive
+- Google Drive: per-reel clip folder with an upload tracker, plus licensed source assets and outputs
 - Google Apps Script: Sheets menus and workflow coordination
 - FFmpeg: low-cost final rendering
 - ManyChat: post-specific keyword-to-affiliate-link automation
@@ -33,6 +33,7 @@ Turn a verified product entry into three distinct 9:16 short-form video concepts
 - [x] Approval state machine + AUDIT log; four human checkpoints (Issue #2)
 - [x] iPhone approval dashboard (Apps Script web app) — [docs/iphone-dashboard.md](docs/iphone-dashboard.md)
 - [x] FFmpeg renderer (Mac now, container later): Google Cloud TTS Korean narration, voice-synced subtitles, disclosure, CTA — [docs/rendering.md](docs/rendering.md)
+- [x] Gemini production planner after `SCRIPT_APPROVED`: Flow prompts matched to verified product images, voice rate/pauses, subtitle emphasis, cuts; Drive folder + clip tracker; `fetch-clips`; advisory Gemini check of the final video — [docs/gemini-orchestration.md](docs/gemini-orchestration.md)
 - [ ] ManyChat: stays a manual, operator-confirmed step
 
 Cost safety (Gemini model check, 8 s Flow clip coverage, TTS ledger vs Google billing, quotas and alerts): [docs/cost-safety.md](docs/cost-safety.md).

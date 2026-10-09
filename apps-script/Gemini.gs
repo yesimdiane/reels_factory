@@ -74,9 +74,10 @@ function requestGemini_(model, body) {
  * Calls Gemini once and returns the raw JSON text from the first candidate.
  * Throws an actionable Error on HTTP / safety / truncation problems.
  */
-function callGemini_(promptText, responseSchema) {
+function callGemini_(promptText, responseSchema, extraParts) {
   const body = {
-    contents: [{ role: 'user', parts: [{ text: promptText }] }],
+    // extraParts: optional inline images ({ inlineData: { mimeType, data } }) after the text.
+    contents: [{ role: 'user', parts: [{ text: promptText }].concat(extraParts || []) }],
     // Temperature left at the model default: Gemini 3.x models are tuned for 1.0.
     generationConfig: {
       responseMimeType: 'application/json',

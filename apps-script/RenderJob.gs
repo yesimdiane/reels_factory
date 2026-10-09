@@ -64,6 +64,22 @@ function buildRenderJobPayload(row, product, issuedAtIso, ttlHours) {
       }
       return buildFlowScenePrompts(row, product);
     })(),
+    // Gemini's production plan (only if it belongs to THIS approved script): TTS rate/pauses, cuts,
+    // subtitle emphasis, the product's visual spec and what to check in the finished video.
+    productionPlan: validProductionPlan(row),
+    // Verified product images (Drive file IDs) the renderer's final check compares the video against.
+    referenceImages: parseReferenceImages(product.referenceImages),
+    // Where the Flow clips live in Google Drive (tracked by the dashboard), for `fetch-clips`.
+    drive: (function () {
+      const a = parseAssetStatus_(row);
+      if (!a || a.approvedHash !== cellText_(row['승인 대본 해시'])) return null;
+      return {
+        folderId: a.folderId,
+        files: a.clips.filter(function (c) { return c.status === 'UPLOADED'; }).map(function (c) {
+          return { clip: c.file, name: c.driveName, id: c.driveFileId, size: c.sizeBytes };
+        }),
+      };
+    })(),
     issuedAt: issued.toISOString(),
     expiresAt: expires.toISOString(),
     script: cells,

@@ -82,7 +82,7 @@ function planClips(storyboard, template, knownDurations = [], clipSecFromJob) {
   storyboard.clipSec = clipSec;
   storyboard.beats.forEach((b, i) => {
     const voice = knownDurations[i] != null ? knownDurations[i] : [...b.ttsText].length / n.minCharsPerSec;
-    b.predictedSec = Math.max(b.scriptedSec, n.leadInSec + voice + n.tailSec);
+    b.predictedSec = Math.max(b.scriptedSec, n.leadInSec + voice + (b.pauseAfterSec != null ? b.pauseAfterSec : n.tailSec));
     b.voiceKnown = knownDurations[i] != null;
     const parts = Math.max(1, Math.ceil(b.predictedSec / usable - 1e-9));
     if (b.shots.length < parts) {

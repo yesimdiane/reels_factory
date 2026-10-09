@@ -23,6 +23,19 @@ function esc(text) {
 }
 
 /**
+ * Highlights Gemini's planned emphasis words inside one caption piece (only words that sit entirely in
+ * the piece). Off unless template.subtitle.emphasis.enabled — the reference Reel uses plain white text.
+ */
+function emphasize(text, words, color) {
+  let out = esc(text);
+  (words || []).forEach((w) => {
+    const e = esc(w);
+    if (e && out.includes(e)) out = out.replace(e, `{\\c${color}}${e}{\\r}`);
+  });
+  return out;
+}
+
+/**
  * Merges [start, end] intervals that touch, so the AI label is one continuous line across cuts.
  */
 function mergeIntervals(list) {
@@ -69,7 +82,8 @@ function buildAss(timeline, template, { font, disclosureText, keyword = '', prev
   const ev = (layer, a, b, s, text) => lines.push(`Dialogue: ${layer},${ts(a)},${ts(b)},${s},,0,0,0,,${text}`);
   const pos = `{\\pos(${geo.centerX},${geo.centerY})}`;
 
-  timeline.beats.forEach((b) => b.subtitle.captions.forEach((c) => ev(2, c.start, c.end, 'Sub', pos + esc(c.text))));
+  const emph = st.emphasis && st.emphasis.enabled ? st.emphasis : null;
+  timeline.beats.forEach((b) => b.subtitle.captions.forEach((c) => ev(2, c.start, c.end, 'Sub', pos + (emph ? emphasize(c.text, b.emphasisWords, emph.color) : esc(c.text)))));
 
   if (cta.enabled) {
     ev(2, 0, timeline.total, 'Cta', `{\\pos(${geo.centerX},${Math.round(H * cta.centerY)})}` + esc(String(cta.text).split('{키워드}').join(keyword)));
@@ -86,4 +100,4 @@ function buildAss(timeline, template, { font, disclosureText, keyword = '', prev
   return lines.join('\n') + '\n';
 }
 
-module.exports = { buildAss, ts, esc, mergeIntervals };
+module.exports = { buildAss, ts, esc, mergeIntervals, emphasize };

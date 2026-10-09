@@ -37,6 +37,10 @@ curl -s -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json'
 ```
 Do not paste the key into chats or commit it. In Apps Script it lives only in Script Properties (`GEMINI_API_KEY`).
 
+### Gemini production planning and the final check
+
+Both are text/image calls that happen **only after `SCRIPT_APPROVED`**: the production plan (1 call, +1 corrective retry at most, product images attached) and the renderer's advisory final check (1 call, one small frame per scene). Before any planning call the code checks: approved and unchanged script, REELS columns present, product images readable — each failure costs nothing. See [gemini-orchestration.md](gemini-orchestration.md).
+
 ## 2. Google Flow clips are 8 seconds
 
 A scene has to be covered by its clip, otherwise the cuts would have to repeat footage. Coverage is enforced at three points, so an impossible render plan cannot be built:

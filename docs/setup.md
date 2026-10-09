@@ -34,14 +34,14 @@ The code lives in the Apps Script project. Your data lives in the sheets. Replac
 3. In the left panel, click the file `ReelsFactory` (the one you pasted before). **Do not delete the project, and do not create a second copy of the code.** Two files defining the same functions would conflict.
 4. Click inside the code, press **⌘A** (Mac) or **Ctrl+A**, and then **Delete**. The file is now empty.
 5. Open [`dist/ReelsFactory.gs`](../dist/ReelsFactory.gs) on GitHub (on the `main` branch after the PR is merged, or on the PR's branch to try it first). Click **Copy raw file**, paste it into the empty file, and click **💾 Save**.
-   - To check you have the new code, run **릴스 팩토리 → 코드 버전 확인** after step 7. It shows the version (e.g. `2026-10-09 · hook-check 3`).
+   - To check you have the new code, run **릴스 팩토리 → 코드 버전 확인** after step 7. It shows the version (e.g. `2026-10-10 · gemini-orchestrator 4`).
    - Always copy from the **`main`** branch after the PR is merged. A PR merged into another branch does not reach `main`.
 6. The iPhone dashboard page is inside this same file, so there is nothing else to paste. Leave any other files in the project as they are.
 7. Reload the spreadsheet tab. In the **릴스 팩토리** menu:
    - run **테스트: PRD-001 오프라인 검증**. It should say 통과, with no API call.
    - Optionally run **Gemini 모델 확인 (무료)**.
 8. **If you use the iPhone dashboard:** **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**. The URL stays the same, but until you redeploy the dashboard keeps running the old code. Check it: the dashboard header must show the same `코드 …` version as step 5.
-9. **Required once:** run **릴스 팩토리 → 시트 준비** and answer **예**. It adds the REELS columns `콘텐츠 기둥`, `확인 필요`, `훅 후보(JSON)` and `선택한 훅` at the right end of row 1. Existing cells are never changed.
+9. **Required once:** run **릴스 팩토리 → 시트 준비** and answer **예**. It adds the REELS columns `콘텐츠 기둥`, `확인 필요`, `훅 후보(JSON)`, `선택한 훅`, `제작 계획(JSON)` and `에셋 현황(JSON)` at the right end of row 1. Existing cells are never changed.
    - Until you do, existing scripts can still be reviewed, approved and rendered. New generation stops **before** calling Gemini and asks for 시트 준비, so no paid hooks are lost.
 
 Existing REELS rows keep working. Their `사용한 확인 기능` text still resolves to your facts, so they can still be approved, edited and rendered.
@@ -81,12 +81,14 @@ These are under Apps Script → **Project Settings ⚙ → Script Properties**.
 |---|---|---|---|
 | `GEMINI_API_KEY` | yes | — | Set it via the menu or here. It is never stored in the sheet or in Git. |
 | `GEMINI_MODEL` | no | `gemini-3.5-flash` | Any model ID that supports `generateContent` with a JSON `responseSchema`. |
+| `RF_DRIVE_FOLDER_ID` | no | a folder named `Reels Factory` in My Drive (created if missing) | Pin the Drive root folder for the per-reel clip folders. |
 
 ## Permissions requested
 
 - **See, edit… spreadsheets that this application has been installed in.** Only this workbook (`@OnlyCurrentDoc`).
 - **Connect to an external service.** Used only to call `generativelanguage.googleapis.com` (Gemini).
 - **Display and run third-party web content in prompts and sidebars.** Used for the menu dialogs.
+- **See, edit, create and delete all of your Google Drive files** (`drive`, added with the production planner). It is needed to read the product images you list, to create the per-reel folder, and to see the clips you upload there (the narrower `drive.file` scope cannot see files you upload yourself). The code only reads images, creates folders and lists files; it never deletes or edits Drive files. After updating, open the menu once and **authorize again**; for the web app, redeploy a new version and approve the new permission.
 
 ## Developer install (clasp, multi-file)
 

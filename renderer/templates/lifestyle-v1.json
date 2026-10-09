@@ -87,6 +87,11 @@
     "translation": {
       "enabled": false,
       "comment": "Operator decision: Korean subtitles only (the reference also shows a small English line)."
+    },
+    "emphasis": {
+      "enabled": false,
+      "color": "&H00E6FF&",
+      "comment": "Off by default: the reference Reel uses plain white captions. When on, the words Gemini plans as emphasis (production plan) are shown in this colour (ASS &HBBGGRR&)."
     }
   },
   "persistentCta": {

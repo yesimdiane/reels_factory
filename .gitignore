@@ -6,4 +6,5 @@ node_modules/
 renderer/.env
 renderer/output/
 renderer/clips/
+renderer/refs/
 renderer/jobs/*.json

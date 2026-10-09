@@ -72,9 +72,11 @@ async function acquireLock(lockFile, done, { staleMs = LOCK_STALE_MS, pollMs = 2
 }
 
 function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledgerFile, maxCharsPerJob = 1500, monthlyCharLimit = 500000, now = () => new Date() }) {
-  const keyOf = (text) =>
-    crypto.createHash('sha256').update(JSON.stringify({ p: provider.name, voice, speakingRate, text })).digest('hex');
-  const cachePath = (text) => path.join(cacheDir, keyOf(text) + '.wav');
+  // rate: per-line speaking rate from Gemini's production plan (default: the configured rate). A different
+  // rate is a different recording, so it is part of the cache key.
+  const keyOf = (text, rate = speakingRate) =>
+    crypto.createHash('sha256').update(JSON.stringify({ p: provider.name, voice, speakingRate: rate, text })).digest('hex');
+  const cachePath = (text, rate) => path.join(cacheDir, keyOf(text, rate) + '.wav');
   const month = () => now().toISOString().slice(0, 7);
 
   function readLedger() {
@@ -103,8 +105,8 @@ function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledge
   }
 
   /** What a render would cost, without calling anything. */
-  function estimate(segments) {
-    const uncached = segments.filter((s) => !fs.existsSync(cachePath(s)));
+  function estimate(segments, rates = []) {
+    const uncached = segments.filter((s, i) => !fs.existsSync(cachePath(s, rates[i])));
     const chars = uncached.reduce((n, s) => n + billedChars(s), 0);
     const price = PRICE_PER_MILLION[voiceFamily(voice)];
     const usedThisMonth = (readLedger()[month()] || {}).chars || 0;
@@ -138,12 +140,13 @@ function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledge
    * lines it never received. A per-line lock stops two renders (e.g. a watch pass and a manual run)
    * from requesting the same line at the same time; the second one waits and reuses the cached file.
    */
-  async function synthesizeAll(segments) {
-    assertBudget(estimate(segments));
+  async function synthesizeAll(segments, rates = []) {
+    assertBudget(estimate(segments, rates));
     fs.mkdirSync(cacheDir, { recursive: true });
     const out = [];
-    for (const text of segments) {
-      const file = cachePath(text);
+    for (const [i, text] of segments.entries()) {
+      const rate = rates[i] == null ? speakingRate : rates[i];
+      const file = cachePath(text, rate);
       let cached = true;
       if (!fs.existsSync(file)) {
         const release = await acquireLock(file + '.lock', () => fs.existsSync(file));
@@ -160,7 +163,7 @@ function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledge
             };
             // Counted before the request is sent. Providers that retry (Google) report each attempt.
             if (!provider.reportsAttempts) attempt();
-            const audio = await provider.synthesize({ text, voice, speakingRate, onAttempt: provider.reportsAttempts ? attempt : undefined });
+            const audio = await provider.synthesize({ text, voice, speakingRate: rate, onAttempt: provider.reportsAttempts ? attempt : undefined });
             parseWav(audio); // validate before caching
             fs.writeFileSync(file + '.tmp', audio);
             fs.renameSync(file + '.tmp', file);
@@ -169,14 +172,14 @@ function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledge
           release();
         }
       }
-      out.push({ text, file, duration: parseWav(fs.readFileSync(file)).duration, cached });
+      out.push({ text, file, duration: parseWav(fs.readFileSync(file)).duration, cached, rate });
     }
     return out;
   }
 
   /** Duration of an already-cached line (free), or null. */
-  function cachedDuration(text) {
-    const f = cachePath(text);
+  function cachedDuration(text, rate) {
+    const f = cachePath(text, rate);
     try {
       return parseWav(fs.readFileSync(f)).duration;
     } catch {

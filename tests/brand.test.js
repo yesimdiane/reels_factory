@@ -181,7 +181,7 @@ test('sheets without the new columns: existing scripts stay reviewable and edita
   assert.match(res.error, /훅 저장 열이 없습니다[\s\S]*시트 준비/);
   assert.equal(env.state.fetches.length, 0);
   const dash = call('apiGetDashboard');
-  assert.match(dash.warnings.join('\n'), /REELS에 브랜드·훅 열\(콘텐츠 기둥, 확인 필요, 훅 후보\(JSON\), 선택한 훅\)이 없습니다[\s\S]*시트 준비/);
+  assert.match(dash.warnings.join('\n'), /REELS에 브랜드·훅·제작 열\(콘텐츠 기둥, 확인 필요, 훅 후보\(JSON\), 선택한 훅, 제작 계획\(JSON\), 에셋 현황\(JSON\)\)이 없습니다[\s\S]*시트 준비/);
   const d = call('apiGetReel', 'PRD-001-R01').detail;
   assert.equal(d.hooks.columnsMissing, true, 'the dashboard tells the operator to run 시트 준비');
   const act = (name, input = {}) => call('apiAction', 'PRD-001-R01', name, Object.assign({ expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion, expectedVideoVersion: 0 }, input));

@@ -67,6 +67,8 @@ const RF_ACTIONS = {
   SELECT_HOOK: { touchpoint: 2, from: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], to: 'SCRIPT_REVIEW_PENDING', label: '훅 선택' },
   // Five hooks made by Gemini for a script that has none yet (e.g. written before the five-hook workflow).
   SET_HOOKS: { touchpoint: 2, from: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], to: 'SCRIPT_REVIEW_PENDING', label: '훅 5개 만들기 (Gemini)' },
+  // Gemini's production plan for an APPROVED script (Production.gs). Text only; status does not change.
+  SET_PRODUCTION_PLAN: { touchpoint: 0, from: ['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'], to: 'COMPUTED', label: '제작 계획 (Gemini)' },
   REJECT_SCRIPT: { touchpoint: 2, from: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], to: 'SCRIPT_REJECTED', label: '대본 반려' },
   REOPEN_SCRIPT: { touchpoint: 2, from: ['SCRIPT_APPROVED'], to: 'SCRIPT_REVIEW_PENDING', label: '대본 승인 취소' },
   START_VIDEO: { touchpoint: 0, from: ['SCRIPT_APPROVED', 'VIDEO_CHANGES_REQUESTED', 'VIDEO_FAILED'], to: 'VIDEO_IN_PRODUCTION', label: '영상 제작 시작' },
@@ -355,7 +357,7 @@ function planTransition(row, product, action, input, ctx) {
     (input.expectedScriptVersion == null || Number(input.expectedScriptVersion) === scriptVersion) &&
     (input.expectedVideoVersion == null || Number(input.expectedVideoVersion) === videoVersion);
   if (input.expectedStatus && input.expectedStatus !== status) {
-    if (def.to === status && versionsMatch && !/EDIT|REGENERATE|REGISTER|SELECT|SET_HOOKS/.test(action)) {
+    if (def.to === status && versionsMatch && !/EDIT|REGENERATE|REGISTER|SELECT|SET_HOOKS|SET_PRODUCTION_PLAN/.test(action)) {
       return { noop: true, status: status, updates: {}, audit: null };
     }
     throw staleError_(row, status);
@@ -417,6 +419,7 @@ function planTransition(row, product, action, input, ctx) {
     updates['승인 대본 버전'] = '';
     updates['승인 대본 해시'] = '';
     updates['Flow 장면 프롬프트'] = '';
+    updates['제작 계획(JSON)'] = '';
     // Optional brand columns: pillar (if given) and the recomputed verification flags.
     if (newReel.pillar) updates['콘텐츠 기둥'] = pillarLabel(newReel.pillar);
     updates['확인 필요'] = verificationLines_(newReel, newReel.pillar || pillarIdOf(row['콘텐츠 기둥']), row).join('\n');
@@ -488,6 +491,7 @@ function planTransition(row, product, action, input, ctx) {
       updates['승인 대본 버전'] = '';
       updates['승인 대본 해시'] = '';
       updates['Flow 장면 프롬프트'] = '';
+      updates['제작 계획(JSON)'] = '';
       reviewScript();
       break;
     case 'EDIT_SCRIPT': {
@@ -558,6 +562,21 @@ function planTransition(row, product, action, input, ctx) {
       }
       to = status;
       snapshot = { '훅 후보(JSON)': updates['훅 후보(JSON)'] };
+      break;
+    }
+    case 'SET_PRODUCTION_PLAN': {
+      // Gemini plans only for an approved, unchanged script; the plan is bound to its fingerprint.
+      requireApprovedScript();
+      const plan = input.plan;
+      if (!plan || plan.approvedHash !== cellText_(row['승인 대본 해시']) || Number(plan.scriptVersion) !== scriptVersion) {
+        throw new Error('제작 계획이 현재 승인된 대본 버전과 맞지 않습니다.');
+      }
+      if (!Array.isArray(input.flowPrompts) || !input.flowPrompts.length) throw new Error('Flow 장면 프롬프트가 비어 있습니다.');
+      updates['제작 계획(JSON)'] = JSON.stringify(plan);
+      updates['Flow 장면 프롬프트'] = JSON.stringify(input.flowPrompts);
+      note = (note ? note + ' · ' : '') + '제작 계획 (Gemini): 장면 ' + plan.scenes.length + '개의 Flow 프롬프트·음성 속도/쉼·자막 강조·컷 구성. 제품 이미지 ' + plan.references.length + '장 기준. 대본은 바뀌지 않았습니다.';
+      to = status;
+      snapshot = { '제작 계획(JSON)': updates['제작 계획(JSON)'] };
       break;
     }
     case 'START_VIDEO':

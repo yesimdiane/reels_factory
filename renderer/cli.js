@@ -3,13 +3,17 @@
 //   node renderer/cli.js check                       # FFmpeg/font/config sanity — no API calls
 //   node renderer/cli.js estimate --job <file>       # verify approval + cost estimate — no API calls
 //   node renderer/cli.js render   --job <file> [--preview] [--force] [--tts google|local|silent]
+//   node renderer/cli.js fetch-clips --job <file>     # download the reel's Flow clips from its Google Drive folder
 //   node renderer/cli.js pending [--watch <minutes>]  # render every job in RF_JOBS_DIR whose clips are ready
 //   node renderer/cli.js usage                       # TTS characters used this month
 'use strict';
 const path = require('node:path');
 const fs = require('node:fs');
 const { loadConfig } = require('./lib/config');
-const { loadJobFile, GateError } = require('./lib/job');
+const { loadJobFile, verifyJob, GateError } = require('./lib/job');
+const { createGeminiClient } = require('./lib/gemini');
+const { createFinalChecker } = require('./lib/final-check');
+const { driveAuth, createDriveClient, fetchClips, loadReferenceImages } = require('./lib/drive');
 const { createTtsService, BudgetError } = require('./lib/tts');
 const { createGoogleTts, apiKeyAuth, metadataAuth, gcloudAuth } = require('./lib/tts/google');
 const { createLocalTts } = require('./lib/tts/local');
@@ -47,6 +51,27 @@ function makeProvider(name, cfg) {
   return createGoogleTts({ auth });
 }
 
+/**
+ * Gemini's advisory check of the finished video. Needs GEMINI_API_KEY in renderer/.env; skipped for preview
+ * renders and with --no-ai-check. Verified product images: renderer/refs/<productId>/ or the job's Drive IDs.
+ */
+function makeFinalCheck(cfg, args, preview) {
+  if (!cfg.geminiApiKey || args['no-ai-check'] || preview) return null;
+  const drive = createDriveClient({ authHeaders: driveAuth(cfg) });
+  return createFinalChecker({
+    gemini: createGeminiClient({ apiKey: cfg.geminiApiKey, model: cfg.geminiModel }),
+    ffmpeg: cfg.ffmpeg,
+    loadReferenceImages: async (job) => {
+      try {
+        return await loadReferenceImages({ job, refsDir: cfg.refsDir, drive });
+      } catch (e) {
+        console.log('! 제품 이미지를 불러오지 못했습니다 (영상 점검에서 제품 일치는 확인 불가): ' + e.message);
+        return [];
+      }
+    },
+  });
+}
+
 /** Render options shared by `render`, `estimate` and `pending`. */
 function buildOptions(jobFile, args, cfg, dryRun) {
   const preview = !!args.preview;
@@ -75,6 +100,7 @@ function buildOptions(jobFile, args, cfg, dryRun) {
     font: cfg.font,
     fontsDir: cfg.fontsDir,
     defaultSource: cfg.defaultSource,
+    finalCheck: makeFinalCheck(cfg, args, preview),
     allowFontFallback: cfg.allowFontFallback,
     crf: cfg.crf,
     preset: cfg.preset,
@@ -95,6 +121,7 @@ async function main() {
     const fam = tmpl.subtitle.font || cfg.font;
     const f = findFont(fam, { fontsDir: cfg.fontsDir });
     log((f.found ? '✓' : '✗') + ' 자막 글꼴 ' + fam + (f.found ? ' (' + (f.file || f.via) + ')' : ' 없음 — ' + (INSTALL_HELP[fam] || '설치 필요')));
+    log('Gemini 영상 점검: ' + (cfg.geminiApiKey ? '켜짐 (' + cfg.geminiModel + ', 참고용)' : 'GEMINI_API_KEY 없음 — 건너뜀'));
     log('TTS: ' + cfg.ttsProvider + ' / ' + cfg.voice + ' / 인증 ' + cfg.ttsAuth + (cfg.googleApiKey ? ' (키 설정됨)' : ''));
     log('렌더 키: ' + (cfg.secret ? '설정됨' : '없음 — Sheets 메뉴 "렌더 키 보기"'));
     log('작업 폴더: ' + cfg.jobsDir + '\n클립 폴더: ' + cfg.clipsDir + '\n출력 폴더: ' + cfg.outputDir + '\n캐시/사용량: ' + cfg.stateDir);
@@ -123,8 +150,15 @@ async function main() {
     }
     return;
   }
+  if (cmd === 'fetch-clips') {
+    if (!args.job) throw new Error('--job <렌더 작업 파일> 이 필요합니다.');
+    const job = verifyJob(loadJobFile(path.resolve(args.job)), { secret: cfg.secret });
+    const r = await fetchClips({ drive: createDriveClient({ authHeaders: driveAuth(cfg) }), job, clipsDir: path.resolve(args.clips || cfg.clipsDir), log });
+    log(`Drive → ${r.dir}\n내려받음 ${r.downloaded.length}: ${r.downloaded.join(', ') || '-'}\n이미 있음 ${r.kept.length}: ${r.kept.join(', ') || '-'}\n아직 Drive에 없음 ${r.missing.length}: ${r.missing.join(', ') || '-'}` + (r.ignored.length ? `\n목록에 없는 파일(무시): ${r.ignored.join(', ')}` : ''));
+    return;
+  }
   if (cmd !== 'render' && cmd !== 'estimate') {
-    log('사용법: node renderer/cli.js check | estimate --job <file> | render --job <file> [--preview] [--force] [--clips <dir>] [--template lifestyle-v1] [--tts google|local|silent] | pending [--watch <분>] | usage');
+    log('사용법: node renderer/cli.js check | estimate --job <file> | fetch-clips --job <file> | render --job <file> [--preview] [--force] [--no-ai-check] [--clips <dir>] [--template lifestyle-v1] [--tts google|local|silent] | pending [--watch <분>] | usage');
     return;
   }
   if (!args.job) throw new Error('--job <렌더 작업 파일> 이 필요합니다.');

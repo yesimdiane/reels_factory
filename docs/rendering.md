@@ -66,7 +66,8 @@ There is **no code path that draws coloured slides or placeholder visuals**. Wit
 - **After approval:** when you tap **승인**, the system writes **one Google Flow prompt per scene** to REELS `Flow 장면 프롬프트` and shows it in the dashboard. This is done by code and costs nothing.
   - Each prompt covers: product appearance and dimensions (only from `확인된 기능` and the optional `제품 외형`), scene, product interaction, camera movement, lighting and environment, duration (8 s), and consistency instructions (same colour, shape, size, place and person in every scene).
   - Editing or reopening the script clears the prompts, so Flow credits are never spent on an unapproved script.
-- **Upload:** generate the clips in Flow and save them as `clips/<릴스ID>/S1.mp4 … S5.mp4` (the Drive-synced folder on the Mac).
+- **Gemini production plan (optional, after approval):** *제작 계획 만들기* replaces the scene text of these prompts with Gemini's (matched to your verified product images), keeping the code-built product/feature/no-logo scaffold. See [gemini-orchestration.md](gemini-orchestration.md).
+- **Upload:** generate the clips in Flow and upload them to the reel's Drive folder (*Drive 폴더 준비*) as `S1.mp4 … S6.mp4`, or save them as `clips/<릴스ID>/S1.mp4 …` on the Mac. `node renderer/cli.js fetch-clips --job <file>` downloads the uploaded clips from Drive (read-only; needs `gcloud auth login --enable-gdrive-access` or `RF_DRIVE_ACCESS_TOKEN`).
 - **Cutting:** the renderer takes the scene's cuts (~1.8 s each; e.g. 3 cuts from a 6 s scene) at evenly **spread points of the clip**, so cuts never repeat footage. QC checks this.
 - **`assets.json` (optional):**
   - If missing, the renderer writes it, recording the source as `RF_DEFAULT_FOOTAGE_SOURCE` (default `flow-generated`).
@@ -78,6 +79,17 @@ There is **no code path that draws coloured slides or placeholder visuals**. Wit
 - **Product scenes and AI footage:** SOLUTION, DEMO, BENEFIT and CTA scenes must show the product. Because the product in AI-generated scenes may differ from the real one, the render manifest flags AI footage. At **video review (③)** you confirm shape, colour and size match the real product. The publishing checklist reminds you to turn on Instagram's **AI info** label.
 - **8 s clip coverage:** every scene must fit its clip. The renderer predicts each scene's length from its narration **before TTS** and, if a scene would outgrow one clip (7.5 s usable), asks for an extra clip `S3b.mp4`. It re-checks with the real voice after TTS; the voice is cached, so the rerun is free. Details: [cost-safety.md](cost-safety.md#2-google-flow-clips-are-8-seconds).
 - **Clip checks:** ≥720p, at least the covered length + 0.5 s (≥4 s, ≤8 s), not a single colour, not a still image. Any problem → `ASSETS_REQUIRED`, and `SHOTLIST.md` + `FLOW_PROMPTS.md` are written next to the clips. Both are written once and not rewritten if unchanged.
+
+## Gemini's production plan in the render, and the final check
+
+If the signed job carries a production plan for **this** approval, the renderer applies it within fixed limits (invalid parts are skipped with a log line; a plan for another approval or with different spoken text is ignored):
+
+- **Speaking rate per line** (0.90–1.15) is sent to Google TTS; a different rate is a new cache entry. **Pause after a line** (0–0.6 s) replaces the template tail.
+- **Cuts per scene** and their framing follow the plan (1.0–3.5 s per cut), else the default cut structure.
+- **Subtitle emphasis** is drawn only if `subtitle.emphasis.enabled` is true in the template (default off: the reference uses plain white captions).
+- The manifest records what was applied (`productionPlan`) and each line's rate.
+
+After a render that passed QC, **Gemini checks the video** (one frame per scene, vs. the approved storyboard and the verified product images; `GEMINI_API_KEY` in `renderer/.env`). Result `pass` / `review` / `fail` in `manifest.json → qc.geminiReview` and in `reviewNote`; advisory only, never approves, never fails the render; skipped with `--preview` or `--no-ai-check`. No product image to compare → at most `review`.
 
 ## Automatic assembly (`pending`)
 

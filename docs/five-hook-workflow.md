@@ -14,7 +14,9 @@ Every product reel is made this way. The reference output is `FIXTURE_PRD_001_GE
 ④ Operator reviews the updated script, ticks "끝까지 확인했습니다", approves → SCRIPT_APPROVED
    (approval needs: five hooks, a choice made on THIS script version, and the review tick)
    (only now: Flow prompts, Google Flow by hand, paid TTS, rendering)
-⑤ Renderer: TTS → scene timing checked on the real voice → FFmpeg → QC
+⑤ Gemini production plan (after approval; Flow prompts matched to verified product images, voice pace, cuts) → Drive clip folder → Flow clips by hand
+   → see [gemini-orchestration.md](gemini-orchestration.md)
+⑤ Renderer: TTS → scene timing checked on the real voice → FFmpeg → QC → Gemini's advisory final check
 ⑥ Final video review → publishing pack (caption with [광고]) → ManyChat   ← checkpoints 3 and 4
 ```
 

@@ -58,12 +58,56 @@ class MockSheet {
   }
 }
 
+
+/** In-memory Google Drive: folders, files (with bytes), DriveApp-style iterators. IDs satisfy parseDriveFileId. */
+function createDrive() {
+  const nodes = {};
+  let n = 0;
+  const newId = () => 'DRIVEID' + String(++n).padStart(20, '0');
+  const iter = (list) => { let i = 0; return { hasNext: () => i < list.length, next: () => list[i++] }; };
+  const fileApi = (f) => ({
+    getId: () => f.id, getName: () => f.name, getMimeType: () => f.mime, getSize: () => f.bytes.length,
+    getLastUpdated: () => new Date(f.modified), getUrl: () => 'https://drive.google.com/file/d/' + f.id + '/view',
+    getBlob: () => ({ getBytes: () => Array.from(f.bytes), getContentType: () => f.mime }),
+  });
+  const folderApi = (d) => ({
+    getId: () => d.id, getName: () => d.name, getUrl: () => 'https://drive.google.com/drive/folders/' + d.id,
+    getFoldersByName: (name) => iter(Object.values(nodes).filter((x) => x.kind === 'folder' && x.parent === d.id && x.name === name).map(folderApi)),
+    createFolder: (name) => folderApi(addFolder(name, d.id)),
+    getFiles: () => iter(Object.values(nodes).filter((x) => x.kind === 'file' && x.parent === d.id).map(fileApi)),
+  });
+  const addFolder = (name, parent = '') => (nodes[newId()] = { kind: 'folder', name, parent, id: undefined }, fixId(Object.keys(nodes).pop()));
+  const fixId = (id) => { nodes[id].id = id; return nodes[id]; };
+  const addFile = (parent, name, bytes, mime, modified) => {
+    const id = newId();
+    nodes[id] = { kind: 'file', id, name, parent, mime: mime || 'video/mp4', bytes: Buffer.from(bytes || 'x'), modified: modified || '2026-10-10T00:00:00.000Z' };
+    return id;
+  };
+  return {
+    nodes,
+    addFile,
+    addImage: (name, mime = 'image/png') => addFile('', name, Buffer.from('fake-image-' + name), mime),
+    folderByPath: (...names) => {
+      let cur = Object.values(nodes).find((x) => x.kind === 'folder' && x.name === names[0] && !x.parent);
+      for (const nm of names.slice(1)) cur = cur && Object.values(nodes).find((x) => x.kind === 'folder' && x.parent === cur.id && x.name === nm);
+      return cur || null;
+    },
+    api: {
+      getFileById: (id) => { const f = nodes[id]; if (!f || f.kind !== 'file') throw new Error('not found: ' + id); return fileApi(f); },
+      getFolderById: (id) => { const f = nodes[id]; if (!f || f.kind !== 'folder') throw new Error('not found: ' + id); return folderApi(f); },
+      getFoldersByName: (name) => iter(Object.values(nodes).filter((x) => x.kind === 'folder' && !x.parent && x.name === name).map(folderApi)),
+      createFolder: (name) => folderApi(addFolder(name)),
+    },
+  };
+}
+
 /**
  * opts: { products: [[...row]], email, reviewers, gemini: payload | (n, body) => payload | Error, serviceUrl }
  */
 function createEnv(opts = {}) {
   const sheets = { PRODUCTS: new MockSheet('PRODUCTS', [PRODUCT_HEADERS, ...(opts.products || [])]) };
   const props = Object.assign({ GEMINI_API_KEY: 'test-key' }, opts.reviewers ? { RF_REVIEWERS: opts.reviewers } : {});
+  const drive = createDrive();
   const state = { email: opts.email ?? 'owner@example.com', fetches: [], modelCalls: [], alerts: [], locks: 0 };
   const ss = {
     getSheetByName: (n) => sheets[n] || null,
@@ -96,6 +140,7 @@ function createEnv(opts = {}) {
     PropertiesService: {
       getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; } }),
     },
+    DriveApp: drive.api,
     Session: { getActiveUser: () => ({ getEmail: () => state.email }) },
     ScriptApp: { getService: () => ({ getUrl: () => opts.serviceUrl || '' }) },
     HtmlService: { createHtmlOutput: htmlOutput, createHtmlOutputFromFile: () => htmlOutput('') },
@@ -122,6 +167,7 @@ function createEnv(opts = {}) {
     },
     Utilities: {
       sleep() {},
+      base64Encode: (bytes) => Buffer.from(bytes.map((b) => (b < 0 ? b + 256 : b))).toString('base64'),
       getUuid: () => crypto.randomUUID(),
       Charset: { UTF_8: 'UTF-8' },
       // Like Apps Script: returns signed bytes (-128..127).
@@ -155,7 +201,7 @@ function createEnv(opts = {}) {
       return approve(reelId, action, input);
     };
   }
-  return { ctx, gs, sheets, props, state, ss };
+  return { ctx, gs, sheets, props, state, ss, drive };
 }
 
 function prd001Row(gs, over = {}) {
