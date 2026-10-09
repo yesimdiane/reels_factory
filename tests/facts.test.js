@@ -35,10 +35,19 @@ function reel(angle, concept, scenes, factsUsed) {
   };
 }
 
-// Natural Korean paraphrases of the operator's verified facts (none copies the sheet wording),
-// in the account's structure: HOOK → EMPATHY → SOLUTION → DEMO → CTA, one angle per reel.
+// Natural Korean paraphrases of the operator's verified facts (none copies the sheet wording), in
+// the five-hook format: hooks H1–H5, the recommended hook (H4) opening one script.
 function paraphrasePayload() {
   return {
+    hooks: [
+      { id: 'H1', type: 'QUESTION', text: '매번 우산 어디 둘지 고민하는 사람?' },
+      { id: 'H2', type: 'NUMBER', text: '세 가지 색 중에 문 색 맞추기' },
+      { id: 'H3', type: 'MYTH', text: '우산 자리, 꼭 바닥일 필요 없어요' },
+      { id: 'H4', type: 'SITUATION', text: '나갈 때마다 우산 찾느라 바빠요' },
+      { id: 'H5', type: 'CONCLUSION', text: '현관 우산은 문에 붙이면 돼요' },
+    ],
+    recommended_hook: { id: 'H4', reason: '출근길 장면으로 바로 공감' },
+    comment_keyword: '우산',
     reels: [
       reel('EVERYDAY_FRUSTRATION', '나갈 때 우산 찾기', [
         ['HOOK', 3, '나갈 때마다 우산 찾느라 바빠요', []],
@@ -48,22 +57,6 @@ function paraphrasePayload() {
         ['DEMO', 4, '장우산이랑 접이식 따로 꽂아요', ['F3']],
         ['CTA', 4, "제품 정보는 댓글에 '{키워드}'", []],
       ], ['F1', 'F3', 'F4']),
-      reel('SMALL_SPACE', '원룸 현관', [
-        ['HOOK', 3, '원룸 현관은 신발만 둬도 꽉 차요', []],
-        ['EMPATHY', 4, '우산까지 세우면 발 디딜 데가 없죠', []],
-        ['SOLUTION', 5, '위아래 두 개로 나뉜 우산꽂이예요', ['F2']],
-        ['DEMO', 4, '상단 190x55x50mm,', ['F2']],
-        ['DEMO', 4, '하단 188×55×82mm 따로 분리돼요', ['F2']],
-        ['CTA', 4, "궁금하면 댓글에 '{키워드}'", []],
-      ], ['F2']),
-      reel('LIFESTYLE_SITUATION', '손님 오기 전 정리', [
-        ['HOOK', 3, '손님 오기 전 현관 정리할 때', []],
-        ['EMPATHY', 4, '젖은 우산이 제일 애매하잖아요', []],
-        ['SOLUTION', 5, '문에 붙이는 우산꽂이로 정리해요', ['F4']],
-        ['DEMO', 4, '다크그레이, 그레이, 화이트 중에', ['F5']],
-        ['DEMO', 4, '흰 현관문엔 화이트로 붙여요', ['F5', 'F4']],
-        ['CTA', 4, "색상 정보는 댓글에 '{키워드}'", []],
-      ], ['F5', 'F4']),
     ],
   };
 }
@@ -178,22 +171,13 @@ test('retry: Gemini gets the exact failing claims and its previous response; a v
   assert.equal(env.state.fetches.length, 2);
   const retryPrompt = env.state.fetches[1].contents[0].parts[0].text;
   assert.match(retryPrompt, /릴스 1: 장면 3 narration: 확인되지 않은 호환성 주장 "냉장고"/);
-  assert.match(retryPrompt, /문제가 없는 릴스와 장면은 그대로 두세요/);
+  assert.match(retryPrompt, /문제가 없는 훅·장면은 그대로 두세요/);
   assert.match(retryPrompt, /## 이전 응답 \(JSON/);
   assert.match(retryPrompt, /냉장고에도 붙일 수 있어요/);
 });
 
-test('retry: valid reels from both attempts are combined instead of paying for a third call', () => {
-  const first = withLine(2, '냉장고에도 붙일 수 있어요'); // reel 1 bad, reels 2–3 good
-  const second = paraphrasePayload();
-  second.reels[1].scenes[1].narration = '상단 188x55x50mm,'; // reel 2 bad this time
-  const { env, call } = setup((n) => (n === 1 ? first : second));
-  const res = call('apiGenerateScripts', 'PRD-001');
-  assert.equal(res.ok, true, res.error);
-  assert.equal(env.state.fetches.length, 2, 'no third paid call');
-  assert.equal(env.sheets.REELS.rows.length, 4);
-  assert.ok(env.sheets.LOG.rows.some((r) => /합쳐 사용합니다/.test(r.join(' '))));
-  // Still invalid after both attempts → nothing written, actionable error.
+test('retry: at most two paid calls; still invalid → nothing written, actionable error', () => {
+  const first = withLine(2, '냉장고에도 붙일 수 있어요');
   const { env: env2, call: call2 } = setup(() => first);
   const res2 = call2('apiGenerateScripts', 'PRD-001');
   assert.equal(res2.ok, false);
@@ -221,7 +205,7 @@ test('existing PRODUCTS and REELS rows are not changed by generation', () => {
   assert.equal(res.ok, true, res.error);
   assert.equal(JSON.stringify(env.sheets.PRODUCTS.rows), productsBefore, 'PRODUCTS never written');
   assert.equal(JSON.stringify(env.sheets.REELS.rows.slice(0, 2)), reelsBefore, 'existing REELS rows unchanged');
-  assert.deepEqual(env.sheets.REELS.rows.slice(2).map((r) => r[0]), ['PRD-001-R08', 'PRD-001-R09', 'PRD-001-R10']);
+  assert.deepEqual(env.sheets.REELS.rows.slice(2).map((r) => r[0]), ['PRD-001-R08']);
 });
 
 test('approval and render gates still work for new and existing scripts; edits with invented claims are refused', () => {

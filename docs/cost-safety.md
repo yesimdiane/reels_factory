@@ -22,7 +22,7 @@ From cheapest to most complete:
    ```bash
    GEMINI_API_KEY=<key> npm run gemini:check -- --generate
    ```
-   This sends the real PRD-001 prompt and JSON schema, then runs the same validation as the sheet: 3 reels, facts, numbers, storyboard and keyword. It prints any errors. Nothing is written to the sheet.
+   This sends the real PRD-001 prompt and JSON schema, then runs the same validation as the sheet: five hooks, the recommended hook, one script, facts, numbers, storyboard and keyword. It prints the five hooks (★ = recommended) or any errors. Nothing is written to the sheet.
 4. **In the spreadsheet (one paid call):** **테스트: PRD-001 Gemini 실제 호출 (시트에 쓰지 않음)**. The same check runs inside Apps Script. The result goes to LOG only.
 
 Equivalent raw requests, for debugging. The key goes in a header, never in the URL:

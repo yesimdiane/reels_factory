@@ -68,7 +68,7 @@ test('the new example hooks pass; feature-list hooks do not', () => {
   for (const h of ['급하게 출근할 때마다 우산 깜빡하는 사람?', '원룸 살면 우산꽂이 둘 자리도 애매하잖아요.', '비 오는 날마다 현관이 지저분해지는 이유.']) {
     assert.equal(errs(h), '', h);
   }
-  assert.match(errs('190x55x50mm 자석 2피스 구조'), /숫자·사양으로 시작하는 기능 나열/);
+  assert.match(errs('190x55x50mm 자석 2피스 구조'), /치수·사양을 늘어놓는 기능 나열/);
   assert.match(errs('자석형 2피스 우산꽂이예요'), /제품 이름으로 시작합니다|기능 나열/);
 });
 
@@ -106,9 +106,9 @@ test('verification flags: personal experience, couple stories, comparisons, AI v
 test('generation writes pillar and flags; AI scenes get the on-screen label; approval needs explicit confirmation', () => {
   const payload = (env) => {
     const p = fixture(env);
-    p.reels[1].pillar = 'AI_MAKEOVER';
-    p.reels[1].scenes[2].ai_visualization = true;
-    p.reels[2].needs_verification = ['비 오는 날 현관 사진이 실제 우리 집인지'];
+    p.reels[0].pillar = 'AI_MAKEOVER';
+    p.reels[0].scenes[2].ai_visualization = true;
+    p.reels[0].needs_verification = ['비 오는 날 현관 사진이 실제 우리 집인지'];
     return p;
   };
   let env;
@@ -117,26 +117,22 @@ test('generation writes pillar and flags; AI scenes get the on-screen label; app
   const { call, act, col } = s;
   const res = call('apiGenerateScripts', 'PRD-001');
   assert.equal(res.ok, true, res.error);
-  const rows = env.sheets.REELS.rows;
-  assert.deepEqual(rows.slice(1).map((r) => r[col('콘텐츠 기둥')]), ['생활 꿀템 발견', 'AI 공간 변신', '생활 꿀템 발견']);
-  assert.equal(rows[1][col('확인 필요')], '', 'reel 1 needs nothing');
-  assert.match(rows[2][col('확인 필요')], /\[AI 시뮬레이션\] 장면 3: 영상에 "AI 시뮬레이션" 표시/);
-  assert.match(rows[3][col('확인 필요')], /\[Gemini 요청\] 비 오는 날 현관 사진이 실제 우리 집인지/);
-  assert.match(rows[2][col('장면(JSON)')], /"on_screen_text":"AI 시뮬레이션","flow_prompt":[^}]*"ai_visualization":true/);
-  assert.match(rows[2][col('검토 메모')], /확인 필요 항목이 있습니다/);
+  const row = env.sheets.REELS.rows[1];
+  assert.equal(row[col('콘텐츠 기둥')], 'AI 공간 변신');
+  assert.match(row[col('확인 필요')], /\[AI 시뮬레이션\] 장면 3: 영상에 "AI 시뮬레이션" 표시/);
+  assert.match(row[col('확인 필요')], /\[Gemini 요청\] 비 오는 날 현관 사진이 실제 우리 집인지/);
+  assert.match(row[col('장면(JSON)')], /"on_screen_text":"AI 시뮬레이션"[^}]*"ai_visualization":true/);
+  assert.match(row[col('검토 메모')], /확인 필요 항목이 있습니다/);
 
-  // Unflagged script: approval works exactly as before (the deployed dashboard sends no new field).
-  assert.equal(act('PRD-001-R01', 'APPROVE_SCRIPT').ok, true);
   // Flagged script: refused until the reviewer confirms; the confirmation is recorded in AUDIT.
-  const refused = act('PRD-001-R02', 'APPROVE_SCRIPT');
+  const refused = act('PRD-001-R01', 'APPROVE_SCRIPT');
   assert.equal(refused.ok, false);
-  assert.match(refused.error, /확인 필요 항목 1건[\s\S]*\[AI 시뮬레이션\] 장면 3/);
-  assert.equal(call('apiGetRenderJob', 'PRD-001-R02').ok, false, 'no paid step before approval');
-  const ok = act('PRD-001-R02', 'APPROVE_SCRIPT', { flagsConfirmed: true });
+  assert.match(refused.error, /확인 필요 항목 2건[\s\S]*\[AI 시뮬레이션\] 장면 3[\s\S]*\[Gemini 요청\]/);
+  assert.equal(call('apiGetRenderJob', 'PRD-001-R01').ok, false, 'no paid step before approval');
+  const ok = act('PRD-001-R01', 'APPROVE_SCRIPT', { flagsConfirmed: true });
   assert.equal(ok.ok, true, ok.error);
-  const audit = env.sheets.AUDIT.rows.filter((r) => r[1] === 'PRD-001-R02' && r[3] === 'APPROVE_SCRIPT');
-  assert.match(audit[0][9], /확인 필요 1건 확인함: \[AI 시뮬레이션\]/);
-  assert.match(act('PRD-001-R03', 'APPROVE_SCRIPT').error, /\[Gemini 요청\]/);
+  const audit = env.sheets.AUDIT.rows.filter((r) => r[1] === 'PRD-001-R01' && r[3] === 'APPROVE_SCRIPT');
+  assert.match(audit[0][9], /확인 필요 2건 확인함: \[AI 시뮬레이션\]/);
 });
 
 test('dashboard data: pillar, problem hook, flags, brand, pillar mix; edits change the pillar and AI scenes', () => {
@@ -144,11 +140,11 @@ test('dashboard data: pillar, problem hook, flags, brand, pillar mix; edits chan
   call('apiGenerateScripts', 'PRD-001');
   const dash = call('apiGetDashboard');
   assert.equal(dash.brand.name, '서울에서 집꾸미기');
-  assert.deepEqual(dash.pillarMix.map((m) => [m.label, m.count, m.target]), [['AI 공간 변신', 0, 35], ['생활 꿀템 발견', 3, 35], ['국제부부 한국살이', 0, 20], ['살까 말까 비교 연구소', 0, 10]]);
+  assert.deepEqual(dash.pillarMix.map((m) => [m.label, m.count, m.target]), [['AI 공간 변신', 0, 35], ['생활 꿀템 발견', 1, 35], ['국제부부 한국살이', 0, 20], ['살까 말까 비교 연구소', 0, 10]]);
   assert.equal(dash.reels[0].pillar, '생활 꿀템 발견');
   const d = call('apiGetReel', 'PRD-001-R01').detail;
   assert.deepEqual(d.pillar, { id: 'PRODUCT_DISCOVERY', label: '생활 꿀템 발견' });
-  assert.equal(d.reel.hook, '급하게 출근하면 꼭 까먹는 우산!');
+  assert.equal(d.reel.hook, '비 오는 날, 현관에 젖은 우산이 굴러다녀요');
   assert.deepEqual(d.verificationFlags, []);
   assert.equal(d.pillars.length, 4);
   assert.ok(d.allowedActions.includes('EDIT_SCRIPT') && d.allowedActions.includes('APPROVE_SCRIPT') && d.allowedActions.includes('REJECT_SCRIPT'));
@@ -162,23 +158,31 @@ test('dashboard data: pillar, problem hook, flags, brand, pillar mix; edits chan
   assert.equal(edited.detail.summary.scriptVersion, 2);
   // The dashboard page has the new controls.
   const html = fs.readFileSync(path.join(__dirname, '..', 'apps-script', 'Dashboard.html'), 'utf8');
-  for (const s of ['콘텐츠 기둥', '후킹 (문제 제시 · 첫 0~3초)', '모두 확인했습니다', 'flagsConfirmed', 'AI 시뮬레이션 장면 (영상에 표시)', 'renderBrand']) {
+  for (const s of ['콘텐츠 기둥', '모두 확인했습니다', 'flagsConfirmed', 'AI 시뮬레이션 장면 (영상에 표시)', 'renderBrand']) {
     assert.ok(html.includes(s), s);
   }
 });
 
-test('sheets without the new optional columns keep working (live deployment before 시트 준비)', () => {
+test('sheets without the new optional columns: existing scripts keep working; generation asks for 시트 준비 first', () => {
   const env = createEnv({ gemini: () => plain(env.gs('FIXTURE_PRD_001_GEMINI_RESPONSE')) });
   env.sheets.PRODUCTS.rows.push(prd001Row(env.gs, { permission: '자체 제작', affiliateUrl: 'https://link.coupang.com/a/x' }));
   env.sheets.REELS = new MockSheet('REELS', [plain(env.gs('RF_CONFIG.REELS_HEADERS'))]);
   env.props.RF_REVIEWERS = 'owner@example.com';
   const call = (fn, ...a) => plain(env.gs(fn).apply(null, a));
-  const res = call('apiGenerateScripts', 'PRD-001');
-  assert.equal(res.ok, true, res.error);
+  // A script written by the previous version (only the standard columns exist).
+  const product = plain(env.gs('FIXTURE_PRD_001_PRODUCT'));
+  const recs = env.gs('prepareReelRecords')(product, JSON.stringify(fixture(env)), [], [], { model: 'm', generatedAt: 'g' }).records;
+  env.gs('appendRecords_')(env.sheets.REELS, recs, env.gs('RF_SCRIPT_FIELDS'));
   assert.ok(!env.sheets.REELS.rows[0].includes('콘텐츠 기둥'), 'no column added without 시트 준비');
+  // New generation stops before any Gemini call and says what to do.
+  const res = call('apiGenerateScripts', 'PRD-001', true);
+  assert.equal(res.ok, false);
+  assert.match(res.error, /훅 저장 열이 없습니다[\s\S]*시트 준비/);
+  assert.equal(env.state.fetches.length, 0);
   const dash = call('apiGetDashboard');
   assert.match(dash.warnings.join('\n'), /"콘텐츠 기둥"·"확인 필요" 열이 없습니다/);
   const d = call('apiGetReel', 'PRD-001-R01').detail;
+  assert.equal(d.hooks.required, false, 'no stored hooks → no hook choice needed');
   const act = (name, input = {}) => call('apiAction', 'PRD-001-R01', name, Object.assign({ expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion, expectedVideoVersion: 0 }, input));
   // Flags are computed from the script itself, so they still gate approval without the column.
   const edited = act('EDIT_SCRIPT', { edit: { hook: '우리 집 현관이 늘 이랬어요' } });

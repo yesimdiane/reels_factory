@@ -92,7 +92,7 @@ Run `npm run render:check` again. Every line should show ✓, and the render key
 | Step | Who / where |
 |---|---|
 | 1. Product row in PRODUCTS (facts one per line, Coupang Partners link, `영상 사용 허가 상태` = `자체 제작`, optional `ManyChat 키워드` e.g. `우산`) | you, Google Sheets |
-| 2. 상품 tab → 대본 3개 생성 → review → **승인** | you, iPhone dashboard |
+| 2. 상품 tab → 훅 5개 + 대본 생성 → 훅 선택 → review → **승인** | you, iPhone dashboard |
 | 3. 영상 제작 시작. The **Google Flow 장면 프롬프트** (one per scene) appear automatically | iPhone dashboard |
 | 4. Generate one 8-second clip per prompt in Google Flow. Save each as `S1.mp4`, `S2.mp4`, … into `ReelsFactory/clips/<릴스ID>/` | you, Flow → Drive |
 | 5. Tap **렌더 작업 파일 (Mac)** and save the file into `ReelsFactory/jobs/` | iPhone (Files → Google Drive) |

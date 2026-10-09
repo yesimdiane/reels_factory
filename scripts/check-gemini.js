@@ -58,7 +58,10 @@ const chain = [process.env.GEMINI_MODEL || gs('RF_CONFIG.DEFAULT_GEMINI_MODEL')]
   if (v.errors.length) {
     console.log('! JSON은 받았지만 검증 규칙에 걸렸습니다 (실제 운영에서는 1회 자동 재시도):\n- ' + v.errors.slice(0, 10).join('\n- '));
   } else {
-    console.log('✓ 구조화 JSON 3개 대본 생성 + 검증 통과: ' + v.reels.map((x) => x.hook).join(' / '));
+    console.log('✓ 구조화 JSON: 훅 5개 + 대본 ' + v.reels.length + '개 생성 + 검증 통과');
+    v.hookSet.hooks.forEach((h) => console.log('  ' + h.id + ' ' + h.label + (h.id === v.hookSet.recommended.id ? ' ★추천' : '') + ': ' + h.text));
+    console.log('  추천 이유: ' + v.hookSet.recommended.reason);
+    console.log('  댓글 키워드: ' + (v.commentKeyword || '(없음)') + ' · 대본 길이 ' + v.reels[0].scenes.reduce((n, sc) => n + sc.duration_sec, 0) + '초');
   }
 })().catch((e) => {
   console.error('✗ ' + e.message);

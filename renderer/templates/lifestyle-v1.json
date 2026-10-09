@@ -62,8 +62,13 @@
     }
   },
   "durationSec": {
-    "min": 18,
-    "max": 30
+    "min": 20,
+    "max": 40,
+    "comment": "Brand target 20–40 s, set by the content (never padded). Checked on the script (pre-flight) and again on the real TTS voice before rendering (ttsTiming)."
+  },
+  "ttsTiming": {
+    "stretchWarnSec": 1.0,
+    "comment": "A scene whose voice needs this much more time than the script planned is reported (warning) — the scene is stretched, never cut."
   },
   "subtitle": {
     "font": "NanumSquareRound",

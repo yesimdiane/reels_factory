@@ -20,7 +20,8 @@ test('default model is the GA Flash model with structured output; fallback is th
   assert.deepEqual(env.state.modelCalls, ['generate gemini-3.5-flash']);
   const body = env.state.fetches[0];
   assert.equal(body.generationConfig.responseMimeType, 'application/json');
-  assert.equal(body.generationConfig.responseSchema.properties.reels.maxItems, 3);
+  assert.equal(body.generationConfig.responseSchema.properties.reels.maxItems, 1);
+  assert.equal(body.generationConfig.responseSchema.properties.hooks.maxItems, 5, 'five hooks per product');
   assert.equal(env.sheets.REELS.record(2)['생성 모델'], 'gemini-3.5-flash');
 });
 

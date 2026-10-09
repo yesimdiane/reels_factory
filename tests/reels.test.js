@@ -32,18 +32,17 @@ test('PRD-001 product fixture is valid', () => {
   assert.equal(gs('parseConfirmedFeatures')(product.features).length, 4);
 });
 
-test('PRD-001 fixture response produces 3 REELS records', () => {
+test('PRD-001 reference response produces one REELS record with five hooks and a customer-facing keyword', () => {
   const res = prepare(product, JSON.stringify(fixture()), [], [], meta);
   assert.deepEqual(plain(res.errors), []);
-  assert.equal(res.records.length, 3);
-  assert.deepEqual(
-    plain(res.records.map((r) => r['릴스ID'])),
-    ['PRD-001-R01', 'PRD-001-R02', 'PRD-001-R03']
-  );
-  assert.deepEqual(
-    plain(res.records.map((r) => r['ManyChat 키워드'])),
-    ['PRD001R01', 'PRD001R02', 'PRD001R03']
-  );
+  assert.equal(res.records.length, 1);
+  assert.deepEqual(plain(res.records.map((r) => r['릴스ID'])), ['PRD-001-R01'], 'internal ID kept for tracking');
+  assert.deepEqual(plain(res.records.map((r) => r['ManyChat 키워드'])), ['우산'], 'simple keyword, not PRD001R01');
+  const hooks = JSON.parse(res.records[0]['훅 후보(JSON)']);
+  assert.deepEqual(hooks.hooks.map((h) => h.id + ' ' + h.label), ['H1 질문형', 'H2 숫자로 시작하는형', 'H3 통념을 뒤집는 단정형', 'H4 상황 묘사형', 'H5 결론 먼저 던지는형']);
+  assert.equal(hooks.recommended.id, 'H4');
+  assert.equal(res.records[0]['선택한 훅'], '', 'the final choice is the operator\'s');
+  assert.equal(res.records[0]['후킹'], '비 오는 날, 현관에 젖은 우산이 굴러다녀요');
   const headers = gs('RF_CONFIG.REELS_HEADERS.concat(RF_CONFIG.REELS_OPTIONAL_HEADERS)');
   for (const r of res.records) {
     for (const k of Object.keys(r)) assert.ok(headers.includes(k), 'unknown header ' + k);
@@ -73,8 +72,8 @@ test('rejects non-JSON output', () => {
 
 test('rejects wrong number of reels', () => {
   const p = fixture();
-  p.reels.pop();
-  assert.match(validate(p, product).errors.join('\n'), /정확히 3개/);
+  p.reels.push(plain(p.reels[0]));
+  assert.match(validate(p, product).errors.join('\n'), /정확히 1개/);
 });
 
 test('rejects facts not in 확인된 기능', () => {
@@ -91,24 +90,24 @@ test('rejects invented numbers in viewer-facing text', () => {
 
 test('allows numbers that appear in confirmed facts', () => {
   const p = fixture();
-  assert.match(p.reels[1].narration, /190×55×50mm/);
+  p.reels[0].scenes[4].narration = '상단 190×55×50mm, 하단 188×55×82mm';
   assert.deepEqual(plain(validate(p, product).errors), []);
 });
 
 test('rejects banned exaggerated phrases and URLs', () => {
   const p = fixture();
-  p.reels[2].hook = '최저가 우산꽂이';
-  p.reels[1].captions.push('https://link.coupang.com/a/xyz');
+  p.reels[0].scenes[3].narration = '최저가 우산꽂이';
+  p.reels[0].captions.push('https://link.coupang.com/a/xyz');
   const errs = validate(p, product).errors.join('\n');
   assert.match(errs, /최저가/);
   assert.match(errs, /URL/);
 });
 
-test('rejects duplicate hooks / concepts across reels', () => {
+test('rejects duplicate hooks / concepts across reels (when several scripts are generated at once)', () => {
   const p = fixture();
-  p.reels[1].hook = p.reels[0].hook;
-  p.reels[2].concept = p.reels[0].concept;
-  const errs = validate(p, product).errors.join('\n');
+  p.reels = [p.reels[0], plain(p.reels[0]), plain(p.reels[0])];
+  p.reels[2].hook = '다른 훅';
+  const errs = validate(p, product, 3, { requireHooks: false }).errors.join('\n');
   assert.match(errs, /hook이 릴스 1와 중복/);
   assert.match(errs, /concept이 릴스 1와 중복/);
 });
@@ -117,8 +116,9 @@ test('rejects bad scene structure and missing flow prompts', () => {
   const p = fixture();
   p.reels[0].scenes[1].scene_no = 5;
   p.reels[0].scenes[2].flow_prompt = '';
-  p.reels[2].scenes = p.reels[2].scenes.slice(0, 2);
-  const errs = validate(p, product).errors.join('\n');
+  const short = fixture();
+  short.reels[0].scenes = short.reels[0].scenes.slice(0, 2);
+  const errs = validate(p, product).errors.join('\n') + '\n' + validate(short, product).errors.join('\n');
   assert.match(errs, /scene_no는 2/);
   assert.match(errs, /flow_prompt/);
   assert.match(errs, /장면 수는 3~6개/);
@@ -143,15 +143,24 @@ test('existing REELS IDs are not reused', () => {
   const res = prepare(product, JSON.stringify(fixture()), ['PRD-001-R01', 'PRD-001-R02', 'PRD-001-R03'], [], meta);
   assert.deepEqual(
     plain(res.records.map((r) => r['릴스ID'])),
-    ['PRD-001-R04', 'PRD-001-R05', 'PRD-001-R06']
+    ['PRD-001-R04']
   );
 });
 
-test('throws on ManyChat keyword collision', () => {
+test('ManyChat keyword: PRODUCTS keyword wins; a clash with another product throws; a clashing suggestion falls back', () => {
   assert.throws(
-    () => prepare(product, JSON.stringify(fixture()), [], ['prd001r01'], meta),
+    () => prepare({ ...product, keyword: '우산' }, JSON.stringify(fixture()), [], [{ keyword: '우산', productId: 'PRD-009' }], meta),
     /ManyChat 키워드/
   );
+  const own = prepare({ ...product, keyword: '현관' }, JSON.stringify(fixture()), [], [], meta);
+  assert.equal(own.records[0]['ManyChat 키워드'], '현관');
+  // Gemini suggests 우산, but PRD-009 already uses it → internal code + a note to set a simple keyword.
+  const clash = prepare(product, JSON.stringify(fixture()), [], [{ keyword: '우산', productId: 'PRD-009' }], meta);
+  assert.equal(clash.records[0]['ManyChat 키워드'], 'PRD001R01');
+  assert.match(clash.records[0]['검토 메모'], /댓글 키워드가 내부 코드입니다/);
+  // This product already has a simple keyword → reused.
+  const reuse = prepare(product, JSON.stringify(fixture()), ['PRD-001-R01'], [{ keyword: '빗물', productId: 'PRD-001' }], meta);
+  assert.equal(reuse.records[0]['ManyChat 키워드'], '빗물');
 });
 
 test('approved permission removes the unverified note', () => {

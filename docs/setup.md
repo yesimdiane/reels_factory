@@ -19,7 +19,7 @@ You only paste **one file**. Nothing in your existing PRODUCTS tab is changed.
    - Click **Allow**. Then click the menu item again, paste the API key, and press **OK**.
 6. **Prepare the sheets.** Click **릴스 팩토리 → 시트 준비**. The result window should show ✓ PRODUCTS and ✓ for REELS / PERFORMANCE / LOG.
 7. **Test without spending API calls.** Click **릴스 팩토리 → 테스트: PRD-001 오프라인 검증**. It should say **통과**.
-8. **Use it.** Click any cell in a product row in PRODUCTS, then click **릴스 팩토리 → 선택한 상품으로 릴스 대본 3개 생성**. After about 10–60 seconds, three new rows appear in REELS.
+8. **Use it.** Click any cell in a product row in PRODUCTS, then click **릴스 팩토리 → 선택한 상품으로 훅 5개 + 대본 생성**. After about 10–60 seconds, a new row appears in REELS with five hooks and a script. Choose the final hook in the iPhone dashboard.
 
 **To update later**, follow [Updating an existing installation](#updating-an-existing-installation-keeps-all-sheet-data). It replaces only the code; your sheets are not touched.
 
@@ -40,8 +40,8 @@ The code lives in the Apps Script project. Your data lives in the sheets. Replac
    - run **테스트: PRD-001 오프라인 검증**. It should say 통과, with no API call.
    - Optionally run **Gemini 모델 확인 (무료)**.
 8. **If you use the iPhone dashboard:** **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**. The URL stays the same, but until you redeploy the dashboard keeps running the old code.
-9. **Recommended once:** run **릴스 팩토리 → 시트 준비** and answer **예**. It adds the two optional REELS columns `콘텐츠 기둥` and `확인 필요` at the right end of row 1. Existing cells are never changed.
-   - Without them, everything still works: the dashboard shows a warning, and verification flags are still computed from each script and still gate approval. The pillar is just not saved.
+9. **Required once:** run **릴스 팩토리 → 시트 준비** and answer **예**. It adds the REELS columns `콘텐츠 기둥`, `확인 필요`, `훅 후보(JSON)` and `선택한 훅` at the right end of row 1. Existing cells are never changed.
+   - Until you do, existing scripts can still be reviewed, approved and rendered. New generation stops **before** calling Gemini and asks for 시트 준비, so no paid hooks are lost.
 
 Existing REELS rows keep working. Their `사용한 확인 기능` text still resolves to your facts, so they can still be approved, edited and rendered.
 

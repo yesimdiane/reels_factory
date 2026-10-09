@@ -207,6 +207,21 @@ function reelSummary_(row, data) {
   };
 }
 
+function hookView_(row, status) {
+  const set = parseHookSet(row['훅 후보(JSON)']);
+  const selected = parseSelectedHook(row['선택한 훅']);
+  const current = normalizeText(row['후킹']);
+  return {
+    candidates: set.hooks,
+    recommended: set.recommended,
+    selected: selected,
+    selectionValid: !!(selected && normalizeText(selected.text) === current),
+    required: set.hooks.length > 0,
+    canSelect: set.hooks.length > 0 && RF_ACTIONS.SELECT_HOOK.from.indexOf(status) !== -1,
+    types: RF_CONFIG.HOOK_TYPES,
+  };
+}
+
 /** Brand settings the dashboard shows (name, tagline, pillars with targets, current focus). */
 function brandSummary_() {
   const B = RF_CONFIG.BRAND;
@@ -311,6 +326,8 @@ function reelDetail_(ss, reelId) {
     allowedActions: allowedActions_(status),
     canRegenerate: status === 'SCRIPT_CHANGES_REQUESTED',
     pillar: { id: reel.pillar, label: pillarLabel(reel.pillar) },
+    // Five hooks (H1–H5), Gemini's recommendation, and the operator's choice (with script version).
+    hooks: hookView_(row, status),
     pillars: brandSummary_().pillars,
     // Recomputed from the current script, so an edit made in the sheet is reflected too.
     verificationFlags: reel.scenes ? verificationLines_(reel, reel.pillar, row) : [],
@@ -442,9 +459,10 @@ function apiRegenerateScript(reelId, input) {
       let lastRaw = '';
       let newReel = null;
       for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS && !newReel; attempt++) {
-        const raw = callGemini_(buildRegenerationPrompt(found.product, current, note, lastErrors, lastRaw), geminiResponseSchema(1));
+        // Rewrites the script only; the five hooks stay as they are.
+        const raw = callGemini_(buildRegenerationPrompt(found.product, current, note, lastErrors, lastRaw), geminiResponseSchema(1, false));
         const parsed = parseModelJson(raw);
-        const result = parsed.error ? { errors: [parsed.error] } : validateGeminiReels(parsed.value, found.product, 1);
+        const result = parsed.error ? { errors: [parsed.error] } : validateGeminiReels(parsed.value, found.product, 1, { requireHooks: false });
         if (result.errors.length) {
           lastErrors = result.errors;
           lastRaw = raw;
@@ -463,6 +481,69 @@ function apiRegenerateScript(reelId, input) {
         reel: newReel,
         note: note,
       }, 'Gemini (' + (RF_GEMINI_STATE.lastModel || getGeminiModel()) + ')');
+    });
+    return { detail: reelDetail_(ss, id) };
+  });
+}
+
+/**
+ * Touchpoint 2: the operator picks one of the five hooks (input.hookId), optionally edits it
+ * (input.text), and either keeps the script with that hook line swapped in (mode 'keep', free) or has
+ * Gemini rewrite the script around it (mode 'regenerate', one paid call + at most one retry).
+ * The choice is stored in REELS "선택한 훅" with the script version and recorded in AUDIT.
+ */
+function apiSelectHook(reelId, input) {
+  return api_(function (user) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const id = normalizeText(reelId);
+    input = input || {};
+    withLock_(function () {
+      const data = loadData_(ss);
+      const found = findReel_(data, id);
+      const status = reelStatus(found.row);
+      if ((input.expectedStatus && input.expectedStatus !== status) || Number(input.expectedScriptVersion) !== scriptVersionOf(found.row)) {
+        throw staleError_(found.row, status);
+      }
+      if (RF_ACTIONS.SELECT_HOOK.from.indexOf(status) === -1) {
+        throw new Error('훅은 대본 검토 중에만 고를 수 있습니다 (현재: ' + (RF_STATUS_LABELS[status] || status) + '). 승인된 대본은 "대본 승인 취소" 후 바꾸세요.');
+      }
+      const set = parseHookSet(found.row['훅 후보(JSON)']);
+      const base = set.hooks.filter(function (h) {
+        return h.id === input.hookId;
+      })[0];
+      if (!base) throw new Error('이 대본의 훅 후보에서 ' + (input.hookId || '훅') + '을(를) 찾을 수 없습니다.');
+      const text = normalizeText(input.text || base.text);
+      // Fact check before any paid call.
+      const hookErrors = hookTextErrors(text, found.product);
+      if (hookErrors.length) throw new Error('이 훅은 쓸 수 없습니다:\n- ' + hookErrors.join('\n- '));
+      let reel = null;
+      if (input.mode === 'regenerate') {
+        const current = rowToReel(found.row);
+        let lastErrors = [];
+        let lastRaw = '';
+        for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS && !reel; attempt++) {
+          const raw = callGemini_(buildHookScriptPrompt(found.product, current, text, lastErrors, lastRaw), geminiResponseSchema(1, false));
+          const parsed = parseModelJson(raw);
+          const result = parsed.error ? { errors: [parsed.error] } : validateGeminiReels(parsed.value, found.product, 1, { requireHooks: false, fixedHook: text });
+          if (result.errors.length) {
+            lastErrors = result.errors;
+            lastRaw = raw;
+            logEvent_('WARN', 'selectHook', found.product.id, id + ' 훅 기반 재작성 검증 실패 (시도 ' + attempt + ')',
+              result.errors.join('\n') + '\n\n--- 원본 응답 ---\n' + raw);
+          } else {
+            reel = result.reels[0];
+          }
+        }
+        if (!reel) throw new Error('선택한 훅으로 다시 쓴 대본이 검증을 통과하지 못했습니다. 대본과 훅 선택은 바뀌지 않았습니다.\n- ' + lastErrors.slice(0, 6).join('\n- '));
+      }
+      applyTransition_(ss, id, 'SELECT_HOOK', {
+        expectedStatus: status,
+        expectedScriptVersion: scriptVersionOf(found.row),
+        hookId: base.id,
+        text: text,
+        reel: reel,
+        note: input.note,
+      }, user + (reel ? ' + Gemini (' + (RF_GEMINI_STATE.lastModel || getGeminiModel()) + ')' : ''));
     });
     return { detail: reelDetail_(ss, id) };
   });
