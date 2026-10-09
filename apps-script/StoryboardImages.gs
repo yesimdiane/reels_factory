@@ -296,6 +296,54 @@ function generateSceneImageCore_(ss, data, found, scene, refs, plan, revisionNot
   return { key: key, version: nextV, fileId: file.getId() };
 }
 
+// ---------------------------------------------------------------- billing & cost estimate
+
+/**
+ * Returns the configured per-image cost estimate in USD, or null if unconfigured.
+ * Checked from Script Properties (GEMINI_IMAGE_ESTIMATED_USD_PER_IMAGE / RF_IMAGE_ESTIMATED_USD_PER_IMAGE)
+ * or RF_CONFIG.STORYBOARD.ESTIMATED_USD_PER_IMAGE.
+ */
+function getStoryboardEstimatedCostPerImage_() {
+  const prop = PropertiesService.getScriptProperties().getProperty('GEMINI_IMAGE_ESTIMATED_USD_PER_IMAGE') ||
+    PropertiesService.getScriptProperties().getProperty('RF_IMAGE_ESTIMATED_USD_PER_IMAGE');
+  if (prop != null && prop !== '') {
+    const num = Number(prop);
+    if (isFinite(num) && num > 0) return num;
+  }
+  const cfg = RF_CONFIG.STORYBOARD && RF_CONFIG.STORYBOARD.ESTIMATED_USD_PER_IMAGE;
+  if (cfg != null && cfg !== '') {
+    const num = Number(cfg);
+    if (isFinite(num) && num > 0) return num;
+  }
+  return null;
+}
+
+/**
+ * Builds a transparent billing summary for generating N storyboard images.
+ * Does NOT invent or hardcode a price if no verified estimate is configured.
+ */
+function storyboardBillingSummary_(imageCount) {
+  const count = Math.max(1, Number(imageCount) || 1);
+  const model = getGeminiImageModel();
+  const perImageUsd = getStoryboardEstimatedCostPerImage_();
+  let estimatedTotalUsd = null;
+  let costText = 'Cost estimate unavailable';
+  if (perImageUsd != null) {
+    const total = count * perImageUsd;
+    estimatedTotalUsd = total;
+    costText = '~$' + ((total < 0.01 && total > 0) ? total.toFixed(4) : total.toFixed(2)) + ' USD (estimate)';
+  }
+  const warning = '실제 청구 금액은 다를 수 있으며, 실패하거나 재시도된 API 호출에도 요금이 발생할 수 있습니다 (Actual charges may differ and failed/retried calls may incur charges).';
+  return {
+    imageCount: count,
+    model: model,
+    perImageUsd: perImageUsd,
+    estimatedTotalUsd: estimatedTotalUsd,
+    costText: costText,
+    warning: warning,
+  };
+}
+
 // ---------------------------------------------------------------- dashboard view
 
 function storyboardView_(row, product, data) {
@@ -313,6 +361,8 @@ function storyboardView_(row, product, data) {
   else if (!intact) blocker = '승인된 대본과 현재 대본이 다릅니다. "대본 승인 취소" 후 다시 승인하세요.';
   else if (!refs.length) blocker = '검증된 제품 이미지가 없습니다. 제품 사진을 먼저 등록하세요.';
 
+  const billing = storyboardBillingSummary_(totalCount || 5);
+
   return {
     visible: visible,
     canGenerate: visible && intact && refs.length > 0,
@@ -326,6 +376,7 @@ function storyboardView_(row, product, data) {
     flowNote: (RF_CONFIG.STORYBOARD && RF_CONFIG.STORYBOARD.FLOW_NOTE) ||
       '생성된 9:16 이미지를 다운로드하여 Google Flow에 업로드하고, 모션 프롬프트를 입력하여 비디오 클립을 생성하세요.',
     model: getGeminiImageModel(),
+    billing: billing,
   };
 }
 
@@ -333,7 +384,7 @@ function storyboardView_(row, product, data) {
 
 /**
  * Generates 9:16 storyboard images for scenes S1–S5 using gemini-2.5-flash-image and actual reference images.
- * input: { scene?: number (1..5), expectedStatus, expectedScriptVersion }
+ * input: { scene?: number (1..5), confirmedBilling: boolean, expectedStatus, expectedScriptVersion }
  */
 function apiGenerateStoryboardImages(reelId, input) {
   return api_(function (user) {
@@ -363,6 +414,10 @@ function apiGenerateStoryboardImages(reelId, input) {
         : scenes;
 
       if (!targets.length) throw new Error('생성할 장면이 없습니다.');
+
+      if (input.confirmedBilling !== true && input.confirmed !== true) {
+        throw new Error('유료 API 호출(Gemini 이미지 생성) 확인이 필요합니다. 예상 비용과 청구 주의사항을 확인하고 승인하세요 (Billing confirmation required).');
+      }
 
       targets.forEach(function (scene) {
         generateSceneImageCore_(ss, data, found, scene, refs, plan, input.note || '', user);
@@ -474,6 +529,10 @@ function apiRegenerateStoryboardImage(reelId, input) {
       const entry = store.images[imageKeyOf_(sceneNo)];
       const cur = entry && entry.versions.filter(function (v) { return v.v === entry.current; })[0];
       const revisionNote = normalizeText(input.note) || (cur ? cur.note : '');
+
+      if (input.confirmedBilling !== true && input.confirmed !== true) {
+        throw new Error('유료 API 호출(Gemini 이미지 재생성) 확인이 필요합니다. 예상 비용과 청구 주의사항을 확인하고 승인하세요 (Billing confirmation required).');
+      }
 
       generateSceneImageCore_(ss, data, found, scene, refs, plan, revisionNote, user);
     });

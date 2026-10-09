@@ -757,21 +757,67 @@ function uiFor(box, controls) {
   };
 }
 
+function confirmStoryboardBilling(count, isRegen, sceneNo) {
+  const sb = (S.detail && S.detail.storyboard) || {};
+  const model = sb.model || 'gemini-2.5-flash-image';
+  const billing = sb.billing || {};
+  const perImageUsd = billing.perImageUsd != null ? billing.perImageUsd : null;
+  let costLine = '예상 총 비용: 비용 추정치 미설정 (Cost estimate unavailable)';
+  if (perImageUsd != null && isFinite(perImageUsd)) {
+    const total = count * perImageUsd;
+    const totalStr = (total < 0.01 && total > 0) ? total.toFixed(4) : total.toFixed(2);
+    costLine = '예상 총 비용: ~$' + totalStr + ' USD (추정치 / Estimate, 확정 금액 아님)';
+  }
+
+  const title = isRegen
+    ? '장면 S' + sceneNo + ' 스토리보드 이미지 재생성 확인'
+    : (count === 1 ? '장면 S' + sceneNo + ' 스토리보드 이미지 생성 확인' : '전체(' + count + '개 장면) 스토리보드 이미지 생성 확인');
+
+  const warning = billing.warning ||
+    '실제 청구 금액은 다를 수 있으며, 실패하거나 재시도된 API 호출에도 요금이 발생할 수 있습니다 (Actual charges may differ and failed/retried calls may incur charges).';
+
+  const message = [
+    '[' + title + ']',
+    '',
+    '• 생성 이미지 수: ' + count + '장',
+    '• 사용 모델: ' + model,
+    '• ' + costLine,
+    '',
+    '⚠️ 주의사항:',
+    warning,
+    '',
+    '유료 Gemini API 호출을 진행할까요?'
+  ].join('\n');
+
+  return confirm(message);
+}
+
 function generateStoryboard(sceneNo) {
+  if (S.generatingStoryboard) return;
   const d = S.detail;
-  const label = sceneNo ? '장면 S' + sceneNo : '모든 장면(S1~S' + (d.storyboard && d.storyboard.totalCount || 5) + ')';
-  if (!confirm(label + ' 9:16 스토리보드 이미지를 Gemini로 생성할까요? (실제 제품 사진이 전송됩니다)')) return;
+  if (!d || !d.storyboard) return;
+  const count = sceneNo ? 1 : (d.storyboard.totalCount || 5);
+  if (!confirmStoryboardBilling(count, false, sceneNo)) return;
+
+  S.generatingStoryboard = true;
+  const label = sceneNo ? '장면 S' + sceneNo : '모든 장면(' + count + '개)';
   busy(true, label + ' 이미지 생성 중… (최대 1분)');
   call('apiGenerateStoryboardImages', d.summary.reelId, {
     scene: sceneNo || undefined,
+    confirmedBilling: true,
     expectedStatus: d.summary.status,
     expectedScriptVersion: d.summary.scriptVersion
   }).then(function (res) {
+    S.generatingStoryboard = false;
     busy(false);
     if (!res.ok) { toast(res.error, 9000); return; }
     S.detail = res.detail; renderDetail();
     toast('스토리보드 이미지를 생성했습니다.');
     refreshAround();
+  }).catch(function (err) {
+    S.generatingStoryboard = false;
+    busy(false);
+    toast(String(err), 9000);
   });
 }
 
@@ -802,21 +848,33 @@ function reviewStoryboard(c, decision) {
 }
 
 function regenerateStoryboard(c) {
+  if (S.generatingStoryboard) return;
   const d = S.detail;
+  if (!d || !d.storyboard) return;
   const note = askNote(c.key + ' 재생성 메모 (선택사항 — 비워두면 이전 메모 또는 대본을 바탕으로 재생성합니다):', false);
   if (note === null) return;
+
+  if (!confirmStoryboardBilling(1, true, c.scene)) return;
+
+  S.generatingStoryboard = true;
   busy(true, c.key + ' 이미지 재생성 중…');
   call('apiRegenerateStoryboardImage', d.summary.reelId, {
     scene: c.scene,
     note: note || undefined,
+    confirmedBilling: true,
     expectedStatus: d.summary.status,
     expectedScriptVersion: d.summary.scriptVersion
   }).then(function (res) {
+    S.generatingStoryboard = false;
     busy(false);
     if (!res.ok) { toast(res.error, 9000); return; }
     S.detail = res.detail; renderDetail();
     toast(c.key + ' 새 이미지가 생성되었습니다 (이전 승인은 무효화됨).');
     refreshAround();
+  }).catch(function (err) {
+    S.generatingStoryboard = false;
+    busy(false);
+    toast(String(err), 9000);
   });
 }
 
@@ -841,10 +899,12 @@ function renderStoryboard(main) {
     return;
   }
 
+  const billing = sb.billing || {};
   card.appendChild(h('div', { class: 'row', style: 'margin:8px 0' }, [
     h('span', { class: 'chip ' + (sb.referencesCount ? 'ok' : 'warn'), text: '참고 사진 ' + sb.referencesCount + '장' }),
     h('span', { class: 'chip ' + (sb.allApproved ? 'ok' : 'warn'), text: '스토리보드 승인 ' + sb.approvedCount + '/' + sb.totalCount }),
   ]));
+  card.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:2px 0 10px 0', text: '💡 모델: ' + (sb.model || 'gemini-2.5-flash-image') + ' · 예상 비용: ' + (billing.costText || 'Cost estimate unavailable') }));
 
   if (sb.allApproved) {
     card.appendChild(h('div', { class: 'banner ok', text: '모든 장면의 9:16 이미지가 승인되었습니다. 아래에서 각 장면의 이미지를 다운로드하고 모션 프롬프트를 복사하여 Google Flow에서 영상을 제작하세요.' }));
@@ -852,7 +912,7 @@ function renderStoryboard(main) {
 
   card.appendChild(h('div', { class: 'btns one', style: 'margin-bottom:12px' }, [
     h('button', {
-      class: 'b primary', type: 'button', disabled: !sb.canGenerate,
+      class: 'b primary', type: 'button', disabled: !sb.canGenerate || !!S.generatingStoryboard,
       onclick: function () { generateStoryboard(0); },
       text: '전체 스토리보드 생성 (S1~S' + sb.totalCount + ' · Gemini)',
     }),
@@ -886,12 +946,12 @@ function renderStoryboard(main) {
       if (c.status === 'PENDING_REVIEW') {
         btnRow.appendChild(h('button', { class: 'b ok', type: 'button', text: '승인', onclick: function () { reviewStoryboard(c, 'APPROVE'); } }));
         btnRow.appendChild(h('button', { class: 'b bad', type: 'button', text: '수정 요청', onclick: function () { reviewStoryboard(c, 'REJECT'); } }));
-        btnRow.appendChild(h('button', { class: 'b primary', type: 'button', text: '재생성', onclick: function () { regenerateStoryboard(c); } }));
+        btnRow.appendChild(h('button', { class: 'b primary', type: 'button', disabled: !!S.generatingStoryboard, text: '재생성', onclick: function () { regenerateStoryboard(c); } }));
       } else if (c.status === 'APPROVED') {
         btnRow.appendChild(h('button', { class: 'b bad', type: 'button', text: '승인 취소·수정 요청', onclick: function () { reviewStoryboard(c, 'REJECT'); } }));
-        btnRow.appendChild(h('button', { class: 'b primary', type: 'button', text: '재생성', onclick: function () { regenerateStoryboard(c); } }));
+        btnRow.appendChild(h('button', { class: 'b primary', type: 'button', disabled: !!S.generatingStoryboard, text: '재생성', onclick: function () { regenerateStoryboard(c); } }));
       } else if (c.status === 'REJECTED') {
-        btnRow.appendChild(h('button', { class: 'b primary', type: 'button', text: '수정 반영 재생성', onclick: function () { regenerateStoryboard(c); } }));
+        btnRow.appendChild(h('button', { class: 'b primary', type: 'button', disabled: !!S.generatingStoryboard, text: '수정 반영 재생성', onclick: function () { regenerateStoryboard(c); } }));
       }
       box.appendChild(btnRow);
 
@@ -912,7 +972,7 @@ function renderStoryboard(main) {
     } else {
       box.appendChild(h('div', { class: 'btns one', style: 'margin-top:8px' }, [
         h('button', {
-          class: 'b', type: 'button', disabled: !sb.canGenerate,
+          class: 'b', type: 'button', disabled: !sb.canGenerate || !!S.generatingStoryboard,
           onclick: function () { generateStoryboard(c.scene); },
           text: c.key + ' 이미지 생성 (Gemini)',
         }),

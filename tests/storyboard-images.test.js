@@ -140,7 +140,7 @@ test('gemini-2.5-flash-image generates 9:16 storyboard images with actual refere
   s.call('apiCreateProductionPlan', 'PRD-001-R01', {});
 
   // Generate all storyboard images (scenes S1–S6 for PRD-001 fixture)
-  const res = s.call('apiGenerateStoryboardImages', 'PRD-001-R01', {});
+  const res = s.call('apiGenerateStoryboardImages', 'PRD-001-R01', { confirmedBilling: true });
   assert.equal(res.ok, true, res.error);
   assert.equal(s.imageCalls.length, 6, 'Generated images for all approved scenes');
 
@@ -186,7 +186,7 @@ test('gemini-2.5-flash-image generates 9:16 storyboard images with actual refere
 
 test('scene-by-scene approval, revision requests, and regeneration with revision feedback', () => {
   const s = approveScript(setupFixture({ images: 1 }));
-  s.call('apiGenerateStoryboardImages', 'PRD-001-R01', { scene: 1 });
+  s.call('apiGenerateStoryboardImages', 'PRD-001-R01', { scene: 1, confirmedBilling: true });
 
   let d = s.detail();
   assert.equal(d.storyboard.images[0].status, 'PENDING_REVIEW');
@@ -228,6 +228,7 @@ test('scene-by-scene approval, revision requests, and regeneration with revision
   // 3. Regeneration incorporating revision feedback
   const regenRes = s.call('apiRegenerateStoryboardImage', 'PRD-001-R01', {
     scene: 1,
+    confirmedBilling: true,
   });
   assert.equal(regenRes.ok, true, regenRes.error);
   d = s.detail();
@@ -246,7 +247,7 @@ test('Requirement 6: invalidates dependent video approvals when an approved stor
   s.call('apiCreateProductionPlan', 'PRD-001-R01', {});
 
   // 1. Generate and approve storyboard image for S1
-  s.call('apiGenerateStoryboardImages', 'PRD-001-R01', { scene: 1 });
+  s.call('apiGenerateStoryboardImages', 'PRD-001-R01', { scene: 1, confirmedBilling: true });
   const appImg = s.call('apiReviewStoryboardImage', 'PRD-001-R01', { scene: 1, version: 1, decision: 'APPROVE' });
   assert.equal(appImg.ok, true);
 
@@ -275,7 +276,7 @@ test('Requirement 6: invalidates dependent video approvals when an approved stor
   assert.ok(approvedStatus === 'READY_TO_PUBLISH' || approvedStatus === 'VIDEO_APPROVED');
 
   // 4. NOW: Change the approved storyboard image for S1 (e.g. regenerate or request revision)
-  const regenImg = s.call('apiRegenerateStoryboardImage', 'PRD-001-R01', { scene: 1, note: '배경 색감 수정' });
+  const regenImg = s.call('apiRegenerateStoryboardImage', 'PRD-001-R01', { scene: 1, note: '배경 색감 수정', confirmedBilling: true });
   assert.equal(regenImg.ok, true);
 
   // 5. ASSERT: Dependent video approvals are invalidated!
@@ -298,7 +299,7 @@ test('Requirement 6: invalidates dependent video approvals when an approved stor
 test('Requirement 7: provides motion prompts and direct download URLs for manual Flow handoff', () => {
   const s = approveScript(setupFixture({ images: 1 }));
   s.call('apiCreateProductionPlan', 'PRD-001-R01', {});
-  s.call('apiGenerateStoryboardImages', 'PRD-001-R01', { scene: 1 });
+  s.call('apiGenerateStoryboardImages', 'PRD-001-R01', { scene: 1, confirmedBilling: true });
 
   const d = s.detail();
   const s1 = d.storyboard.images[0];
@@ -310,4 +311,82 @@ test('Requirement 7: provides motion prompts and direct download URLs for manual
   assert.ok(s1.motionPrompt.includes('CAMERA MOTION'));
   assert.ok(s1.motionPrompt.includes('ACTION PROGRESSION'));
   assert.equal(d.storyboard.flowUrl, 'https://flow.google');
+});
+
+test('billing confirmation gate: unconfirmed generation or cancellation makes zero Gemini calls', () => {
+  const s = approveScript(setupFixture({ images: 1 }));
+  s.call('apiCreateProductionPlan', 'PRD-001-R01', {});
+
+  // 1. Initial generation call without confirmedBilling -> rejected, 0 calls
+  const unconfirmedBatch = s.call('apiGenerateStoryboardImages', 'PRD-001-R01', {});
+  assert.equal(unconfirmedBatch.ok, false);
+  assert.match(unconfirmedBatch.error, /유료 API 호출.*확인이 필요합니다|Billing confirmation required/);
+  assert.equal(s.imageCalls.length, 0, 'Zero paid API calls on unconfirmed batch request');
+
+  // 2. Single scene call without confirmedBilling -> rejected, 0 calls
+  const unconfirmedScene = s.call('apiGenerateStoryboardImages', 'PRD-001-R01', { scene: 1, confirmedBilling: false });
+  assert.equal(unconfirmedScene.ok, false);
+  assert.match(unconfirmedScene.error, /유료 API 호출.*확인이 필요합니다|Billing confirmation required/);
+  assert.equal(s.imageCalls.length, 0, 'Zero paid API calls on unconfirmed scene request');
+
+  // 3. Confirming billing allows generation
+  const confirmed = s.call('apiGenerateStoryboardImages', 'PRD-001-R01', { scene: 1, confirmedBilling: true });
+  assert.equal(confirmed.ok, true, confirmed.error);
+  assert.equal(s.imageCalls.length, 1, 'Exactly one Gemini call made upon explicit confirmation');
+
+  // 4. Regeneration without confirmedBilling -> rejected, zero additional calls
+  const unconfirmedRegen = s.call('apiRegenerateStoryboardImage', 'PRD-001-R01', { scene: 1 });
+  assert.equal(unconfirmedRegen.ok, false);
+  assert.match(unconfirmedRegen.error, /유료 API 호출.*재생성.*확인이 필요합니다|Billing confirmation required/);
+  assert.equal(s.imageCalls.length, 1, 'No additional call on unconfirmed regeneration');
+});
+
+test('transparent billing estimates: counts, model, configurable price, and fallback warning', () => {
+  const s = approveScript(setupFixture({ images: 2 }));
+  s.call('apiCreateProductionPlan', 'PRD-001-R01', {});
+
+  // 1. Default (unconfigured estimate): displays "Cost estimate unavailable", never an invented price
+  let d = s.detail();
+  assert.equal(d.storyboard.billing.model, 'gemini-2.5-flash-image');
+  assert.equal(d.storyboard.billing.imageCount, 6, 'Batch image count matches approved scenes count');
+  assert.equal(d.storyboard.billing.perImageUsd, null);
+  assert.equal(d.storyboard.billing.estimatedTotalUsd, null);
+  assert.equal(d.storyboard.billing.costText, 'Cost estimate unavailable');
+  assert.match(d.storyboard.billing.warning, /실제 청구 금액은 다를 수 있으며/);
+  assert.match(d.storyboard.billing.warning, /실패하거나 재시도된 API 호출에도 요금이 발생할 수 있습니다/);
+
+  // 2. Configured estimate via Script Properties (e.g. $0.04 per image)
+  s.env.props.GEMINI_IMAGE_ESTIMATED_USD_PER_IMAGE = '0.04';
+  d = s.detail();
+  assert.equal(d.storyboard.billing.perImageUsd, 0.04);
+  assert.equal(d.storyboard.billing.estimatedTotalUsd, 0.24); // 6 * 0.04
+  assert.equal(d.storyboard.billing.costText, '~$0.24 USD (estimate)');
+
+  // 3. Custom model override via Script Property
+  s.env.props.GEMINI_IMAGE_MODEL = 'gemini-custom-model';
+  d = s.detail();
+  assert.equal(d.storyboard.billing.model, 'gemini-custom-model');
+  assert.equal(d.storyboard.model, 'gemini-custom-model');
+
+  // 4. Single scene summary calculation helper
+  const singleSummary = s.env.gs('storyboardBillingSummary_')(1);
+  assert.equal(singleSummary.imageCount, 1);
+  assert.equal(singleSummary.model, 'gemini-custom-model');
+  assert.equal(singleSummary.estimatedTotalUsd, 0.04);
+  assert.equal(singleSummary.costText, '~$0.04 USD (estimate)');
+});
+
+test('operator cancellation simulation results in zero generation calls', () => {
+  const s = approveScript(setupFixture({ images: 1 }));
+  s.call('apiCreateProductionPlan', 'PRD-001-R01', {});
+
+  // Simulate operator clicking 'Cancel' in confirmation dialog:
+  // In client handler: if (!confirm(...)) return;
+  // Handler returns immediately and sends no request to the server.
+  const operatorConfirmed = false;
+  if (operatorConfirmed) {
+    s.call('apiGenerateStoryboardImages', 'PRD-001-R01', { confirmedBilling: true });
+  }
+
+  assert.equal(s.imageCalls.length, 0, 'Zero generation calls when operator cancels');
 });

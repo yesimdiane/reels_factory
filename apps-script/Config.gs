@@ -8,7 +8,7 @@
 const RF_CONFIG = {
   // Shown in the dashboard header and in 릴스 팩토리 → 코드 버전 확인. If the two differ, the web app
   // was not redeployed after the code was replaced (Deploy → Manage deployments → New version).
-  CODE_VERSION: '2026-10-11 · image-first-reels-v2 1',
+  CODE_VERSION: '2026-10-11 · image-first-reels-v2 2',
 
   // Instagram brand. Used in the Gemini prompt and shown in the dashboard; edit here to reuse the
   // factory for another account. See docs/brand.md.
@@ -278,6 +278,10 @@ const RF_CONFIG = {
     ASPECT_RATIO: '9:16',
     MODEL: 'gemini-2.5-flash-image',
     MAX_REVISION_NOTE_CHARS: 300,
+    // Configurable per-image estimate in USD. Defaults to null (no verified price configured).
+    // Operators can set via Script Property GEMINI_IMAGE_ESTIMATED_USD_PER_IMAGE or configure here.
+    // If null/unconfigured, the system reports "Cost estimate unavailable" instead of inventing a price.
+    ESTIMATED_USD_PER_IMAGE: null,
     FLOW_NOTE: '생성된 9:16 이미지를 다운로드하여 Google Flow에 업로드하고, 모션 프롬프트를 입력하여 비디오 클립을 생성하세요.',
   },
 

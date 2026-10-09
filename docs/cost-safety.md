@@ -41,6 +41,17 @@ Do not paste the key into chats or commit it. In Apps Script it lives only in Sc
 
 Both are text/image calls that happen **only after `SCRIPT_APPROVED`**: the production plan (1 call, +1 corrective retry at most, product images attached) and the renderer's advisory final check (1 call, one small frame per scene). Before any planning call the code checks: approved and unchanged script, REELS columns present, product images readable — each failure costs nothing. See [gemini-orchestration.md](gemini-orchestration.md).
 
+### Gemini 2.5 Flash Image storyboard generation (9:16)
+
+Storyboard image generation uses `gemini-2.5-flash-image` with actual reference photo bytes inline:
+- **Transparent confirmation warning:** Before calling the paid image API, the dashboard displays a confirmation dialog showing:
+  - Exact count of images to generate (1 for single scene, or batch count);
+  - Model name (`gemini-2.5-flash-image` or configured model);
+  - Estimated total cost in USD (from configurable `GEMINI_IMAGE_ESTIMATED_USD_PER_IMAGE`, labeled as estimate), or *"Cost estimate unavailable"* if unconfigured (never an invented price);
+  - Warning that actual charges may differ and failed/retried calls may incur charges.
+- **Explicit confirmation gate:** Cancelling in the dialog results in zero generation calls. The server requires `confirmedBilling: true`.
+- **In-flight duplicate guard:** Accidental double submissions are prevented while generation is running.
+
 ## 2. Google Flow clips are 8 seconds
 
 A scene has to be covered by its clip, otherwise the cuts would have to repeat footage. Coverage is enforced at three points, so an impossible render plan cannot be built:
