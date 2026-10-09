@@ -21,6 +21,11 @@ function loadConfig(env = process.env, { dotenvFile = path.join(__dirname, '..',
   const inCloud = !!(e.K_SERVICE || e.CLOUD_RUN_JOB);
   return {
     secret: e.RF_RENDER_SECRET || '',
+    // Gemini checks the finished video against the approved script (advisory). Key lives in renderer/.env only.
+    geminiApiKey: e.GEMINI_API_KEY || '',
+    geminiModel: e.RF_GEMINI_MODEL || 'gemini-3.5-flash',
+    driveToken: e.RF_DRIVE_ACCESS_TOKEN || '',
+    refsDir: e.RF_REFS_DIR || path.join(__dirname, '..', 'refs'),
     ttsProvider: e.RF_TTS_PROVIDER || 'google',
     ttsAuth: e.RF_TTS_AUTH || (e.GOOGLE_TTS_API_KEY ? 'apiKey' : inCloud ? 'metadata' : 'gcloud'),
     googleApiKey: e.GOOGLE_TTS_API_KEY || '',

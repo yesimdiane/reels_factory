@@ -42,8 +42,11 @@ function flowClipFile(sceneNo, part) {
  * Returns [{ scene, part, parts, file, beat, clipSec, scriptedSec, coversSec, prompt }] for the reel's
  * current script — one entry per Flow clip (normally one per scene).
  * Uses only PRODUCTS.확인된 기능 (+ optional 제품 외형) — never invented attributes.
+ * plan (optional, Production.gs): Gemini's validated production plan. Its scene description replaces the
+ * script's flow_prompt and its product visual spec (from the operator's verified product images) is added;
+ * the code-built product identity, verified features and no-text/no-logo rules stay in every prompt.
  */
-function buildFlowScenePrompts(row, product) {
+function buildFlowScenePrompts(row, product, plan) {
   const reel = rowToReel(row);
   if (!reel.scenes || !reel.scenes.length) return [];
   const F = RF_CONFIG.FLOW;
@@ -54,22 +57,31 @@ function buildFlowScenePrompts(row, product) {
   reel.scenes.forEach(function (s, i) {
     const beat = s.beat || (i === 0 ? 'HOOK' : i === n - 1 ? 'CTA' : 'DEMO');
     const parts = flowClipParts(s.duration_sec);
+    const ps = plan && plan.scenes ? plan.scenes.filter(function (x) { return x.scene_no === (s.scene_no || i + 1); })[0] : null;
     for (let part = 1; part <= parts; part++) {
       const prompt = [
         'Google Flow · ' + cellText_(row['릴스ID']) + ' · scene ' + (i + 1) + '/' + n + ' · ' + beat + ' · ' + F.CLIP_SEC + '-second clip, vertical 9:16, photorealistic',
         'PRODUCT (identical in every scene): ' + normalizeText(product.name) + (appearance ? ' — ' + appearance : '') + '.',
         'Verified features only: ' + facts.join(' / ') + '. Do not add other features, logos, brand names or text on the product.',
-        'SCENE: ' + normalizeText(s.flow_prompt) + ' (' + normalizeText(s.visual) + ')',
+        plan && plan.productVisual ? 'PRODUCT LOOK (from the verified product images — match exactly): ' + plan.productVisual.summary +
+          (plan.productVisual.mustMatch.length ? ' Must match: ' + plan.productVisual.mustMatch.join('; ') + '.' : '') +
+          (plan.productVisual.mustNotShow.length ? ' Never show: ' + plan.productVisual.mustNotShow.join('; ') + '.' : '') : '',
+        'SCENE: ' + (ps ? normalizeText(ps.scene_prompt) : normalizeText(s.flow_prompt)) + ' (' + normalizeText(s.visual) + ')',
+        ps && normalizeText(ps.continuity) ? 'CONTINUITY: ' + normalizeText(ps.continuity) : '',
         'PRODUCT INTERACTION: ' + F.INTERACTION[beat] + '.',
         'CAMERA: ' + F.CAMERA[beat] + '. One continuous take, no cuts, transitions or effects inside the clip.',
         'LIGHTING & ENVIRONMENT: ' + F.ENVIRONMENT + '. No on-screen text, subtitles, watermarks or logos.',
         parts > 1 ? 'PART ' + part + ' of ' + parts + ': ' + (part === 1 ? 'the beginning of this scene.' : 'continue the same action, place and lighting from where part ' + (part - 1) + ' ended.') : '',
         'DURATION: ' + F.CLIP_SEC + ' seconds. The editor uses about ' + +(Number(s.duration_sec) / parts).toFixed(1) + ' s of it as several short cuts, so let the framing change during the clip.',
         'CONSISTENCY: same product colour, shape and size as the other scenes; same location, door, floor and time of day; ' +
-          'if a person appears, same clothing and hands in every scene. If Flow accepts a reference image, use a photo of the real product you are allowed to use.',
+          'if a person appears, same clothing and hands in every scene. ' +
+          (plan && plan.references && plan.references.length
+            ? 'In Flow, add the verified product image(s) as the reference: ' + plan.references.map(function (r) { return r.name || r.fileId; }).join(', ') + '.'
+            : 'If Flow accepts a reference image, use a photo of the real product you are allowed to use.'),
       ].filter(Boolean).join('\n');
       out.push({
         scene: i + 1, part: part, parts: parts, file: flowClipFile(i + 1, part), beat: beat, clipSec: F.CLIP_SEC,
+        planned: !!ps,
         scriptedSec: Number(s.duration_sec), coversSec: +(Number(s.duration_sec) / parts).toFixed(2), prompt: prompt,
       });
     }

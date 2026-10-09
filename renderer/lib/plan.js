@@ -27,7 +27,8 @@ function buildTimeline(storyboard, narration, template) {
   let t = 0;
   const beats = storyboard.beats.map((b, i) => {
     const voice = narration[i];
-    const dur = Math.max(b.scriptedSec, n.leadInSec + voice.duration + n.tailSec);
+    // pauseAfterSec: Gemini's planned pause after the line (production plan), else the template's tail.
+    const dur = Math.max(b.scriptedSec, n.leadInSec + voice.duration + (b.pauseAfterSec != null ? b.pauseAfterSec : n.tailSec));
     const start = t;
     t += dur;
     const vStart = start + n.leadInSec;
@@ -35,6 +36,7 @@ function buildTimeline(storyboard, narration, template) {
     return {
       sceneNo: b.sceneNo,
       beat: b.beat,
+      emphasisWords: b.emphasisWords || [],
       start,
       end: start + dur,
       duration: dur,

@@ -159,6 +159,7 @@ function loadData_(ss) {
 
   const warnings = [];
   let hookColumnsMissing = true;
+  let productionColumnsMissing = RF_CONFIG.REELS_PRODUCTION_HEADERS.slice();
   const reelsSheet = findSheet_(ss, RF_CONFIG.SHEETS.REELS);
   let reels = [];
   if (reelsSheet && reelsSheet.getLastColumn() > 0) {
@@ -167,14 +168,15 @@ function loadData_(ss) {
       warnings.push('REELS 시트에 승인 관리용 헤더가 없습니다 (' + missing.length + '개). Google Sheets에서 "릴스 팩토리 → 시트 준비"를 실행하세요.');
     }
     hookColumnsMissing = missingHeaders_(reelsSheet, RF_CONFIG.REELS_HOOK_HEADERS).length > 0;
+    productionColumnsMissing = missingHeaders_(reelsSheet, RF_CONFIG.REELS_PRODUCTION_HEADERS);
     if (!missing.length && missingHeaders_(reelsSheet, RF_CONFIG.REELS_OPTIONAL_HEADERS).length) {
-      warnings.push('REELS에 브랜드·훅 열(' + missingHeaders_(reelsSheet, RF_CONFIG.REELS_OPTIONAL_HEADERS).join(', ') + ')이 없습니다. "릴스 팩토리 → 시트 준비"를 실행하세요 — 훅 5개 저장과 대본 승인에 필요합니다. 기존 데이터는 바뀌지 않습니다.');
+      warnings.push('REELS에 브랜드·훅·제작 열(' + missingHeaders_(reelsSheet, RF_CONFIG.REELS_OPTIONAL_HEADERS).join(', ') + ')이 없습니다. "릴스 팩토리 → 시트 준비"를 실행하세요 — 훅 5개 저장·대본 승인·제작 계획에 필요합니다. 기존 데이터는 바뀌지 않습니다.');
     }
     reels = readRecords_(reelsSheet, RF_CONFIG.REELS_HEADERS.concat(RF_CONFIG.REELS_OPTIONAL_HEADERS)).filter(function (r) {
       return normalizeText(r['릴스ID']);
     });
   }
-  return { products: products, productById: byId, reels: reels, reelsSheet: reelsSheet, warnings: warnings, hookColumnsMissing: hookColumnsMissing };
+  return { products: products, productById: byId, reels: reels, reelsSheet: reelsSheet, warnings: warnings, hookColumnsMissing: hookColumnsMissing, productionColumnsMissing: productionColumnsMissing };
 }
 
 function findReel_(data, reelId) {
@@ -337,6 +339,8 @@ function reelDetail_(ss, reelId) {
     // Five hooks (H1–H5), Gemini's recommendation, and the operator's choice (with script version).
     hooks: hookView_(row, status, data.hookColumnsMissing),
     pillars: brandSummary_().pillars,
+    // Gemini's production plan (after approval), Drive folder and clip tracker.
+    production: productionView_(row, product, data.productionColumnsMissing),
     // Recomputed from the current script, so an edit made in the sheet is reflected too.
     verificationFlags: reel.scenes ? verificationLines_(reel, reel.pillar, row) : [],
     brand: brandSummary_(),

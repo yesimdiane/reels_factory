@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { verifyJob } = require('./job');
 const { buildStoryboard, planClips } = require('./storyboard');
+const { applyProductionPlan } = require('./production-plan');
 const { buildTimeline } = require('./plan');
 const { buildAss } = require('./ass');
 const { loadAssetManifest, validateAssets, writeAssetsRequired, spreadIn, AssetsRequiredError } = require('./assets');
@@ -36,11 +37,24 @@ async function render(opts) {
   // The clip plan predicts each scene's length from its narration (cached voice length if any — free —
   // else a slow speaking rate) and splits a scene over extra clips (S3b.mp4) before it can outgrow one.
   const clipSec = (Array.isArray(job.flowPrompts) && job.flowPrompts[0] && job.flowPrompts[0].clipSec) || undefined;
-  const cachedVoice = (b) => (opts.tts.cachedDuration ? opts.tts.cachedDuration(b.ttsText) : null);
-  let storyboard = buildStoryboard(job, template);
+  const cachedVoice = (b) => (opts.tts.cachedDuration ? opts.tts.cachedDuration(b.ttsText, b.rate) : null);
+  // Gemini's production plan (rates, pauses, cuts, emphasis) is applied within fixed limits; an invalid or
+  // foreign plan is ignored and the template defaults are used.
+  let planReport = null;
+  const makeStoryboard = () => {
+    const sb = buildStoryboard(job, template);
+    const rep = applyProductionPlan(sb, job, template);
+    planReport = planReport || rep;
+    return sb;
+  };
+  let storyboard = makeStoryboard();
+  planReport && planReport.ignored && log('! ' + planReport.ignored);
+  (planReport ? planReport.problems : []).forEach((p) => log('! 제작 계획: ' + p));
+  if (planReport && planReport.used) log(`✓ 제작 계획(Gemini) 적용: 속도 ${planReport.applied.rates}, 쉼 ${planReport.applied.pauses}, 컷 ${planReport.applied.cuts}, 강조 ${planReport.applied.emphasis}`);
   planClips(storyboard, template, storyboard.beats.map(cachedVoice), clipSec);
   const pre = qc.preflight(storyboard, template, job);
-  const estimate = opts.tts.estimate(storyboard.beats.map((b) => b.ttsText));
+  const rates = () => storyboard.beats.map((b) => b.rate);
+  const estimate = opts.tts.estimate(storyboard.beats.map((b) => b.ttsText), rates());
 
   // 4. Footage. Missing or invalid → ASSETS_REQUIRED with a shot list. Never substitute slides.
   const assetsRequired = (assets, extra) => {
@@ -89,11 +103,11 @@ async function render(opts) {
 
   // 7. TTS, one line per beat (budget-checked inside; cached lines cost nothing).
   log(`… 음성: ${estimate.provider} ${estimate.voice} — 과금 글자 ${estimate.billableChars}, 예상 $${estimate.estimatedUsd.toFixed(4)}`);
-  const narration = await opts.tts.synthesizeAll(storyboard.beats.map((b) => b.ttsText));
+  const narration = await opts.tts.synthesizeAll(storyboard.beats.map((b) => b.ttsText), rates());
 
   // 7b. Re-plan the Flow clips with the real voice lengths. If a scene now needs an extra clip, stop with
   // ASSETS_REQUIRED (the narration is cached, so the next run pays nothing for it).
-  const replanned = planClips(buildStoryboard(job, template), template, narration.map((v) => v.duration), clipSec);
+  const replanned = planClips(makeStoryboard(), template, narration.map((v) => v.duration), clipSec);
   // Only ever add clips here: a plan with spare clips is still valid, and the operator may already have them.
   if (replanned.beats.some((b, i) => b.clips.length > storyboard.beats[i].clips.length)) {
     storyboard = replanned;
@@ -154,6 +168,20 @@ async function render(opts) {
   // 9. Post-render QC.
   const probed = await ffm.probe(opts.ffmpeg.ffprobe, tmpOut);
   const post = qc.postRender(probed, timeline, template, inputs, resolved, aiIntervals);
+
+  // 9b. Gemini checks the finished video against the approved script/storyboard and the verified product
+  // images. Advisory only (the operator approves the video); a failure of the check itself never fails a render.
+  let review = null;
+  if (post.ok && opts.finalCheck && !opts.preview) {
+    try {
+      review = await opts.finalCheck({ job, storyboard, timeline, videoFile: tmpOut, template });
+      log(`${review.verdict === 'pass' ? '✓' : '!'} Gemini 영상 점검: ${review.verdict}${review.summary ? ' — ' + review.summary : ''}`);
+      review.problems.filter((p) => p.level !== 'note').forEach((p) => log(`  · 장면 ${p.scene}: ${p.message}`));
+    } catch (e) {
+      review = { verdict: 'error', advisory: true, error: e.message };
+      log('! Gemini 영상 점검을 건너뜁니다: ' + e.message);
+    }
+  }
   const fileName = `${job.reelId}_script-v${job.scriptVersion}${opts.preview ? '_PREVIEW' : ''}${post.ok ? '' : '_QC_FAILED'}.mp4`;
   const stored = await opts.storage.publish(tmpOut, key + '/' + fileName);
   const manifest = {
@@ -167,14 +195,20 @@ async function render(opts) {
     previewWarning: opts.preview ? '미리보기 음성(무료 로컬 음성)입니다. 게시하거나 영상으로 등록하지 마세요.' : '',
     renderedAt: new Date().toISOString(),
     output: { path: stored.path, uri: stored.uri, sha256: sha256File(stored.path), duration: probed.duration, streams: probed.streams },
-    qc: { preflight: pre, ttsTiming: timing, postRender: post },
-    tts: Object.assign({}, estimate, opts.ttsInfo || {}, { lines: narration.map((n) => ({ text: n.text, duration: +n.duration.toFixed(3), cached: n.cached })) }),
+    qc: { preflight: pre, ttsTiming: timing, postRender: post, geminiReview: review },
+    tts: Object.assign({}, estimate, opts.ttsInfo || {}, { lines: narration.map((n) => ({ text: n.text, duration: +n.duration.toFixed(3), cached: n.cached, rate: n.rate })) }),
+    productionPlan: planReport ? { used: planReport.used, ignored: planReport.ignored, applied: planReport.applied, problems: planReport.problems } : null,
     footage: Object.fromEntries(Object.entries(resolved).map(([id, a]) => [id, { file: path.basename(a.file), in: +a.in.toFixed(2), source: a.source, aiGenerated: a.source === 'flow-generated', showsProduct: a.showsProduct, rights: a.rights }])),
     aiLabel: { text: template.aiLabel && template.aiLabel.enabled ? template.aiLabel.text : '', shots: qc.aiShots(timeline, resolved).map((s) => s.id) },
     aiGeneratedFootage: Object.values(resolved).some((a) => a.source === 'flow-generated'),
-    reviewNote: Object.values(resolved).some((a) => a.source === 'flow-generated')
-      ? 'AI(Google Flow) 생성 장면 포함: 영상 검토(③)에서 제품 모양·색·크기가 실제 제품과 같은지 확인하고, 게시할 때 인스타그램 "AI 정보" 라벨을 켜세요.'
-      : '',
+    reviewNote: [
+      Object.values(resolved).some((a) => a.source === 'flow-generated')
+        ? 'AI(Google Flow) 생성 장면 포함: 영상 검토(③)에서 제품 모양·색·크기가 실제 제품과 같은지 확인하고, 게시할 때 인스타그램 "AI 정보" 라벨을 켜세요.'
+        : '',
+      review && (review.verdict === 'fail' || review.verdict === 'review')
+        ? `Gemini 영상 점검 결과: ${review.verdict === 'fail' ? '문제 있음' : '확인 필요'} — ${review.problems.filter((p) => p.level !== 'note').map((p) => `장면 ${p.scene}: ${p.message}`).join(' / ')} (참고용입니다. 승인은 직접 판단하세요.)`
+        : '',
+    ].filter(Boolean).join(' '),
     timeline: {
       total: +timeline.total.toFixed(3),
       beats: timeline.beats.map((b) => ({ scene: b.sceneNo, beat: b.beat, start: +b.start.toFixed(2), end: +b.end.toFixed(2), subtitle: b.subtitle.captions.map((c) => c.text), shots: b.shots.map((s) => s.id) })),

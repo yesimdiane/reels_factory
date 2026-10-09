@@ -115,3 +115,56 @@ FIXTURE_PRD_001_GEMINI_RESPONSE.reels.forEach(function (r) {
   r.captions = r.scenes.map(function (sc) { return sc.narration; });
   r.narration = r.captions.join(' ');
 });
+
+/**
+ * Reference production plan for the PRD-001 storyboard above: what Gemini should return after the script
+ * is approved (Production.gs). Hand-written to document and test the format — NOT a recorded response.
+ * product_visual here is limited to what the verified facts say; with the operator's real product images
+ * Gemini describes what those images show. Speaking rates: hook/CTA a little faster, explanations slower.
+ */
+const FIXTURE_PRD_001_PRODUCTION_PLAN_RESPONSE = {
+  product_visual: {
+    summary: 'A slim two-piece (upper and lower) umbrella holder in dark gray that attaches to a steel door with magnets.',
+    must_match: ['two separate pieces, upper and lower', 'dark gray colour in every scene', 'slim body mounted flat on the lower part of a steel door'],
+    must_not_show: ['screws, drills or adhesive', 'mounting on a refrigerator, wall or tile', 'any logo, brand name or printed text'],
+  },
+  scenes: [
+    { scene_no: 1, scene_prompt: 'Handheld close-up of wet umbrellas lying on a small Korean apartment entryway floor, a foot stepping around them, rainy-day light.',
+      continuity: 'same narrow entryway, same steel door and floor tiles in every scene', verify_in_clip: ['umbrellas are on the floor and the product is not yet visible'] },
+    { scene_no: 2, scene_prompt: 'Top-down handheld POV of a tiny entryway floor crowded with shoes, no free space, natural daylight.',
+      continuity: 'same entryway as scene 1', verify_in_clip: ['floor is crowded with shoes, no product yet'] },
+    { scene_no: 3, scene_prompt: 'Close-up of a hand placing the holder onto the lower part of the steel apartment front door; the magnets click it into place.',
+      continuity: 'same steel door as the earlier scenes', verify_in_clip: ['the product is attached to a steel door and looks like the reference images'] },
+    { scene_no: 4, scene_prompt: 'Medium shot of a person sliding a long umbrella and then a folding umbrella into the holder on the steel door.',
+      continuity: 'same person, same clothing, same holder position', verify_in_clip: ['both a long and a folding umbrella fit', 'the holder shape and colour match the reference images'] },
+    { scene_no: 5, scene_prompt: 'Close-up of two hands each holding one piece of the two-piece holder in a bright entryway.',
+      continuity: 'same hands and clothing as scene 4', verify_in_clip: ['exactly two separate pieces are shown'] },
+    { scene_no: 6, scene_prompt: 'Slow push-in to the holder on the steel door with one umbrella inside and a clear entryway floor, soft light, hold steady at the end.',
+      continuity: 'same door, floor and holder position', verify_in_clip: ['the floor is clear and the product matches the reference images'] },
+  ],
+  narration: [
+    { scene_no: 1, tts_text: '비 오는 날, 현관에 젖은 우산이 굴러다녀요', speaking_rate: 1.05, pause_after_sec: 0.2 },
+    { scene_no: 2, tts_text: '신발 둘 자리도 모자라잖아요', speaking_rate: 1.0, pause_after_sec: 0.3 },
+    { scene_no: 3, tts_text: '자석이라 철제 현관문에 붙이면 돼요', speaking_rate: 0.98, pause_after_sec: 0.2 },
+    { scene_no: 4, tts_text: '긴 우산도 접는 우산도 쏙 꽂아요', speaking_rate: 1.0, pause_after_sec: 0.2 },
+    { scene_no: 5, tts_text: '위아래 두 조각으로 나뉘어 있어요', speaking_rate: 0.98, pause_after_sec: 0.2 },
+    { scene_no: 6, tts_text: "저장해 두고, 댓글에 '{키워드}' 남겨 주세요", speaking_rate: 1.05, pause_after_sec: 0.1 },
+  ],
+  subtitles: [
+    { scene_no: 1, emphasis_words: ['굴러다녀요'], note: '' },
+    { scene_no: 2, emphasis_words: ['모자라잖아요'], note: '' },
+    { scene_no: 3, emphasis_words: ['현관문에'], note: '' },
+    { scene_no: 4, emphasis_words: ['쏙'], note: '' },
+    { scene_no: 5, emphasis_words: ['두 조각'], note: '' },
+    { scene_no: 6, emphasis_words: [], note: '' },
+  ],
+  edit: [
+    { scene_no: 1, cuts: [{ framing: '클로즈업 — 젖은 우산' }, { framing: '미디엄 — 우산을 피해 지나가는 발' }] },
+    { scene_no: 2, cuts: [{ framing: '위에서 내려다본 신발' }, { framing: '클로즈업 — 빈틈없는 바닥' }] },
+    { scene_no: 3, cuts: [{ framing: '미디엄 — 손이 제품을 가져옴' }, { framing: '클로즈업 — 제품이 놓이는 순간' }, { framing: 'POV — 문에 붙은 제품' }] },
+    { scene_no: 4, cuts: [{ framing: '클로즈업 — 장우산' }, { framing: '클로즈업 — 접이식 우산' }, { framing: '미디엄 — 사람과 제품' }] },
+    { scene_no: 5, cuts: [{ framing: '클로즈업 — 상단 조각' }, { framing: '클로즈업 — 하단 조각' }] },
+    { scene_no: 6, cuts: [{ framing: '제품 클로즈업' }, { framing: '와이드 — 비어 있는 현관 바닥' }] },
+  ],
+  risks: ['제품 색이 장면마다 달라질 수 있음 — 모든 클립에서 다크그레이인지 확인', '자석 부착 장면에서 문 재질이 철제로 보이는지 확인'],
+};
