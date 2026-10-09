@@ -291,3 +291,22 @@ test('production columns are required before any Gemini call (시트 준비)', (
   assert.match(res.error, /REELS에 제작 열이 없습니다 \(제작 계획\(JSON\)\).*시트 준비/);
   assert.equal(s.geminiCalls(), before);
 });
+
+test('product images are capped (per image and in total) before any Gemini call', () => {
+  const big = approved(setup({ images: 0 }));
+  const d = big.env.drive;
+  const mk = (n, bytes) => d.addFile('', n, Buffer.alloc(bytes, 1), 'image/png');
+  const link = (id) => 'https://drive.google.com/file/d/' + id + '/view';
+  big.env.sheets.PRODUCTS.rows[1][9] = link(mk('huge.png', 3 * 1024 * 1024 + 1));
+  let before = big.geminiCalls();
+  let res = big.plan();
+  assert.match(res.error, /너무 큽니다/);
+  assert.equal(big.geminiCalls(), before);
+  big.env.sheets.PRODUCTS.rows[1][9] = [1, 2, 3, 4].map((i) => link(mk('p' + i + '.png', 3 * 1024 * 1024))).join('\n');
+  res = big.plan();
+  assert.match(res.error, /전체 크기가 10MB를 넘습니다/);
+  assert.equal(big.geminiCalls(), before);
+  // At most 4 images are ever read, extra links are ignored.
+  const six = Array.from({ length: 6 }, (_, i) => link(mk('s' + i + '.png', 10))).join('\n');
+  assert.equal(plain(big.env.gs('parseReferenceImages')(six)).length, 4);
+});

@@ -111,6 +111,7 @@ function loadReferenceImages_(product) {
         '실제 제품을 보여 주는 이미지의 Google Drive 링크를 줄마다 하나씩 넣으세요 (사용 권한이 확인된 이미지만). Gemini는 호출하지 않았습니다.'
     );
   }
+  let total = 0;
   return refs.map(function (r) {
     let file;
     try {
@@ -125,6 +126,10 @@ function loadReferenceImages_(product) {
     const bytes = file.getBlob().getBytes();
     if (bytes.length > P.MAX_IMAGE_BYTES) {
       throw new Error('제품 이미지 "' + file.getName() + '"가 너무 큽니다 (' + Math.round(bytes.length / 1024) + 'KB, 최대 ' + Math.round(P.MAX_IMAGE_BYTES / 1024) + 'KB). 더 작은 이미지로 바꾸세요.');
+    }
+    total += bytes.length;
+    if (total > P.MAX_TOTAL_IMAGE_BYTES) {
+      throw new Error('제품 이미지 전체 크기가 ' + Math.round(P.MAX_TOTAL_IMAGE_BYTES / 1024 / 1024) + 'MB를 넘습니다 (Gemini 요청 한도). 이미지를 줄이거나 개수를 줄이세요. Gemini는 호출하지 않았습니다.');
     }
     return { fileId: r.fileId, name: file.getName(), mimeType: mime, data: Utilities.base64Encode(bytes) };
   });

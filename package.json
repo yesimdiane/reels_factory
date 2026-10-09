@@ -12,6 +12,7 @@
     "render:usage": "node renderer/cli.js usage",
     "render:sample": "node renderer/sample/make-sample.js",
     "render:pending": "node renderer/cli.js pending",
+    "render:fetch-clips": "node renderer/cli.js fetch-clips",
     "gemini:check": "node scripts/check-gemini.js"
   },
   "engines": {

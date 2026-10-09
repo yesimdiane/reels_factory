@@ -83,7 +83,11 @@ RF_JOBS_DIR=/Users/<you>/Library/CloudStorage/GoogleDrive-<you>@gmail.com/My Dri
 RF_CLIPS_DIR=/Users/<you>/Library/CloudStorage/GoogleDrive-<you>@gmail.com/My Drive/ReelsFactory/clips
 RF_OUTPUT_DIR=/Users/<you>/Library/CloudStorage/GoogleDrive-<you>@gmail.com/My Drive/ReelsFactory/output
 RF_DEFAULT_FOOTAGE_SOURCE=flow-generated
+# Optional — Gemini's advisory check of the finished video (see docs/gemini-orchestration.md):
+GEMINI_API_KEY=<your Gemini key>
 ```
+
+For Drive import (`node renderer/cli.js fetch-clips --job <file>`) and Drive product images run once: `gcloud auth login --enable-gdrive-access`.
 
 Run `npm run render:check` again. Every line should show ✓, and the render key should be listed as set.
 

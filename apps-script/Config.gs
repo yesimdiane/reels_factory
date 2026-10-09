@@ -234,7 +234,9 @@ const RF_CONFIG = {
     CUT_MAX_SEC: 3.5,
     SCENE_PROMPT_MIN_CHARS: 40,
     MAX_REFERENCE_IMAGES: 4,
-    MAX_IMAGE_BYTES: 4 * 1024 * 1024,
+    MAX_IMAGE_BYTES: 3 * 1024 * 1024,
+    // Gemini limits a request with inline data to ~20 MB (base64 adds a third), so the images share a budget.
+    MAX_TOTAL_IMAGE_BYTES: 10 * 1024 * 1024,
     DRIVE_ROOT_FOLDER_NAME: 'Reels Factory',
     CLIP_EXTENSIONS: ['mp4', 'mov', 'm4v'],
     // Statuses in which a production plan may be made / the Drive folder prepared.

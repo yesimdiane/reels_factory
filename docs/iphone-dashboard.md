@@ -41,6 +41,10 @@ Details: [brand.md](brand.md), [five-hook-workflow.md](five-hook-workflow.md).
 
 The **기록** tab and each reel's detail page show all four steps, with who did each one and when.
 
+### 🎬 Production plan card (after approval)
+
+On an approved reel (제작 tab) the **제작 계획** card shows: the number of verified product images, **제작 계획 만들기 (Gemini 1회)** (refused until the script is approved and product images are listed in PRODUCTS), then the planned product look with its "must match / never show" lists, risks, per-scene voice pace/pause, emphasis, cuts and what to verify in each clip. **Drive 폴더 준비/동기화** creates the reel's folder and shows which clips (`S1.mp4` …) are uploaded (`✓`/`○`). Google Flow has no public API, so you generate the clips in Flow from the prompts and upload them to that folder. Details: [gemini-orchestration.md](gemini-orchestration.md).
+
 ## Status flow
 
 ```
