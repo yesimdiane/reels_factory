@@ -390,3 +390,50 @@ test('operator cancellation simulation results in zero generation calls', () => 
 
   assert.equal(s.imageCalls.length, 0, 'Zero generation calls when operator cancels');
 });
+
+test('storyboard image recovery: orphaned Drive image is detected and recovered without calling Gemini API (0 tokens)', () => {
+  const s = approveScript(setupFixture({ images: 1 }));
+  s.call('apiCreateProductionPlan', 'PRD-001-R01', {});
+
+  // 1. Initially scene S1 has no image
+  let d = s.detail();
+  assert.equal(d.storyboard.images[0].status, 'MISSING');
+  assert.equal(d.storyboard.images[0].current, null);
+  assert.equal(d.storyboard.recoverable.length, 0);
+
+  // 2. Simulate an existing or orphaned image file sitting in Drive
+  // (e.g. from a past run where client disconnected before sheet update, or uploaded directly)
+  const sbFolder = s.env.gs('storyboardFolder_')({ id: 'PRD-001' }, 'PRD-001-R01');
+  const orphanFileId = s.env.drive.addFile(sbFolder.getId(), 'S1_v1.png', 'raw-png-bytes', 'image/png');
+
+  // 3. Detail now detects the orphaned file in Drive
+  d = s.detail();
+  assert.equal(d.storyboard.recoverable.length, 1);
+  assert.equal(d.storyboard.recoverable[0].fileName, 'S1_v1.png');
+  assert.equal(d.storyboard.recoverable[0].fileId, orphanFileId);
+  assert.equal(d.storyboard.recoverable[0].sceneNo, 1);
+  assert.equal(d.storyboard.images[0].recoverable.length, 1);
+
+  // 4. Recover the image: links it to REELS sheet and AUDIT with ZERO Gemini API calls!
+  const prevImageCalls = s.imageCalls.length;
+  const recRes = s.call('apiRecoverStoryboardImage', 'PRD-001-R01', { scene: 1, fileId: orphanFileId });
+  assert.equal(recRes.ok, true, recRes.error);
+  assert.equal(s.imageCalls.length, prevImageCalls, 'ZERO Gemini API calls were made during recovery');
+
+  // 5. Scene S1 is now PENDING_REVIEW with the recovered file
+  d = s.detail();
+  assert.equal(d.storyboard.images[0].status, 'PENDING_REVIEW');
+  assert.equal(d.storyboard.images[0].current.v, 1);
+  assert.equal(d.storyboard.images[0].current.fileId, orphanFileId);
+  assert.equal(d.storyboard.images[0].current.name, 'S1_v1.png');
+  assert.equal(d.storyboard.recoverable.length, 0, 'No longer listed as unlinked recoverable');
+
+  // 6. AUDIT sheet recorded the recovery
+  assert.ok(s.audit().includes('STORYBOARD_IMAGE_RECOVERED'));
+
+  // 7. Review and approve the recovered image
+  const apRes = s.act('REVIEW_STORYBOARD_IMAGE', { scene: 1, version: 1, decision: 'APPROVE' });
+  assert.equal(apRes.ok, true);
+  d = s.detail();
+  assert.equal(d.storyboard.images[0].status, 'APPROVED');
+});

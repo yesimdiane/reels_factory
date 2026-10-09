@@ -132,9 +132,11 @@ test('dashboard call wrapper defensively guards runner and falls back to apiActi
     vm.runInContext(callSrc, context);
     await context.call('apiReviewStoryboardImage', 'PRD-001-R01', { scene: 1, version: 1, decision: 'APPROVE' });
     await context.call('apiRegenerateStoryboardImage', 'PRD-001-R01', { scene: 1, confirmedBilling: true });
-    assert.equal(calls.length, 2);
+    await context.call('apiRecoverStoryboardImage', 'PRD-001-R01', { scene: 1, fileId: 'DRIVE_FILE_123' });
+    assert.equal(calls.length, 3);
     assert.equal(calls[0].action, 'REVIEW_STORYBOARD_IMAGE');
     assert.equal(calls[1].action, 'REGENERATE_STORYBOARD_IMAGE');
+    assert.equal(calls[2].action, 'RECOVER_STORYBOARD_IMAGE');
   }
 
   // 4. Missing runner function without apiAction resolves cleanly without throwing TypeError

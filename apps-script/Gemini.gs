@@ -66,9 +66,12 @@ function requestGemini_(model, body) {
   let code;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
+      console.info('[Gemini Request] Attempt ' + attempt + ' calling model ' + model);
       response = UrlFetchApp.fetch(url, options);
       code = response.getResponseCode();
+      console.info('[Gemini Request] Attempt ' + attempt + ' responded HTTP ' + code);
     } catch (e) {
+      console.error('[Gemini Request Error] Attempt ' + attempt + ' failed: ' + e.message);
       // Network errors and UrlFetchApp timeouts throw even with muteHttpExceptions.
       if (attempt === 3) {
         throw new Error(
@@ -194,16 +197,19 @@ function callGeminiImage_(promptText, referenceImages, options) {
     if (code === 401 || code === 403) hint = ' (GEMINI_API_KEY가 유효한지 확인하세요)';
     if (code === 404) hint = ' (모델 ' + chain.join(', ') + ' 모두 사용할 수 없습니다)';
     if (code === 429) hint = ' (요청 한도 초과 — 잠시 후 다시 시도하세요)';
+    console.error('[Gemini Image Error] HTTP ' + code + hint + ': ' + String(detail).slice(0, 500));
     throw new Error('Gemini 이미지 생성 오류 HTTP ' + code + hint + ': ' + String(detail).slice(0, 500));
   }
   RF_GEMINI_STATE.lastModel = model;
 
   const json = JSON.parse(text);
   if (json.promptFeedback && json.promptFeedback.blockReason) {
+    console.error('[Gemini Image Error] Blocked by safety filter: ' + json.promptFeedback.blockReason);
     throw new Error('Gemini가 요청을 차단했습니다: ' + json.promptFeedback.blockReason);
   }
   const candidate = json.candidates && json.candidates[0];
   if (!candidate || !candidate.content || !candidate.content.parts) {
+    console.error('[Gemini Image Error] No candidates in response: ' + text.slice(0, 500));
     throw new Error('Gemini 응답에 candidates가 없습니다: ' + text.slice(0, 500));
   }
   let imagePart = null;
@@ -217,8 +223,10 @@ function callGeminiImage_(promptText, referenceImages, options) {
     }
   });
   if (!imagePart) {
+    console.error('[Gemini Image Error] No image data in response parts: ' + textPart.slice(0, 500));
     throw new Error('Gemini 이미지 응답에 이미지가 포함되지 않았습니다: ' + textPart.slice(0, 500));
   }
+  console.info('[Gemini Image] Successfully received image data from ' + model + ' (' + (imagePart.mimeType || 'image/png') + ')');
   return {
     model: model,
     mimeType: imagePart.mimeType || 'image/png',

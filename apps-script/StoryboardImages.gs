@@ -48,6 +48,67 @@ function storyboardFolder_(product, reelId) {
   return childFolder_(reel, (RF_CONFIG.STORYBOARD && RF_CONFIG.STORYBOARD.FOLDER_NAME) || 'storyboard');
 }
 
+function findStoryboardFolderIfExists_(product, reelId) {
+  try {
+    const root = driveRootFolder_();
+    if (!root) return null;
+    const prodIt = root.getFoldersByName(product.id);
+    if (!prodIt.hasNext()) return null;
+    const prodFolder = prodIt.next();
+    const reelIt = prodFolder.getFoldersByName(reelId);
+    if (!reelIt.hasNext()) return null;
+    const reelFolder = reelIt.next();
+    const sbName = (RF_CONFIG.STORYBOARD && RF_CONFIG.STORYBOARD.FOLDER_NAME) || 'storyboard';
+    const sbIt = reelFolder.getFoldersByName(sbName);
+    if (!sbIt.hasNext()) return null;
+    return sbIt.next();
+  } catch (e) {
+    return null;
+  }
+}
+
+function findRecoverableStoryboardFiles_(product, reelId, currentStore) {
+  const folder = findStoryboardFolderIfExists_(product, reelId);
+  if (!folder) return [];
+  const registeredFileIds = {};
+  if (currentStore && currentStore.images) {
+    Object.keys(currentStore.images).forEach(function (k) {
+      const entry = currentStore.images[k];
+      if (entry && Array.isArray(entry.versions)) {
+        entry.versions.forEach(function (v) {
+          if (v && v.fileId) registeredFileIds[v.fileId] = true;
+        });
+      }
+    });
+  }
+  const recoverable = [];
+  try {
+    const files = folder.getFiles();
+    while (files.hasNext()) {
+      const file = files.next();
+      const fileId = file.getId();
+      if (registeredFileIds[fileId]) continue;
+      const name = file.getName();
+      const m = name.match(/^(S[1-6])(?:_v(\d+))?\.(png|jpg|jpeg|webp)$/i);
+      if (m) {
+        const sceneNo = Number(m[1].slice(1));
+        const version = m[2] ? Number(m[2]) : 1;
+        recoverable.push({
+          fileId: fileId,
+          fileName: name,
+          mimeType: file.getMimeType(),
+          sceneNo: sceneNo,
+          version: version,
+          driveUrl: 'https://drive.google.com/file/d/' + fileId + '/view',
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[Storyboard] Error scanning recoverable files: ' + (e && e.message ? e.message : String(e)));
+  }
+  return recoverable;
+}
+
 // ---------------------------------------------------------------- prompt builders
 
 /** Motion prompt for Google Flow Image-to-Video handoff (starting from the still storyboard image). */
@@ -101,7 +162,7 @@ function buildStoryboardImagePrompt_(scene, product, plan, revisionNote) {
 // ---------------------------------------------------------------- image list & invalidation
 
 /** Storyboard images list for the reel: [{ key, scene, beat, duration_sec, narration, visual, status, current, versions, motionPrompt }]. */
-function storyboardImageList_(row, product, plan) {
+function storyboardImageList_(row, product, plan, recoverableFiles) {
   const store = parseImageStore_(row);
   const hash = cellText_(row['승인 대본 해시']);
   const scenes = approvedScenes_(row);
@@ -111,6 +172,7 @@ function storyboardImageList_(row, product, plan) {
     const st = imageState_(entry, hash);
     const cur = st.current;
     const motionPrompt = (cur && cur.motionPrompt) || buildSceneMotionPrompt_(s, plan);
+    const rec = (recoverableFiles || []).filter(function (r) { return r.sceneNo === s.scene_no; });
     return {
       key: key,
       scene: s.scene_no,
@@ -119,6 +181,7 @@ function storyboardImageList_(row, product, plan) {
       narration: s.narration,
       visual: s.visual,
       status: st.status,
+      recoverable: rec,
       current: cur ? {
         v: cur.v,
         fileId: cur.fileId,
@@ -237,8 +300,10 @@ function generateSceneImageCore_(ss, data, found, scene, refs, plan, revisionNot
   const prompt = buildStoryboardImagePrompt_(scene, found.product, plan, revisionNote);
   const motionPrompt = buildSceneMotionPrompt_(scene, plan);
 
+  console.info('[Storyboard] Calling Gemini Image API for scene S' + scene.scene_no + ' with ' + (refs || []).length + ' reference image(s)...');
   // Call gemini-2.5-flash-image with actual reference image bytes
   const res = callGeminiImage_(prompt, refs, { aspectRatio: '9:16' });
+  console.info('[Storyboard] Gemini returned image bytes for scene S' + scene.scene_no + ' from model ' + res.model);
 
   // Save generated image to Drive
   const folder = storyboardFolder_(found.product, reelId);
@@ -253,6 +318,7 @@ function generateSceneImageCore_(ss, data, found, scene, refs, plan, revisionNot
   const bytes = Utilities.base64Decode(res.data);
   const blob = Utilities.newBlob(bytes, res.mimeType, fileName);
   const file = folder.createFile(blob);
+  console.info('[Storyboard] Saved image to Drive: fileId=' + file.getId() + ', fileName=' + fileName);
 
   if (prev && prev.status !== 'REJECTED') prev.status = 'SUPERSEDED';
 
@@ -275,6 +341,7 @@ function generateSceneImageCore_(ss, data, found, scene, refs, plan, revisionNot
 
   updateRecord_(data.reelsSheet, found.row._row, { '장면 이미지(JSON)': JSON.stringify(store) });
   found.row['장면 이미지(JSON)'] = JSON.stringify(store);
+  console.info('[Storyboard] Updated REELS sheet for scene S' + scene.scene_no + ' v' + nextV);
 
   appendAudit_(ss, [{
     '일시': new Date(),
@@ -288,6 +355,7 @@ function generateSceneImageCore_(ss, data, found, scene, refs, plan, revisionNot
     '작업자': user + ' + Gemini (' + res.model + ')',
     '메모': key + ' v' + nextV + ' (Drive ID: ' + file.getId() + ', 9:16)' + (revisionNote ? ' · 수정 반영: ' + revisionNote : ''),
   }]);
+  console.info('[Storyboard] Appended AUDIT entry for scene S' + scene.scene_no + ' v' + nextV);
 
   if (prevWasApproved) {
     invalidateDependentVideoApprovals_(ss, data, found, key, '새 이미지 v' + nextV + ' 생성', user);
@@ -353,7 +421,10 @@ function storyboardView_(row, product, data) {
   const refs = parseReferenceImages(product.referenceImages);
   const approvedStatuses = RF_CONFIG.PRODUCTION.PLAN_STATUSES;
   const visible = approvedStatuses.indexOf(status) !== -1;
-  const list = intact ? storyboardImageList_(row, product, plan) : [];
+  const recoverable = (visible && intact)
+    ? findRecoverableStoryboardFiles_(product, normalizeText(row['릴스ID']), parseImageStore_(row))
+    : [];
+  const list = intact ? storyboardImageList_(row, product, plan, recoverable) : [];
   const approvedCount = list.filter(function (img) { return img.status === 'APPROVED'; }).length;
   const totalCount = list.length;
   let blocker = '';
@@ -369,6 +440,7 @@ function storyboardView_(row, product, data) {
     blocker: blocker,
     referencesCount: refs.length,
     images: list,
+    recoverable: recoverable,
     approvedCount: approvedCount,
     totalCount: totalCount,
     allApproved: totalCount > 0 && approvedCount === totalCount,
@@ -536,6 +608,108 @@ function apiRegenerateStoryboardImage(reelId, input) {
 
       generateSceneImageCore_(ss, data, found, scene, refs, plan, revisionNote, user);
     });
+    return { detail: reelDetail_(ss, id) };
+  });
+}
+
+/**
+ * Recovers an already-generated 9:16 storyboard image file from Drive without calling Gemini API (0 tokens, free).
+ * input: { scene: number, fileId: string }
+ */
+function apiRecoverStoryboardImage(reelId, input) {
+  return api_(function (user) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const id = normalizeText(reelId);
+    input = input || {};
+    const sceneNo = Number(input.scene);
+    if (!sceneNo || sceneNo < 1 || sceneNo > 6) throw new Error('유효한 장면 번호가 필요합니다.');
+    if (!input.fileId) throw new Error('복구할 Drive 파일 ID가 필요합니다.');
+
+    withLock_(function () {
+      const data = loadData_(ss);
+      const found = findReel_(data, id);
+      const status = reelStatus(found.row);
+      if (RF_CONFIG.PRODUCTION.PLAN_STATUSES.indexOf(status) === -1) {
+        throw new Error('스토리보드 이미지는 대본 승인 후에만 복구할 수 있습니다 (현재: ' + (RF_STATUS_LABELS[status] || status) + ').');
+      }
+      if (!isApprovedScriptIntact(found.row)) {
+        throw new Error('승인된 대본과 현재 대본이 다릅니다. "대본 승인 취소" 후 다시 승인하세요.');
+      }
+
+      let file;
+      try {
+        file = DriveApp.getFileById(input.fileId);
+      } catch (e) {
+        throw new Error('Drive 파일(' + input.fileId + ')을 열 수 없습니다: ' + e.message);
+      }
+      const mime = file.getMimeType();
+      if (!/^image\/(png|jpeg|webp)$/.test(mime)) {
+        throw new Error('선택한 파일은 이미지 파일이 아닙니다 (' + mime + ').');
+      }
+
+      const plan = validProductionPlan(found.row);
+      const scenes = approvedScenes_(found.row);
+      const scene = scenes.filter(function (s) { return s.scene_no === sceneNo; })[0];
+      if (!scene) throw new Error('장면 S' + sceneNo + '를 대본에서 찾을 수 없습니다.');
+
+      const key = imageKeyOf_(sceneNo);
+      const store = parseImageStore_(found.row);
+      const entry = store.images[key] || (store.images[key] = { scene: sceneNo, current: 0, versions: [] });
+
+      // If already registered, ensure current points to it
+      const already = entry.versions.filter(function (v) { return v.fileId === file.getId(); })[0];
+      if (already) {
+        entry.current = already.v;
+        updateRecord_(data.reelsSheet, found.row._row, { '장면 이미지(JSON)': JSON.stringify(store) });
+        found.row['장면 이미지(JSON)'] = JSON.stringify(store);
+        return;
+      }
+
+      const prev = entry.versions.filter(function (v) { return v.v === entry.current; })[0] || null;
+      const prevWasApproved = prev && prev.status === 'APPROVED';
+      const nextV = (entry.versions.reduce(function (max, v) { return Math.max(max, v.v); }, 0) || 0) + 1;
+      const motionPrompt = buildSceneMotionPrompt_(scene, plan);
+
+      if (prev && prev.status !== 'REJECTED') prev.status = 'SUPERSEDED';
+
+      entry.versions.push({
+        v: nextV,
+        fileId: file.getId(),
+        name: file.getName(),
+        mime: mime,
+        prompt: '(Drive에서 복구된 이미지)',
+        motionPrompt: motionPrompt,
+        status: 'PENDING_REVIEW',
+        generatedAt: new Date().toISOString(),
+        reviewedBy: '',
+        reviewedAt: '',
+        approvedHash: '',
+        note: 'Drive 기존 이미지 복구 (' + file.getName() + ')',
+        model: 'recovered-from-drive',
+      });
+      entry.current = nextV;
+
+      updateRecord_(data.reelsSheet, found.row._row, { '장면 이미지(JSON)': JSON.stringify(store) });
+      found.row['장면 이미지(JSON)'] = JSON.stringify(store);
+
+      appendAudit_(ss, [{
+        '일시': new Date(),
+        '릴스ID': id,
+        '상품ID': found.row['상품ID'],
+        '작업': 'STORYBOARD_IMAGE_RECOVERED',
+        '이전 상태': reelStatus(found.row),
+        '새 상태': reelStatus(found.row),
+        '대본 버전': scriptVersionOf(found.row),
+        '영상 버전': videoVersionOf(found.row),
+        '작업자': user,
+        '메모': key + ' v' + nextV + ' (Drive ID: ' + file.getId() + ' 복구 · Gemini API 호출 없음)',
+      }]);
+
+      if (prevWasApproved) {
+        invalidateDependentVideoApprovals_(ss, data, found, key, 'Drive 이미지 v' + nextV + ' 복구', user);
+      }
+    });
+
     return { detail: reelDetail_(ss, id) };
   });
 }
