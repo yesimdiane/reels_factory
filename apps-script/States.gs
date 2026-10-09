@@ -545,8 +545,17 @@ function planTransition(row, product, action, input, ctx) {
         throw new Error('훅 5개가 올바르지 않습니다.');
       }
       updates['훅 후보(JSON)'] = JSON.stringify(hs);
-      updates['선택한 훅'] = '';
-      note = (note ? note + ' · ' : '') + '훅 5개 생성 (추천 ' + (hs.recommended ? hs.recommended.id : '-') + '). 대본은 바뀌지 않았습니다.';
+      if (Array.isArray(input.revisedIds)) {
+        // Some hooks improved (apiReviseHook): the choice stays unless the chosen hook was rewritten.
+        const sel = parseSelectedHook(row['선택한 훅']);
+        if (sel && input.revisedIds.indexOf(sel.id) !== -1) updates['선택한 훅'] = '';
+        note = (note ? note + ' · ' : '') + '훅 ' + input.revisedIds.join(', ') + ' 다듬기 (Gemini): ' +
+          hs.hooks.filter(function (h) { return input.revisedIds.indexOf(h.id) !== -1; }).map(function (h) { return '"' + h.text + '"'; }).join(', ') +
+          '. 대본은 바뀌지 않았습니다.';
+      } else {
+        updates['선택한 훅'] = '';
+        note = (note ? note + ' · ' : '') + '훅 5개 생성 (추천 ' + (hs.recommended ? hs.recommended.id : '-') + '). 대본은 바뀌지 않았습니다.';
+      }
       to = status;
       snapshot = { '훅 후보(JSON)': updates['훅 후보(JSON)'] };
       break;

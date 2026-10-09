@@ -418,7 +418,9 @@ function validateReelContent(reel, product, label, options) {
  * the recommended hook the script is built on, and the comment keyword.
  * options.fixedHook: the operator's selected hook — the script must start with exactly this text
  * (hook-style rules are not re-applied to the operator's own wording).
- * Returns { errors, reels, reelErrors, hookSet, commentKeyword }.
+ * Hook style is a warning, not an error (see validateHookSet); only hard problems fail validation.
+ * Returns { errors, reels, reelErrors, hookSet, commentKeyword, setErrors, hookErrors, warnings,
+ * otherErrors (errors not tied to one hook), recommendedId, reelWarnings }.
  */
 function validateGeminiReels(payload, product, expectedCount, options) {
   const count = expectedCount || RF_CONFIG.REELS_PER_PRODUCT;
@@ -431,23 +433,30 @@ function validateGeminiReels(payload, product, expectedCount, options) {
   const requireHooks = !options || options.requireHooks !== false;
   const fixedHook = options && options.fixedHook ? normalizeText(options.fixedHook) : '';
   let hookSet = null;
+  let hs = null;
   if (requireHooks) {
-    const hs = validateHookSet(payload, product, avoidHooks);
-    hs.errors.forEach(function (e) {
-      errors.push(e);
-    });
+    hs = validateHookSet(payload, product, avoidHooks);
     hookSet = hs.errors.length ? null : hs.hookSet;
   }
+  const otherErrors = [];
+  const reelWarnings = [];
   const keywordError = commentKeywordError(payload.comment_keyword);
-  if (keywordError) errors.push(keywordError);
+  if (keywordError) otherErrors.push(keywordError);
   if (reels.length !== count) {
-    errors.push('릴스 대본은 정확히 ' + count + '개여야 합니다 (받은 개수: ' + reels.length + ').');
+    otherErrors.push('릴스 대본은 정확히 ' + count + '개여야 합니다 (받은 개수: ' + reels.length + ').');
   }
   const reelErrors = reels.map(function (reel, i) {
     const label = '릴스 ' + (i + 1);
     const opts = { requireStoryboard: true, requireFactRefs: true, newStructure: true, generated: true };
     let errs = validateReelContent(reel, product, label, opts);
-    if (!fixedHook) errs = errs.concat(hookStyleErrors_(reel, product, label, avoidHooks));
+    // With five hooks the script's hook is the recommended one, already checked in the hook set.
+    // Without (a rewritten script), its style is checked here: misleading wording fails, style warns.
+    if (!fixedHook && !requireHooks && reel && normalizeText(reel.hook)) {
+      const st = hookStyleCheck_(reel.hook, product, avoidHooks);
+      const p = label + ': hook "' + normalizeText(reel.hook) + '" — ';
+      errs = errs.concat(st.errors.map(function (e) { return p + e; }));
+      st.warnings.forEach(function (w) { reelWarnings.push(p + w); });
+    }
     errs = errs.concat(hookLinkErrors_(reel, label, fixedHook, requireHooks ? payload : null));
     if (reel && !RF_CONFIG.BRAND.PILLARS[reel.pillar]) {
       errs.push(label + ': pillar는 ' + Object.keys(RF_CONFIG.BRAND.PILLARS).join(', ') + ' 중 하나여야 합니다.');
@@ -459,7 +468,7 @@ function validateGeminiReels(payload, product, expectedCount, options) {
   });
   reelErrors.forEach(function (list) {
     list.forEach(function (e) {
-      errors.push(e);
+      otherErrors.push(e);
     });
   });
 
@@ -470,8 +479,8 @@ function validateGeminiReels(payload, product, expectedCount, options) {
     if (!reel) return;
     const h = normalizeText(reel.hook).toLowerCase();
     const c = normalizeText(reel.concept).toLowerCase();
-    if (h && seenHooks[h]) errors.push('릴스 ' + (i + 1) + ': hook이 릴스 ' + seenHooks[h] + '와 중복됩니다.');
-    if (c && seenConcepts[c]) errors.push('릴스 ' + (i + 1) + ': concept이 릴스 ' + seenConcepts[c] + '와 중복됩니다.');
+    if (h && seenHooks[h]) otherErrors.push('릴스 ' + (i + 1) + ': hook이 릴스 ' + seenHooks[h] + '와 중복됩니다.');
+    if (c && seenConcepts[c]) otherErrors.push('릴스 ' + (i + 1) + ': concept이 릴스 ' + seenConcepts[c] + '와 중복됩니다.');
     if (h) seenHooks[h] = i + 1;
     if (c) seenConcepts[c] = i + 1;
   });
@@ -482,19 +491,19 @@ function validateGeminiReels(payload, product, expectedCount, options) {
     reels.forEach(function (reel, i) {
       if (!reel) return;
       if (RF_CONFIG.ANGLES[reel.angle] && seenAngles[reel.angle]) {
-        errors.push('릴스 ' + (i + 1) + ': angle ' + reel.angle + '이 릴스 ' + seenAngles[reel.angle] + '와 같습니다. 세 릴스는 A·B·C 각도를 하나씩 써야 합니다.');
+        otherErrors.push('릴스 ' + (i + 1) + ': angle ' + reel.angle + '이 릴스 ' + seenAngles[reel.angle] + '와 같습니다. 세 릴스는 A·B·C 각도를 하나씩 써야 합니다.');
       }
       if (reel.angle) seenAngles[reel.angle] = i + 1;
       const o = hookOpening_(reel.hook);
       if (o && seenOpenings[o]) {
-        errors.push('릴스 ' + (i + 1) + ': hook이 릴스 ' + seenOpenings[o] + '와 같은 말("' + o + '")로 시작합니다. 서로 다른 첫마디로 쓰세요.');
+        otherErrors.push('릴스 ' + (i + 1) + ': hook이 릴스 ' + seenOpenings[o] + '와 같은 말("' + o + '")로 시작합니다. 서로 다른 첫마디로 쓰세요.');
       }
       if (o) seenOpenings[o] = i + 1;
     });
   }
 
   // De-duplicate identical messages (e.g. the same number repeated).
-  const unique = dedupe_(errors);
+  const unique = dedupe_(errors.concat(hs ? hs.errors : [], otherErrors));
   // The script's own first scene is the recommended hook's opening (so "keep" changes nothing).
   if (!unique.length && hookSet && reels[0] && reels[0].scenes && reels[0].scenes[0]) {
     const first = reels[0].scenes[0];
@@ -514,6 +523,12 @@ function validateGeminiReels(payload, product, expectedCount, options) {
     reelErrors: reelErrors,
     hookSet: unique.length ? null : hookSet,
     commentKeyword: normalizeText(payload.comment_keyword),
+    setErrors: hs ? hs.setErrors : [],
+    hookErrors: hs ? hs.hookErrors : {},
+    warnings: hs ? hs.warnings : {},
+    recommendedId: hs ? hs.recommendedId : '',
+    otherErrors: dedupe_(otherErrors),
+    reelWarnings: dedupe_(reelWarnings),
   };
 }
 
@@ -631,101 +646,202 @@ function supportedNumbers_(ctx) {
   return set;
 }
 
-/** Type rules for H1–H5. Returns error strings. */
-function hookTypeErrors_(id, text, ctx) {
+// Meaning cues per hook type. Any one cue is enough; a hook without one gets a style warning (never an
+// error), so Gemini and the operator are free to word a hook naturally.
+const RF_HOOK_CUES_ = {
+  // Ends like a question: "?" or an interrogative ending.
+  QUESTION: /([?？]|(까요|나요|니|냐|을까|를까|할까|는지)[.!~…]*)\s*$/,
+  // Overturns a common belief: negation, contrast, "원래/사실/굳이…".
+  MYTH: /(아니|않|안\s|없|말고|대신|오히려|사실|원래|굳이|틀렸|틀린|착각|의외|반대|보통|흔히|당연|오해|잘못|그게\s*아니|필요\s*없)/,
+  // A concrete moment: when / where / what happens.
+  SITUATION: /(때|날|마다|매일|맨날|항상|늘\s|순간|하면|살면|하는데|는데|하다가|면서|잖아요|아침|저녁|밤|주말|출근|퇴근|비\s|비가|장마|이사|손님|집에|현관|원룸|자취|방|부엌|주방|욕실|화장실|베란다|거실|들어오|나가|굴러|젖은)/,
+  // States the fix first: "~면 돼요", "그냥/바로 …", or a declarative/suggestive action verb at the end.
+  CONCLUSION_WORD: /(면\s*(돼|되|끝|해결|충분)|이\s*답|답이|정답|해결|결론|그냥|바로|이거면|하나면|이렇게|딱\s)/,
+  CONCLUSION_END: /(붙여|붙이|걸어|걸면|꽂아|꽂으|둬|두세|두면|놔|놓아|놓으|넣어|넣으|세워|달아|바꿔|바꾸|써요|쓰세|쓰면|치워|정리해|옮겨|올려|매달아|끼워|모아)(요|요\.|세요|주세요|봐요|면\s*돼요)?[.!~…]*\s*$/,
+};
+
+function isQuestionHook_(text) {
+  return RF_HOOK_CUES_.QUESTION.test(normalizeText(text));
+}
+
+/**
+ * Style warnings for the meaning of each hook type (never errors): H1 asks, H2 has a number, H3 overturns
+ * a common belief, H4 shows a concrete moment, H5 states the fix first. Judged by meaning cues, not by
+ * exact phrases ("원래 우산 자리 없어요" overturns a belief as well as "~아니에요" does).
+ */
+function hookTypeWarnings_(id, text) {
+  const t = normalizeText(text);
+  const T = RF_CONFIG.HOOK_TYPES[id];
+  const warnings = [];
+  if (!T) return warnings;
+  const q = isQuestionHook_(t);
+  if (id === 'H1') {
+    if (!q) warnings.push('질문형인데 질문처럼 들리지 않습니다. 시청자에게 묻는 말로 끝내 보세요.');
+  } else if (q) {
+    warnings.push(T.label + '인데 질문처럼 들립니다. 질문은 H1이 맡습니다.');
+  }
+  if (id === 'H2' && !hookNumbers_(t).length) warnings.push('숫자로 시작하는형인데 숫자가 없습니다 (확인된 기능의 숫자, 예: "두 조각").');
+  if (id === 'H3' && !RF_HOOK_CUES_.MYTH.test(t)) warnings.push('흔한 생각을 뒤집는 느낌이 약합니다 (예: "~아니에요", "원래 ~없어요", "굳이 ~안 해도 돼요").');
+  if (id === 'H4' && !RF_HOOK_CUES_.SITUATION.test(t)) warnings.push('언제·어디서 겪는 순간인지 잘 보이지 않습니다.');
+  if (id === 'H5' && !RF_HOOK_CUES_.CONCLUSION_WORD.test(t) && !RF_HOOK_CUES_.CONCLUSION_END.test(t)) {
+    warnings.push('해결책이 먼저 들리지 않습니다 (예: "~하면 돼요", "그냥 문에 붙여요").');
+  }
+  return warnings;
+}
+
+/**
+ * Hook style, split in two. errors: misleading wording (HOOK_STYLE.AD_PATTERNS marked hard), banned
+ * phrases and URLs — never stored. warnings: length, product name first, ad tone, repeating an earlier
+ * hook of this product — stored, shown to the operator, and may be improved by one targeted Gemini call.
+ * Messages carry no prefix. Returns { errors, warnings }.
+ */
+function hookStyleCheck_(text, product, avoidHooks) {
+  const errors = [];
+  const warnings = [];
+  const hook = normalizeText(text);
+  if (!hook) return { errors: errors, warnings: warnings };
+  const H = RF_CONFIG.HOOK_STYLE;
+  if ([...hook].length > H.MAX_CHARS) {
+    warnings.push('첫 2~3초에 말하기엔 깁니다 (' + [...hook].length + '자). ' + H.MAX_CHARS + '자 이내로 줄여 보세요.');
+  }
+  // Problem first: the hook should not open with the product.
+  const nameTokens = normalizeText(product && product.name).split(' ').filter(function (t) {
+    return [...t].length >= 2;
+  });
+  const first = hook.split(' ')[0];
+  if (nameTokens.some(function (t) { return first.indexOf(t) === 0; })) {
+    warnings.push('제품 이름으로 시작합니다. 시청자가 겪는 상황·불편으로 시작해 보세요.');
+  }
+  H.AD_PATTERNS.forEach(function (rule) {
+    if (!rule.pattern.test(hook)) return;
+    if (rule.hard) errors.push(rule.why + '은(는) 쓸 수 없습니다 (확인되지 않은 결과를 약속합니다).');
+    else warnings.push(rule.why + '입니다. 친구에게 말하듯 짧은 구어체로 바꿔 보세요.');
+  });
+  RF_CONFIG.BANNED_PHRASES.forEach(function (phrase) {
+    if (hook.indexOf(phrase) !== -1) errors.push('과장/검증 불가 표현이 포함되어 있습니다: "' + phrase + '".');
+  });
+  if (/https?:\/\/|www\.|coupang\.com|link\.coupang/i.test(hook)) errors.push('훅에 URL이 있습니다.');
+  (avoidHooks || []).forEach(function (old) {
+    if (normalizeText(old) && looseText_(old) === looseText_(hook)) {
+      warnings.push('이 상품의 기존 릴스 훅과 같습니다. 새로운 표현이면 더 좋습니다.');
+    }
+  });
+  return { errors: dedupe_(errors), warnings: dedupe_(warnings) };
+}
+
+/**
+ * Hard checks for one hook (errors block saving): verified facts and claims, numbers (H2: only numbers
+ * backed by the facts, never invented statistics), banned or misleading phrases.
+ */
+function hookHardErrors_(id, text, ctx, product) {
   const t = normalizeText(text);
   const p = '훅 ' + id + ' "' + t + '" — ';
-  const isQuestion = /[?？]\s*$/.test(t);
-  const errors = [];
-  if (id === 'H1') {
-    if (!isQuestion) errors.push(p + '질문형은 시청자에게 묻는 질문(?)으로 끝나야 합니다.');
-  } else if (isQuestion) {
-    errors.push(p + RF_CONFIG.HOOK_TYPES[id].label + '은 질문이 아니어야 합니다.');
-  }
+  const where = '훅 ' + id + ': ';
+  const errors = unsupportedClaims_(t, ctx, where, true).concat(measurementErrors_(t, ctx, where));
   if (id === 'H2') {
-    const nums = hookNumbers_(t);
     const ok = supportedNumbers_(ctx);
-    if (!nums.length) errors.push(p + '숫자로 시작하는형은 확인된 기능에 근거한 숫자가 있어야 합니다 (예: "두 조각").');
-    nums.forEach(function (n) {
+    hookNumbers_(t).forEach(function (n) {
       if (n.counter === '명' || n.counter === '%' || n.counter === '배') {
         errors.push(p + '통계·비율처럼 보이는 "' + n.token + '"는 지어낸 수치일 수 있어 쓸 수 없습니다.');
       } else if (!ok[n.value]) {
         errors.push(p + '"' + n.token + '"의 숫자 ' + n.value + '는 확인된 기능에 없습니다. 확인된 기능의 숫자만 쓰세요.');
       }
     });
+  } else {
+    extractNumbers(t).forEach(function (n) {
+      if (!ctx.allowedNumbers[n]) errors.push(where + '확인된 기능에 없는 수치가 포함되어 있습니다: "' + n + '".');
+    });
   }
-  if (id === 'H3' && !/(아니에요|아니라|아닙니다|아니죠|말고|오히려|사실은|착각|필요\s*없|안\s*해도|틀렸)/.test(t)) {
-    errors.push(p + '통념을 뒤집는 단정형은 흔한 생각을 뒤집는 말("~아니에요", "~말고")이 있어야 합니다.');
-  }
-  if (id === 'H4' && !/(때|날|마다|하면|하는데|하다가|면서|아침|저녁|밤|출근|퇴근|비\s|이사|손님|집에|현관|원룸|자취|방|부엌|욕실|베란다)/.test(t)) {
-    errors.push(p + '상황 묘사형은 언제·어디서 겪는 순간인지 보여야 합니다.');
-  }
-  if (id === 'H5' && !/(면\s*돼요|면\s*끝|면\s*돼|이\s*답|정답|해결|두면|붙이면|쓰면|바꾸면|결론)/.test(t)) {
-    errors.push(p + '결론 먼저 던지는형은 해결책을 먼저 말해야 합니다 ("~하면 돼요").');
-  }
+  hookStyleCheck_(t, product, []).errors.forEach(function (e) {
+    errors.push(p + e);
+  });
   return errors;
 }
 
 /**
- * The five hooks: exactly H1–H5 once each, type rules, hook style (≤ 25 chars, problem-first, no ad
- * tone), verified facts/numbers only, distinct, not repeating this product's earlier hooks, and a
- * recommended hook with a reason. Returns { errors, hookSet }.
+ * Style warnings for one hook text (type meaning + style), e.g. for a hook the operator edited.
+ * Never blocks anything. Returns warning strings without prefix.
+ */
+function hookWarnings(id, text, product, avoidHooks) {
+  if (!normalizeText(text)) return [];
+  return dedupe_(hookTypeWarnings_(id, text).concat(hookStyleCheck_(text, product, avoidHooks).warnings));
+}
+
+/**
+ * The five hooks. Hard errors (block saving): exactly H1–H5 once each with the right type, non-empty
+ * text, verified facts / numbers / claims only, no banned or misleading phrases, each with its opening
+ * scene, no two hooks identical, a recommended hook with a reason. Style warnings (do not block): length,
+ * ad tone, product name first, weak fit to the hook type, the same first words as another hook, repeating
+ * an earlier hook of this product.
+ * Returns { errors, setErrors, hookErrors: {id: [...]}, warnings: {id: [...]}, recommendedId, hookSet }
+ * (errors = setErrors + every hookErrors entry; hookSet only when there are no errors).
  */
 function validateHookSet(payload, product, avoidHooks) {
-  const errors = [];
+  const setErrors = [];
+  const hookErrors = {};
+  const warnings = {};
   const ctx = factContext_(product);
   const T = RF_CONFIG.HOOK_TYPES;
   const ids = Object.keys(T);
   const hooks = Array.isArray(payload && payload.hooks) ? payload.hooks : [];
-  if (hooks.length !== ids.length) errors.push('hooks는 정확히 ' + ids.length + '개(H1~H5)여야 합니다 (받은 개수: ' + hooks.length + ').');
+  if (hooks.length !== ids.length) setErrors.push('hooks는 정확히 ' + ids.length + '개(H1~H5)여야 합니다 (받은 개수: ' + hooks.length + ').');
   const byId = {};
   hooks.forEach(function (h) {
     if (!h || !T[h.id]) {
-      errors.push('hooks의 id는 ' + ids.join(', ') + ' 중 하나여야 합니다: ' + JSON.stringify(h && h.id));
+      setErrors.push('hooks의 id는 ' + ids.join(', ') + ' 중 하나여야 합니다: ' + JSON.stringify(h && h.id));
       return;
     }
-    if (byId[h.id]) errors.push('훅 ' + h.id + '가 두 번 있습니다.');
+    if (byId[h.id]) setErrors.push('훅 ' + h.id + '가 두 번 있습니다.');
     byId[h.id] = h;
-    if (h.type && h.type !== T[h.id].type) errors.push('훅 ' + h.id + '의 type은 ' + T[h.id].type + '이어야 합니다.');
+    if (h.type && h.type !== T[h.id].type) setErrors.push('훅 ' + h.id + '의 type은 ' + T[h.id].type + '이어야 합니다.');
   });
   const seenText = {};
   const seenOpen = {};
   ids.forEach(function (id) {
     const h = byId[id];
     if (!h) {
-      if (hooks.length === ids.length) errors.push('훅 ' + id + ' (' + T[id].label + ')이 없습니다.');
+      if (hooks.length === ids.length) setErrors.push('훅 ' + id + ' (' + T[id].label + ')이 없습니다.');
       return;
     }
+    const errs = (hookErrors[id] = []);
+    const warns = (warnings[id] = []);
     const text = normalizeText(h.text);
-    if (!text) return errors.push('훅 ' + id + '의 text가 비어 있습니다.');
-    hookStyleErrors_({ hook: text }, product, '훅 ' + id, avoidHooks).forEach(function (e) {
-      errors.push(e);
+    if (!text) {
+      errs.push('훅 ' + id + '의 text가 비어 있습니다.');
+      return;
+    }
+    hookHardErrors_(id, text, ctx, product).forEach(function (e) {
+      errs.push(e);
     });
-    hookTypeErrors_(id, text, ctx).forEach(function (e) {
-      errors.push(e);
-    });
-    const where = '훅 ' + id + ': ';
-    unsupportedClaims_(text, ctx, where, true).concat(measurementErrors_(text, ctx, where)).forEach(function (e) {
-      errors.push(e);
-    });
-    extractNumbers(text).forEach(function (n) {
-      if (!ctx.allowedNumbers[n] && id !== 'H2') errors.push(where + '확인된 기능에 없는 수치가 포함되어 있습니다: "' + n + '".');
+    hookWarnings(id, text, product, avoidHooks).forEach(function (w) {
+      warns.push(w);
     });
     // Its opening scene (scene 1 when this hook is chosen).
-    if (!normalizeText(h.visual)) errors.push('훅 ' + id + ': visual(이 훅으로 시작할 때 첫 장면 연출)이 비어 있습니다.');
+    if (!normalizeText(h.visual)) errs.push('훅 ' + id + ': visual(이 훅으로 시작할 때 첫 장면 연출)이 비어 있습니다.');
     if (normalizeText(h.flow_prompt).length < RF_CONFIG.LIMITS.MIN_FLOW_PROMPT_CHARS) {
-      errors.push('훅 ' + id + ': flow_prompt(첫 장면 Google Flow 프롬프트)가 비어 있거나 너무 짧습니다.');
+      errs.push('훅 ' + id + ': flow_prompt(첫 장면 Google Flow 프롬프트)가 비어 있거나 너무 짧습니다.');
     }
     const key = looseText_(text);
-    if (seenText[key]) errors.push('훅 ' + id + '가 ' + seenText[key] + '와 같습니다.');
-    seenText[key] = id;
+    if (seenText[key]) errs.push('훅 ' + id + '가 ' + seenText[key] + '와 같습니다. 다섯 훅은 서로 달라야 합니다.');
+    else seenText[key] = id;
     const o = hookOpening_(text);
-    if (o && seenOpen[o]) errors.push('훅 ' + id + '가 ' + seenOpen[o] + '와 같은 말("' + o + '")로 시작합니다. 다섯 훅은 서로 달라야 합니다.');
-    if (o) seenOpen[o] = id;
+    if (o && seenOpen[o]) warns.push(seenOpen[o] + '와 같은 말("' + o + '")로 시작합니다. 첫마디를 다르게 하면 더 좋습니다.');
+    if (o && !seenOpen[o]) seenOpen[o] = id;
   });
   const rec = payload && payload.recommended_hook;
-  if (!rec || !byId[rec.id]) errors.push('recommended_hook.id는 H1~H5 중 하나여야 합니다.');
-  else if (!normalizeText(rec.reason)) errors.push('recommended_hook.reason(추천 이유)이 비어 있습니다.');
+  if (!rec || !byId[rec.id]) setErrors.push('recommended_hook.id는 H1~H5 중 하나여야 합니다.');
+  else if (!normalizeText(rec.reason)) setErrors.push('recommended_hook.reason(추천 이유)이 비어 있습니다.');
+  Object.keys(hookErrors).forEach(function (id) {
+    hookErrors[id] = dedupe_(hookErrors[id]);
+  });
+  Object.keys(warnings).forEach(function (id) {
+    warnings[id] = dedupe_(warnings[id]);
+  });
+  let errors = setErrors.slice();
+  ids.forEach(function (id) {
+    errors = errors.concat(hookErrors[id] || []);
+  });
+  errors = dedupe_(errors);
   const hookSet = errors.length ? null : {
     hooks: ids.map(function (id) {
       const h = byId[id];
@@ -737,7 +853,100 @@ function validateHookSet(payload, product, avoidHooks) {
     }),
     recommended: { id: rec.id, reason: normalizeText(rec.reason) },
   };
-  return { errors: dedupe_(errors), hookSet: hookSet };
+  return {
+    errors: errors,
+    setErrors: dedupe_(setErrors),
+    hookErrors: hookErrors,
+    warnings: warnings,
+    recommendedId: rec && byId[rec.id] ? rec.id : '',
+    hookSet: hookSet,
+  };
+}
+
+/** Style warnings of a stored hook set (REELS "훅 후보(JSON)"), per hook id, for the dashboard. */
+function hookSetWarnings(set, product, avoidHooks) {
+  if (!set || !Array.isArray(set.hooks) || !set.hooks.length) return {};
+  return validateHookSet({ hooks: set.hooks, recommended_hook: set.recommended }, product, avoidHooks).warnings;
+}
+
+function warningCount_(v, id) {
+  return ((v.warnings && v.warnings[id]) || []).length;
+}
+
+/**
+ * Which hooks one targeted Gemini call should rewrite, instead of regenerating everything:
+ * hooks with hard errors, plus (includeWeak) hooks with style warnings. The recommended hook is never
+ * rewritten automatically (the script starts with it). Returns null when a targeted rewrite cannot
+ * help: a set-level or script error, or a hard error on the recommended hook (→ full retry).
+ * v: validateHookSet / validateGeminiReels result. Returns { ids, problems: {id: [...]}, hard } or null.
+ */
+function hookRevisionPlan(v, includeWeak) {
+  if (!v || !v.hookErrors || (v.setErrors || []).length || (v.otherErrors || []).length) return null;
+  const rec = v.recommendedId;
+  if (!rec || (v.hookErrors[rec] || []).length) return null;
+  const ids = [];
+  const problems = {};
+  let hard = false;
+  Object.keys(RF_CONFIG.HOOK_TYPES).forEach(function (id) {
+    if (id === rec) return;
+    const errs = v.hookErrors[id] || [];
+    const warns = includeWeak ? (v.warnings && v.warnings[id]) || [] : [];
+    if (!errs.length && !warns.length) return;
+    if (errs.length) hard = true;
+    ids.push(id);
+    problems[id] = errs.concat(warns);
+  });
+  return { ids: ids, problems: problems, hard: hard };
+}
+
+/**
+ * Merges rewritten hooks (revised.hooks, ids in targetIds only) into payload, one hook at a time. A
+ * rewrite is taken when it has no hard errors and (the old hook had hard errors, or it has fewer style
+ * warnings — opts.operator: no more warnings) without adding errors elsewhere in the set. Everything
+ * else (other hooks, recommendation, script) is unchanged.
+ * Returns { payload, revised: [ids], kept: [ids] }.
+ */
+function mergeHookRevisions(payload, revised, product, avoidHooks, targetIds, opts) {
+  let base = JSON.parse(JSON.stringify(payload || {}));
+  let before = validateHookSet(base, product, avoidHooks);
+  const out = { payload: base, revised: [], kept: [] };
+  const list = Array.isArray(revised && revised.hooks) ? revised.hooks : [];
+  (targetIds || []).forEach(function (id) {
+    const r = list.filter(function (h) {
+      return h && h.id === id;
+    })[0];
+    const idx = (base.hooks || []).map(function (h) { return h && h.id; }).indexOf(id);
+    if (!r || idx === -1 || !normalizeText(r.text)) {
+      out.kept.push(id);
+      return;
+    }
+    const old = base.hooks[idx];
+    const cand = JSON.parse(JSON.stringify(base));
+    cand.hooks[idx] = {
+      id: id,
+      type: RF_CONFIG.HOOK_TYPES[id].type,
+      text: normalizeText(r.text),
+      visual: normalizeText(r.visual) || old.visual,
+      flow_prompt: normalizeText(r.flow_prompt) || old.flow_prompt,
+      emphasis: normalizeText(r.emphasis) || old.emphasis || '',
+      sfx: r.sfx == null ? old.sfx || '' : normalizeText(r.sfx),
+    };
+    const after = validateHookSet(cand, product, avoidHooks);
+    const hadErrors = (before.hookErrors[id] || []).length > 0;
+    const clean = !(after.hookErrors[id] || []).length &&
+      after.errors.length <= before.errors.length - (before.hookErrors[id] || []).length;
+    const better = hadErrors ||
+      (opts && opts.operator ? warningCount_(after, id) <= warningCount_(before, id) : warningCount_(after, id) < warningCount_(before, id));
+    if (clean && better && normalizeText(r.text) !== normalizeText(old.text)) {
+      base = cand;
+      before = after;
+      out.revised.push(id);
+    } else {
+      out.kept.push(id);
+    }
+  });
+  out.payload = base;
+  return out;
 }
 
 function dedupe_(list) {
@@ -926,39 +1135,6 @@ function formatVerificationFlags(flags) {
 /** The first two words of a hook, for spotting three reels that open the same way. */
 function hookOpening_(hook) {
   return normalizeText(hook).replace(/[^\s가-힣A-Za-z0-9]/g, '').split(' ').slice(0, 2).join(' ');
-}
-
-/**
- * Hook style for new Gemini scripts: short, starts from a relatable problem, not an ad.
- * Not applied to reviewer edits (the reviewer decides). Returns error strings with a fix.
- */
-function hookStyleErrors_(reel, product, label, avoidHooks) {
-  const errors = [];
-  const hook = normalizeText(reel && reel.hook);
-  if (!hook) return errors;
-  const H = RF_CONFIG.HOOK_STYLE;
-  const p = label + ': hook "' + hook + '" — ';
-  const fix = ' 시청자가 겪는 구체적인 불편·상황으로 시작하는 짧은 구어체로 다시 쓰세요 (예: "급하게 출근하면 꼭 까먹는 우산!").';
-  if ([...hook].length > H.MAX_CHARS) {
-    errors.push(p + '첫 2~3초에 말할 수 있게 ' + H.MAX_CHARS + '자 이내여야 합니다.');
-  }
-  // Problem first: the hook must not open with the product.
-  const nameTokens = normalizeText(product && product.name).split(' ').filter(function (t) {
-    return [...t].length >= 2;
-  });
-  const first = hook.split(' ')[0];
-  if (nameTokens.some(function (t) { return first.indexOf(t) === 0; })) {
-    errors.push(p + '제품 이름으로 시작합니다. 제품이 아니라 상황·불편으로 시작하세요.' + fix);
-  }
-  H.AD_PATTERNS.forEach(function (rule) {
-    if (rule.pattern.test(hook)) errors.push(p + rule.why + '입니다.' + fix);
-  });
-  (avoidHooks || []).forEach(function (old) {
-    if (normalizeText(old) && looseText_(old) === looseText_(hook)) {
-      errors.push(p + '이 상품의 기존 릴스 hook과 같습니다. 새로운 hook을 쓰세요.');
-    }
-  });
-  return errors;
 }
 
 /** Finds duplicate values in a list (ignoring blanks). */
