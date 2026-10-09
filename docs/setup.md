@@ -34,7 +34,7 @@ The code lives in the Apps Script project. Your data lives in the sheets. Replac
 3. In the left panel, click the file `ReelsFactory` (the one you pasted before). **Do not delete the project, and do not create a second copy of the code.** Two files defining the same functions would conflict.
 4. Click inside the code, press **⌘A** (Mac) or **Ctrl+A**, and then **Delete**. The file is now empty.
 5. Open [`dist/ReelsFactory.gs`](../dist/ReelsFactory.gs) on GitHub (on the `main` branch after the PR is merged, or on the PR's branch to try it first). Click **Copy raw file**, paste it into the empty file, and click **💾 Save**.
-   - To check you have the new code, run **릴스 팩토리 → 코드 버전 확인** after step 7. It shows the version (e.g. `2026-10-09 · five-hooks 2`).
+   - To check you have the new code, run **릴스 팩토리 → 코드 버전 확인** after step 7. It shows the version (e.g. `2026-10-09 · hook-check 3`).
    - Always copy from the **`main`** branch after the PR is merged. A PR merged into another branch does not reach `main`.
 6. The iPhone dashboard page is inside this same file, so there is nothing else to paste. Leave any other files in the project as they are.
 7. Reload the spreadsheet tab. In the **릴스 팩토리** menu:

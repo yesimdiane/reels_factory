@@ -125,22 +125,80 @@ function promptForGeminiApiKey() {
 }
 
 /**
- * Generates up to MAX_GEMINI_ATTEMPTS Gemini responses until one passes validation,
- * then returns { records, attempts }. Throws with all validation errors otherwise.
+ * One targeted Gemini call that rewrites only plan.ids of the five hooks (see hookRevisionPlan) and
+ * merges each rewrite only if it is better (mergeHookRevisions). Returns the merge result
+ * { payload, revised, kept }, or null if the call failed (the caller keeps what it had).
+ */
+function reviseHooks_(product, payload, plan, avoidHooks, source, opts) {
+  let raw = '';
+  try {
+    raw = callGemini_(buildHookRevisionPrompt(product, payload, plan, avoidHooks), hookRevisionSchema(plan.ids));
+  } catch (e) {
+    logEvent_('WARN', source, product.id, '훅 ' + plan.ids.join(', ') + ' 다듬기 호출 실패 — 기존 훅을 유지합니다.', String(e && e.message || e));
+    return null;
+  }
+  const parsed = parseModelJson(raw);
+  if (parsed.error) {
+    logEvent_('WARN', source, product.id, '훅 다듬기 응답을 읽을 수 없습니다 — 기존 훅을 유지합니다.', parsed.error + '\n\n--- 원본 응답 ---\n' + raw);
+    return null;
+  }
+  const merged = mergeHookRevisions(payload, parsed.value, product, avoidHooks, plan.ids, opts);
+  logEvent_('INFO', source, product.id,
+    '훅만 다듬기 (Gemini 1회): ' + (merged.revised.length ? merged.revised.join(', ') + ' 반영' : '반영 없음') +
+      (merged.kept.length ? ' · ' + merged.kept.join(', ') + ' 유지' : ''),
+    Object.keys(plan.problems).map(function (id) { return id + ': ' + plan.problems[id].join(' / '); }).join('\n') + '\n\n--- 원본 응답 ---\n' + raw);
+  return merged;
+}
+
+/**
+ * Generates the five hooks and the script with as few Gemini calls as possible, then returns
+ * { records, attempts, calls }. Throws with all validation errors otherwise.
+ *  - Hook style issues are warnings, not failures: a safe hook with a warning is kept for the operator.
+ *  - When only some non-recommended hooks have problems, one targeted call rewrites just those hooks
+ *    (hard errors always; style warnings when HOOK_STYLE.AUTO_REVISE_WEAK) instead of regenerating all.
+ *  - A full corrective retry happens only for script / set errors or a hard error on the recommended hook.
+ *  - Never more than MAX_GEMINI_CALLS_PER_RUN calls.
  */
 function generateValidatedRecords_(product, existingIds, existingKeywords, previousHooks) {
   const vopts = { avoidHooks: previousHooks || [] };
+  const maxCalls = RF_CONFIG.MAX_GEMINI_CALLS_PER_RUN || RF_CONFIG.MAX_GEMINI_ATTEMPTS;
+  let calls = 0;
   let lastErrors = [];
   let lastRaw = '';
   const attempts = [];
   const meta = function () {
     return { model: RF_GEMINI_STATE.lastModel || getGeminiModel(), generatedAt: new Date() };
   };
-  for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= RF_CONFIG.MAX_GEMINI_ATTEMPTS && calls < maxCalls; attempt++) {
     // A retry gets the exact failing claims and the previous response, so Gemini fixes only those.
-    const raw = callGemini_(buildGeminiPrompt(product, lastErrors, lastRaw, vopts.avoidHooks));
-    const result = prepareReelRecords(product, raw, existingIds, existingKeywords, meta(), vopts);
-    if (!result.errors.length) return { records: result.records, attempts: attempt };
+    let raw = callGemini_(buildGeminiPrompt(product, lastErrors, lastRaw, vopts.avoidHooks));
+    calls++;
+    let result = prepareReelRecords(product, raw, existingIds, existingKeywords, meta(), vopts);
+    // Only some hooks need work → rewrite just those hooks (one call), keep everything else.
+    const plan = hookRevisionPlan(result.validation, RF_CONFIG.HOOK_STYLE.AUTO_REVISE_WEAK);
+    if (plan && plan.ids.length && calls < maxCalls) {
+      calls++;
+      const merged = reviseHooks_(product, result.payload, plan, vopts.avoidHooks, 'validateGemini');
+      if (merged && merged.revised.length) {
+        const mergedRaw = JSON.stringify(merged.payload);
+        const again = prepareReelRecords(product, mergedRaw, existingIds, existingKeywords, meta(), vopts);
+        // Use the rewrite when it passes; a passing original is never replaced by a failing merge.
+        if (!again.errors.length || result.errors.length) {
+          result = again;
+          raw = mergedRaw;
+        }
+      }
+    }
+    if (!result.errors.length) {
+      const warned = Object.keys(result.validation.warnings || {}).filter(function (id) {
+        return result.validation.warnings[id].length;
+      });
+      if (warned.length) {
+        logEvent_('INFO', 'validateGemini', product.id, '스타일 경고가 있는 훅 ' + warned.join(', ') + ' — 대시보드에 표시, 운영자가 판단합니다.',
+          warned.map(function (id) { return id + ': ' + result.validation.warnings[id].join(' / '); }).join('\n'));
+      }
+      return { records: result.records, attempts: attempt, calls: calls };
+    }
     attempts.push(result.attempt);
     lastErrors = result.errors;
     lastRaw = raw;
@@ -155,11 +213,11 @@ function generateValidatedRecords_(product, existingIds, existingKeywords, previ
     const combined = attempts.length > 1 ? combineValidReels(attempts, product, null, vopts) : null;
     if (combined) {
       logEvent_('INFO', 'validateGemini', product.id, '시도별로 검증을 통과한 대본을 합쳐 사용합니다 (추가 호출 없음).', '');
-      return { records: buildReelRecords(product, combined.reels, existingIds, existingKeywords, meta()), attempts: attempt };
+      return { records: buildReelRecords(product, combined.reels, existingIds, existingKeywords, meta()), attempts: attempt, calls: calls };
     }
   }
   throw new Error(
-    'Gemini 응답이 ' + RF_CONFIG.MAX_GEMINI_ATTEMPTS + '회 모두 검증에 실패했습니다. REELS에는 아무것도 기록하지 않았습니다.\n' +
+    'Gemini 응답이 검증에 실패했습니다 (Gemini 호출 ' + calls + '회). REELS에는 아무것도 기록하지 않았습니다.\n' +
       '자세한 내용은 LOG 시트를 확인하세요.\n\n- ' + lastErrors.slice(0, 8).join('\n- ')
   );
 }
