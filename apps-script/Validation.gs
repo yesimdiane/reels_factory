@@ -197,12 +197,13 @@ const RF_COLOR_GROUPS_ = [
  * compatibility, performance, material, price, reviews, certifications, colours. A term that also
  * appears in the verified facts (or product name) is allowed. Returns error strings.
  */
-function unsupportedClaims_(text, ctx, where) {
+function unsupportedClaims_(text, ctx, where, generated) {
   const errors = [];
   const t = normalizeText(text);
   if (!t) return errors;
   const hint = ' — "' + t + '". 확인된 기능(' + factId(0) + '~' + factId(Math.max(0, ctx.facts.length - 1)) + ')에 없는 내용이니 빼거나 확인된 기능만으로 다시 쓰세요.';
   RF_CONFIG.CLAIM_RULES.forEach(function (rule) {
+    if (rule.generatedOnly && !generated) return; // a reviewer's real experience → verification flag instead
     const re = new RegExp(rule.pattern.source, 'g');
     let m;
     while ((m = re.exec(t))) {
@@ -388,7 +389,7 @@ function validateReelContent(reel, product, label, options) {
 
   labelledViewerTexts_(reel).forEach(function (x) {
     const where = p + x.where + ': ';
-    unsupportedClaims_(x.text, ctx, where).concat(measurementErrors_(x.text, ctx, where)).forEach(function (e) {
+    unsupportedClaims_(x.text, ctx, where, options && options.generated).concat(measurementErrors_(x.text, ctx, where)).forEach(function (e) {
       errors.push(e);
     });
   });
@@ -427,8 +428,11 @@ function validateGeminiReels(payload, product, expectedCount, options) {
   }
   const reelErrors = reels.map(function (reel, i) {
     const label = '릴스 ' + (i + 1);
-    const opts = { requireStoryboard: true, requireFactRefs: true, newStructure: true };
+    const opts = { requireStoryboard: true, requireFactRefs: true, newStructure: true, generated: true };
     const errs = validateReelContent(reel, product, label, opts).concat(hookStyleErrors_(reel, product, label, avoidHooks));
+    if (reel && !RF_CONFIG.BRAND.PILLARS[reel.pillar]) {
+      errs.push(label + ': pillar는 ' + Object.keys(RF_CONFIG.BRAND.PILLARS).join(', ') + ' 중 하나여야 합니다.');
+    }
     if (count > 1 && reel && !RF_CONFIG.ANGLES[reel.angle]) {
       errs.push(label + ': angle은 ' + Object.keys(RF_CONFIG.ANGLES).join(', ') + ' 중 하나여야 합니다.');
     }
@@ -499,6 +503,7 @@ function canonicalReel_(reel, product) {
   const angleLabel = RF_CONFIG.ANGLES[out.angle];
   if (angleLabel && normalizeText(out.concept).indexOf(angleLabel) !== 0) out.concept = angleLabel + ' · ' + normalizeText(out.concept);
   delete out.angle;
+  applyAiLabel_(out);
   const used = [];
   const add = function (ref) {
     const i = resolveFactRef_(ref, ctx);
@@ -582,6 +587,83 @@ function storyboardErrors_(scenes, newStructure) {
     errors.push('CTA 내레이션에 댓글 키워드 자리 "' + RF_CONFIG.KEYWORD_PLACEHOLDER + '"가 필요합니다.');
   }
   return errors;
+}
+
+/** Content pillar id from a stored label or id ('생활 꿀템 발견' or 'PRODUCT_DISCOVERY'), or ''. */
+function pillarIdOf(value) {
+  const v = normalizeText(value);
+  if (!v) return '';
+  const P = RF_CONFIG.BRAND.PILLARS;
+  if (P[v]) return v;
+  const ids = Object.keys(P).filter(function (id) {
+    return looseText_(P[id].label) === looseText_(v);
+  });
+  return ids[0] || '';
+}
+
+function pillarLabel(id) {
+  const p = RF_CONFIG.BRAND.PILLARS[id];
+  return p ? p.label : '';
+}
+
+/** Scenes that show an AI visualization carry the on-screen label "AI 시뮬레이션" (renderer burns it in). */
+function applyAiLabel_(reel) {
+  const label = RF_CONFIG.BRAND.AI_LABEL;
+  (Array.isArray(reel.scenes) ? reel.scenes : []).forEach(function (s) {
+    if (!s) return;
+    if (s.ai_visualization === true) {
+      if (normalizeText(s.on_screen_text).indexOf(label) === -1) s.on_screen_text = normalizeText(label + ' ' + normalizeText(s.on_screen_text));
+    } else {
+      delete s.ai_visualization;
+    }
+  });
+  return reel;
+}
+
+/**
+ * Things the operator must confirm are real before approving: personal experience, product tests,
+ * international-couple stories, before/after results, comparisons, AI visualizations. Detected in the
+ * script text and from the content pillar. Returns [{ type, ask, where, text }] (deduplicated by type+where).
+ */
+function verificationFlags(reel, pillarId) {
+  const flags = [];
+  const seen = {};
+  const add = function (type, ask, where, text) {
+    const k = type + '|' + where;
+    if (seen[k]) return;
+    seen[k] = true;
+    flags.push({ type: type, ask: ask, where: where, text: text || '' });
+  };
+  if (!reel) return flags;
+  const texts = [{ where: 'hook', text: reel.hook }];
+  (Array.isArray(reel.scenes) ? reel.scenes : []).forEach(function (s, i) {
+    if (s) texts.push({ where: '장면 ' + (i + 1), text: s.narration }, { where: '장면 ' + (i + 1) + ' 화면', text: s.on_screen_text });
+  });
+  if (!(reel.scenes || []).some(function (s) { return s && s.narration; })) texts.push({ where: 'narration', text: reel.narration });
+  texts.forEach(function (x) {
+    const t = normalizeText(x.text);
+    if (!t) return;
+    RF_CONFIG.VERIFICATION_RULES.forEach(function (rule) {
+      const m = t.match(rule.pattern);
+      if (m) add(rule.type, rule.ask, x.where.replace(/ 화면$/, ''), '"' + t + '"');
+    });
+  });
+  if (pillarId === 'INTL_COUPLE') add('국제부부 이야기', RF_CONFIG.VERIFICATION_RULES[2].ask, '콘텐츠 기둥', pillarLabel(pillarId));
+  if (pillarId === 'COMPARE') add('비교', RF_CONFIG.VERIFICATION_RULES[4].ask, '콘텐츠 기둥', pillarLabel(pillarId));
+  const aiScenes = (reel.scenes || []).map(function (s, i) {
+    return s && s.ai_visualization === true ? i + 1 : 0;
+  }).filter(Boolean);
+  if (aiScenes.length || pillarId === 'AI_MAKEOVER') {
+    add('AI 시뮬레이션', '영상에 "' + RF_CONFIG.BRAND.AI_LABEL + '" 표시가 보이는지, 실제 제품 장면과 구분되는지 확인', aiScenes.length ? '장면 ' + aiScenes.join(', ') : '콘텐츠 기둥', '');
+  }
+  return flags;
+}
+
+/** One line per flag, for the REELS "확인 필요" column. */
+function formatVerificationFlags(flags) {
+  return flags.map(function (f) {
+    return '[' + f.type + '] ' + f.where + ': ' + f.ask + (f.text ? ' — ' + f.text : '');
+  }).join('\n');
 }
 
 /** The first two words of a hook, for spotting three reels that open the same way. */

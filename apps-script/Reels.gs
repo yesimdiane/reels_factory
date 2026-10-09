@@ -108,6 +108,17 @@ function buildReelRecords(product, reels, existingIds, existingKeywords, meta) {
     Object.keys(cells).forEach(function (k) {
       record[k] = cells[k];
     });
+    // Optional columns (written only where 시트 준비 has added them).
+    record['콘텐츠 기둥'] = pillarLabel(reel.pillar);
+    const flags = formatVerificationFlags(verificationFlags(reel, reel.pillar));
+    const asked = (Array.isArray(reel.needs_verification) ? reel.needs_verification : []).map(function (x) {
+      return '[Gemini 요청] ' + normalizeText(x);
+    }).filter(function (x) {
+      return x.length > 13;
+    });
+    record['확인 필요'] = [flags].concat(asked).filter(Boolean).join('\n');
+    if (record['확인 필요']) notes.push('확인 필요 항목이 있습니다 — 승인 전에 확인하세요.');
+    record['검토 메모'] = notes.join(' ');
     return record;
   });
 }

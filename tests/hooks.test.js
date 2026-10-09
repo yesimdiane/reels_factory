@@ -115,14 +115,14 @@ test('the prompt asks for the account style: three angles, structure, good and b
   const { env, product } = setup();
   const prompt = env.gs('buildGeminiPrompt')(product, [], '', ['예전 hook 하나']);
   for (const s of [
-    '한국 홈데코, 작은 집·원룸 살이, 정리 수납',
+    '서울에서 집꾸미기', '우리 집에 들이기 전에, 먼저 보여드릴게요.',
     '라이프스타일 크리에이터',
     'EVERYDAY_FRUSTRATION (A 일상 불편)', 'SMALL_SPACE (B 좁은 공간)', 'LIFESTYLE_SITUATION (C 생활 상황)',
-    'HOOK(공감 가는 불편·상황, 2~3초) → EMPATHY(왜 짜증 나는지) → SOLUTION(제품을 자연스럽게 등장) → DEMO(확인된 기능 시연) → CTA(댓글 키워드)',
+    'PROBLEM → EMPATHY → SOLUTION → DEMONSTRATION → CTA',
     '나쁜 예: "현관이 좁아 우산 둘 곳이 없다면?", "우산꽂이 하나로 현관이 달라집니다."',
-    '좋은 예: "급하게 출근하면 꼭 까먹는 우산!"',
+    '좋은 예: "급하게 출근할 때마다 우산 깜빡하는 사람?"',
     '25자 이내', '첫 2초',
-    '경험담·사용 결과를 지어내지 마세요',
+    '경험담·구매·테스트·남편 반응·전후 결과를 지어내지 마세요',
     '## 이 상품에 이미 쓴 hook', '- 예전 hook 하나',
   ]) assert.ok(prompt.includes(s), s);
   const schema = plain(env.gs('RF_GEMINI_RESPONSE_SCHEMA'));
@@ -174,19 +174,24 @@ test('older scripts and reviewer edits keep working: old structure approves, hoo
     return call('apiAction', id, name, Object.assign({ expectedStatus: d.summary.status, expectedScriptVersion: d.summary.scriptVersion, expectedVideoVersion: d.summary.videoVersion }, input));
   };
   const before = JSON.stringify(env.sheets.REELS.rows.slice(0, 4));
-  const approved = act('PRD-001-R04', 'APPROVE_SCRIPT');
+  // Its "저는 …" line is flagged as a personal experience: confirmed by the reviewer at approval.
+  assert.match(act('PRD-001-R04', 'APPROVE_SCRIPT').error, /\[개인 경험\] 장면 2/);
+  const approved = act('PRD-001-R04', 'APPROVE_SCRIPT', { flagsConfirmed: true });
   assert.equal(approved.ok, true, approved.error);
   assert.equal(JSON.stringify(env.sheets.REELS.rows.slice(0, 4)), before, 'other rows untouched');
   // The reviewer may keep or write any hook they want (only fact rules apply to edits).
   const edited = act('PRD-001-R01', 'EDIT_SCRIPT', { edit: { hook: '현관 우산 정리, 어떻게 하시나요?' } });
   assert.equal(edited.ok, true, edited.error);
-  const refused = act('PRD-001-R02', 'EDIT_SCRIPT', { edit: { hook: '한 달 써 보니 현관이 넓어졌어요' } });
-  assert.equal(refused.ok, false);
-  assert.match(refused.error, /체험·결과 주장/);
+  // A reviewer's own experience line is allowed in an edit but must be confirmed before approval.
+  const own = act('PRD-001-R02', 'EDIT_SCRIPT', { edit: { hook: '한 달 써 보니 현관이 넓어졌어요' } });
+  assert.equal(own.ok, true, own.error);
+  assert.match(own.detail.verificationFlags.join('\n'), /\[개인 경험\] hook/);
+  assert.match(act('PRD-001-R02', 'APPROVE_SCRIPT').error, /확인 필요 항목/);
+  assert.equal(act('PRD-001-R02', 'APPROVE_SCRIPT', { flagsConfirmed: true }).ok, true);
   // New-style scripts approve and produce one Flow prompt per scene; no render job before approval.
-  assert.equal(call('apiGetRenderJob', 'PRD-001-R02').ok, false);
-  assert.equal(act('PRD-001-R02', 'APPROVE_SCRIPT').ok, true);
-  const flow = JSON.parse(env.sheets.REELS.rows[2][env.sheets.REELS.rows[0].indexOf('Flow 장면 프롬프트')]);
+  assert.equal(call('apiGetRenderJob', 'PRD-001-R03').ok, false);
+  assert.equal(act('PRD-001-R03', 'APPROVE_SCRIPT').ok, true);
+  const flow = JSON.parse(env.sheets.REELS.rows[3][env.sheets.REELS.rows[0].indexOf('Flow 장면 프롬프트')]);
   assert.deepEqual(flow.map((p) => p.beat), ['HOOK', 'EMPATHY', 'SOLUTION', 'DEMO', 'CTA']);
   assert.match(flow[2].prompt, /product comes into frame naturally/);
 });

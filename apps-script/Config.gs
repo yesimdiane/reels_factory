@@ -6,6 +6,30 @@
  */
 
 const RF_CONFIG = {
+  // Instagram brand. Used in the Gemini prompt and shown in the dashboard; edit here to reuse the
+  // factory for another account. See docs/brand.md.
+  BRAND: {
+    NAME: '서울에서 집꾸미기',
+    POSITIONING: '작은 집을 불필요한 소비 없이 예쁘고, 실용적이고, 편안하게 만드는 법을 보여 주는 한국 홈&리빙 계정',
+    TAGLINE: '우리 집에 들이기 전에, 먼저 보여드릴게요.',
+    PERSONALITY: '자연스럽고, 공감 가고, 실용적이고, 따뜻한 대화체. 뻔한 판매 멘트는 쓰지 않음.',
+    DIFFERENTIATORS: [
+      'AI 인테리어 시뮬레이션 (항상 "AI 시뮬레이션"으로 표시)',
+      '실제로 쓸모 있는 생활용품',
+      '서울에 사는 한국인 아내와 외국인 남편의 진짜 이야기 (가끔, 실제 있었던 일만)',
+    ],
+    // Editorial planning targets (share of all reels), not a rule for every product.
+    PILLARS: {
+      AI_MAKEOVER: { label: 'AI 공간 변신', target: 35, hint: 'AI로 공간이 어떻게 바뀔지 미리 보여 주기. AI 장면은 반드시 ai_visualization=true ("AI 시뮬레이션" 표시).' },
+      PRODUCT_DISCOVERY: { label: '생활 꿀템 발견', target: 35, hint: '작은 집의 불편을 푸는 실용적인 물건. 상품 릴스의 기본.' },
+      INTL_COUPLE: { label: '국제부부 한국살이', target: 20, hint: '한국인 아내와 외국인 남편의 서울 생활. 실제 있었던 일만 — 남편 반응·대사를 지어내지 말 것 (확인 필요로 표시됨).' },
+      COMPARE: { label: '살까 말까 비교 연구소', target: 10, hint: '살지 말지 기준을 정리. 확인된 기능 밖의 비교·테스트 결과는 쓰지 말 것 (확인 필요로 표시됨).' },
+    },
+    // Current editorial priority (first month). Change when the focus changes.
+    CURRENT_FOCUS: '첫 달 우선순위: 좁은 공간 생활과 실용적인 정리 수납',
+    AI_LABEL: 'AI 시뮬레이션',
+  },
+
   SHEETS: {
     PRODUCTS: 'PRODUCTS',
     REELS: 'REELS',
@@ -73,6 +97,9 @@ const RF_CONFIG = {
     // Written automatically on script approval (not part of the approved fingerprint).
     'Flow 장면 프롬프트',
   ],
+
+  // Added by 시트 준비 when missing; never required, so older sheets and the live dashboard keep working.
+  REELS_OPTIONAL_HEADERS: ['콘텐츠 기둥', '확인 필요'],
 
   // Append-only history of every operator decision and system transition.
   AUDIT_HEADERS: ['일시', '릴스ID', '상품ID', '작업', '이전 상태', '새 상태', '대본 버전', '영상 버전', '작업자', '메모', '스냅샷(JSON)'],
@@ -178,6 +205,16 @@ const RF_CONFIG = {
     LIFESTYLE_SITUATION: 'C 생활 상황',
   },
 
+  // Content that needs the operator to confirm it is real before approval (checked in every script,
+  // shown in the dashboard and the 확인 필요 column). Pillar-based flags are added in Validation.gs.
+  VERIFICATION_RULES: [
+    { type: '개인 경험', pattern: /(저는|제가|저희|우리\s*집|직접\s*(?:써|사용|해|붙|사)|써\s*보니|써\s*봤|사용해\s*보니|사용해\s*봤|샀어요|샀는데|샀더니|구매했|주문했|바꿨더니|붙였더니)/, ask: '실제 경험·구매인지 확인' },
+    { type: '제품 테스트', pattern: /(테스트|실험|직접\s*확인|측정|버텨\s*봤|해\s*봤더니)/, ask: '실제로 테스트했는지 확인' },
+    { type: '국제부부 이야기', pattern: /(남편|신랑|아내|와이프|외국인\s*(?:남편|아내)|국제부부)/, ask: '실제 있었던 일인지 확인 (반응·대사를 지어내지 않았는지)' },
+    { type: '전후 결과', pattern: /(비포|애프터|before|after|전후|달라졌|바뀌었|넓어졌|깔끔해졌|좋아졌)/i, ask: '실제 결과 영상·사진이 있는지 확인' },
+    { type: '비교', pattern: /(비교|\bvs\b|보다\s*(?:더|훨씬|나아|좋))/i, ask: '비교 대상과 기준이 사실인지 확인' },
+  ],
+
   // Hook style for new Gemini scripts (not applied to reviewer edits): a relatable problem, spoken in
   // the first ~2–3 seconds — not an ad. Each pattern is a common ad-style hook.
   HOOK_STYLE: {
@@ -189,6 +226,7 @@ const RF_CONFIG = {
       { pattern: /(하세요|해\s*보세요|만나\s*보세요|확인하세요)[.!~…]*$/, why: '광고 같은 권유형' },
       { pattern: /(하나로|소개|추천|필수템|꿀템|신박템|강추|이것만|역대)/, why: '광고 문구' },
       { pattern: /달라(집니다|져요|졌어요|지는)/, why: '"~이 달라집니다" 같은 결과 약속' },
+      { pattern: /\d/, why: '숫자·사양으로 시작하는 기능 나열' },
     ],
   },
   // Written by Gemini in the CTA line; replaced with the reel's ManyChat keyword at render time.
@@ -226,7 +264,9 @@ const RF_CONFIG = {
     { type: '수납 용량', pattern: /(대용량|여러\s*개|몇\s*개(?:든|라도)|가득|\d+\s*개까지)/ },
     { type: '가격', pattern: /(가격|할인|세일|쿠폰|특가|무료\s*배송|로켓|가성비|저렴|(?<![가-힣])싸(?:요|다|게|고)|(?:만|천)\s*원|공짜|이벤트|혜택)/ },
     { type: '후기·인기', pattern: /(후기|리뷰|별점|평점|구매평|만족도|재구매|판매량|인기|베스트|입소문|난리|품절|대박|핫한|다들\s*(?:사|쓰))/ },
-    { type: '체험·결과', pattern: /(써\s*보니|써\s*봤|써\s*본\s|사용해\s*보니|사용해\s*봤|\d+\s*(?:일|주|달|개월)\s*(?:째|동안|간)|한\s*달\s*(?:째|동안|간|써)|일주일\s*(?:째|동안|간|써)|바꿨더니|붙였더니|샀더니)/ },
+    // Invented experiences, purchases, tests, husband reactions, results. Rejected in Gemini output;
+    // in a reviewer's own edit they may be real, so they become verification flags instead.
+    { type: '체험·결과', generatedOnly: true, pattern: /(써\s*보니|써\s*봤|써\s*본\s|사용해\s*보니|사용해\s*봤|\d+\s*(?:일|주|달|개월)\s*(?:째|동안|간)|한\s*달\s*(?:째|동안|간|써)|일주일\s*(?:째|동안|간|써)|바꿨더니|붙였더니|샀더니|샀어요|샀는데|구매했|주문했|테스트해\s*보니|테스트\s*결과|실험해\s*보니|(?:남편|신랑|아내|와이프)[가-힣]*\s*(?:[가-힣]+\s*)?(?:좋아했|놀랐|놀라|감탄|반했|웃었|말하더|하더라))/ },
     { type: '인증', pattern: /(특허|인증|KC|FDA|친환경|무독성|국내산|국산|최고|최강)/ },
   ],
 };
