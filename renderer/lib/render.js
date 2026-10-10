@@ -94,7 +94,7 @@ async function render(opts) {
   const fileHash = new Map();
   const hashOf = (f) => (fileHash.has(f) ? fileHash.get(f) : (fileHash.set(f, sha256File(f)), fileHash.get(f)));
   const footageKey = crypto.createHash('sha256').update(JSON.stringify(Object.entries(assets.shots).map(([id, a]) => [id, a.in, a.cutIndex, a.cutCount, hashOf(a.file)]))).digest('hex').slice(0, 8);
-  const variant = opts.preview ? 'preview' : 'final';
+  const variant = opts.preview ? 'preview' : (opts.variant || (estimate.provider !== 'google' ? estimate.provider : 'final'));
   // Any template change (caption style, CTA option, pacing) must produce a new render, not reuse.
   const templateKey = crypto.createHash('sha256').update(JSON.stringify(template)).digest('hex').slice(0, 6);
   const key = `${job.reelId}/v${job.scriptVersion}-${job.approvedHash.slice(3, 11)}-${footageKey}-${template.name}.${templateKey}-${variant}`;
@@ -186,7 +186,8 @@ async function render(opts) {
       log('! Gemini 영상 점검을 건너뜁니다: ' + e.message);
     }
   }
-  const fileName = `${job.reelId}_script-v${job.scriptVersion}${opts.preview ? '_PREVIEW' : ''}${post.ok ? '' : '_QC_FAILED'}.mp4`;
+  const variantSuffix = opts.preview ? '_PREVIEW' : (variant !== 'final' ? `_${variant}` : '');
+  const fileName = `${job.reelId}_script-v${job.scriptVersion}${variantSuffix}${post.ok ? '' : '_QC_FAILED'}.mp4`;
   const stored = await opts.storage.publish(tmpOut, key + '/' + fileName);
   const manifest = {
     reelId: job.reelId,
