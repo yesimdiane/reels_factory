@@ -6,10 +6,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { parseWav } = require('../wav');
 
-// USD per 1M characters by voice family. Approximate — verify at cloud.google.com/text-to-speech/pricing.
-const PRICE_PER_MILLION = { Standard: 4, Wavenet: 4, Neural2: 16, 'Chirp3-HD': 30, Studio: 160 };
+// USD per 1M characters by voice family. Approximate — verify at cloud.google.com/text-to-speech/pricing and heygen.com.
+const PRICE_PER_MILLION = { Standard: 4, Wavenet: 4, Neural2: 16, 'Chirp3-HD': 30, Studio: 160, HeyGen: 150 };
 
-function voiceFamily(voice) {
+function voiceFamily(voice, providerName) {
+  if (providerName === 'heygen') return 'HeyGen';
+  if (voice && (/^[0-9a-f]{32}$/i.test(voice) || String(voice).startsWith('heygen_') || String(voice).length > 25)) return 'HeyGen';
   const m = /^[a-z]{2}-[A-Z]{2}-(Standard|Wavenet|Neural2|Chirp3-HD|Studio)/.exec(voice || '');
   return m ? m[1] : 'Unknown';
 }
@@ -108,13 +110,14 @@ function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledge
   function estimate(segments, rates = []) {
     const uncached = segments.filter((s, i) => !fs.existsSync(cachePath(s, rates[i])));
     const chars = uncached.reduce((n, s) => n + billedChars(s), 0);
-    const price = PRICE_PER_MILLION[voiceFamily(voice)];
+    const family = voiceFamily(voice, provider.name);
+    const price = PRICE_PER_MILLION[family];
     const usedThisMonth = (readLedger()[month()] || {}).chars || 0;
     return {
       provider: provider.name,
       paid: provider.paid,
       voice,
-      voiceFamily: voiceFamily(voice),
+      voiceFamily: family,
       segments: segments.length,
       cachedSegments: segments.length - uncached.length,
       billableChars: provider.paid ? chars : 0,

@@ -2,7 +2,7 @@
 // Reels Factory renderer CLI.
 //   node renderer/cli.js check                       # FFmpeg/font/config sanity — no API calls
 //   node renderer/cli.js estimate --job <file>       # verify approval + cost estimate — no API calls
-//   node renderer/cli.js render   --job <file> [--preview] [--force] [--tts google|local|silent]
+//   node renderer/cli.js render   --job <file> [--preview] [--force] [--tts google|heygen|local|silent] [--voice <id>]
 //   node renderer/cli.js fetch-clips --job <file>     # download the reel's Flow clips from its Google Drive folder
 //   node renderer/cli.js pending [--watch <minutes>]  # render every job in RF_JOBS_DIR whose clips are ready
 //   node renderer/cli.js usage                       # TTS characters used this month
@@ -16,6 +16,7 @@ const { createFinalChecker } = require('./lib/final-check');
 const { driveAuth, createDriveClient, fetchClips, loadReferenceImages } = require('./lib/drive');
 const { createTtsService, BudgetError } = require('./lib/tts');
 const { createGoogleTts, apiKeyAuth, metadataAuth, gcloudAuth } = require('./lib/tts/google');
+const { createHeyGenTts } = require('./lib/tts/heygen');
 const { createLocalTts } = require('./lib/tts/local');
 const { createSilentTts } = require('./lib/tts/silent');
 const { createLocalStorage } = require('./lib/storage/local');
@@ -43,6 +44,12 @@ function parseArgs(argv) {
 function makeProvider(name, cfg) {
   if (name === 'local') return createLocalTts();
   if (name === 'silent') return createSilentTts();
+  if (name === 'heygen') {
+    return createHeyGenTts({
+      apiKey: cfg.heygenApiKey,
+      ffmpeg: cfg.ffmpeg.ffmpeg,
+    });
+  }
   if (name !== 'google') throw new Error('알 수 없는 TTS 제공자: ' + name);
   const auth = cfg.ttsAuth === 'apiKey'
     ? apiKeyAuth(cfg.googleApiKey)
@@ -78,13 +85,18 @@ function buildOptions(jobFile, args, cfg, dryRun) {
   // --preview = same footage, free local voice (to check timing before paying for Google TTS).
   const providerName = args.tts || (preview ? 'local' : cfg.ttsProvider);
   const provider = makeProvider(providerName, cfg);
+  const voice = providerName === 'heygen'
+    ? (args.voice || cfg.heygenVoice)
+    : providerName === 'google'
+      ? (args.voice || cfg.voice)
+      : providerName;
   return {
     jobFile,
     template: loadTemplate(args.template || process.env.RF_TEMPLATE || 'lifestyle-v1'),
     secret: cfg.secret,
     tts: createTtsService({
       provider,
-      voice: providerName === 'google' ? cfg.voice : providerName,
+      voice,
       speakingRate: cfg.speakingRate,
       cacheDir: cfg.cacheDir,
       ledgerFile: cfg.ledgerFile,
@@ -122,7 +134,8 @@ async function main() {
     const f = findFont(fam, { fontsDir: cfg.fontsDir });
     log((f.found ? '✓' : '✗') + ' 자막 글꼴 ' + fam + (f.found ? ' (' + (f.file || f.via) + ')' : ' 없음 — ' + (INSTALL_HELP[fam] || '설치 필요')));
     log('Gemini 영상 점검: ' + (cfg.geminiApiKey ? '켜짐 (' + cfg.geminiModel + ', 참고용)' : 'GEMINI_API_KEY 없음 — 건너뜀'));
-    log('TTS: ' + cfg.ttsProvider + ' / ' + cfg.voice + ' / 인증 ' + cfg.ttsAuth + (cfg.googleApiKey ? ' (키 설정됨)' : ''));
+    const activeVoice = cfg.ttsProvider === 'heygen' ? cfg.heygenVoice : cfg.voice;
+    log('TTS: ' + cfg.ttsProvider + ' / ' + activeVoice + ' (HeyGen 키: ' + (cfg.heygenApiKey ? '설정됨' : '미설정') + ', Google 키: ' + (cfg.googleApiKey ? '설정됨' : '미설정') + ')');
     log('렌더 키: ' + (cfg.secret ? '설정됨' : '없음 — Sheets 메뉴 "렌더 키 보기"'));
     log('작업 폴더: ' + cfg.jobsDir + '\n클립 폴더: ' + cfg.clipsDir + '\n출력 폴더: ' + cfg.outputDir + '\n캐시/사용량: ' + cfg.stateDir);
     return;
@@ -158,7 +171,7 @@ async function main() {
     return;
   }
   if (cmd !== 'render' && cmd !== 'estimate') {
-    log('사용법: node renderer/cli.js check | estimate --job <file> | fetch-clips --job <file> | render --job <file> [--preview] [--force] [--no-ai-check] [--clips <dir>] [--template lifestyle-v1] [--tts google|local|silent] | pending [--watch <분>] | usage');
+    log('사용법: node renderer/cli.js check | estimate --job <file> | fetch-clips --job <file> | render --job <file> [--preview] [--force] [--no-ai-check] [--clips <dir>] [--template lifestyle-v1] [--tts google|heygen|local|silent] [--voice <id>] | pending [--watch <분>] | usage');
     return;
   }
   if (!args.job) throw new Error('--job <렌더 작업 파일> 이 필요합니다.');
