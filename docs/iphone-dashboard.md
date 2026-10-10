@@ -30,11 +30,21 @@ Google Sheets stays the system of record. Every button writes to the **REELS** r
 
 Details: [brand.md](brand.md), [five-hook-workflow.md](five-hook-workflow.md).
 
+## Reels Factory v3 — 7-Step Production Pipeline
+
+1. **상품 URL → 프로젝트 생성 / 선택:** 대시보드에서 쿠팡 또는 제품 URL을 입력하여 프로젝트를 바로 생성하거나 기존 프로젝트를 선택합니다.
+2. **제품 참고 사진 4장 업로드:** 실제 제품 사진을 최대 4장 업로드하여 Google Drive에 저장합니다.
+3. **대본 컨셉 3개 및 훅 5개 옵션 생성:** Gemini를 통해 5가지 유형(질문형, 숫자형, 통념 반박형, 상황 묘사용, 결론 제시형)의 훅과 대본 컨셉을 생성합니다.
+4. **대본 및 훅 승인 → S1~S5 프롬프트 자동 생성:** 운영자가 훅과 대본을 검토 및 승인하면 장면별 프롬프트가 즉시 생성됩니다.
+5. **장면별 이미지 & 영상 수동 제작 (무료):** 유료 API 호출 없이, 제공된 9:16 프롬프트를 복사하여 ChatGPT/Gemini에서 이미지, Google Flow에서 비디오 클립을 수동 제작합니다.
+6. **5개 완성 클립 업로드 및 최종 편집 시작:** 완성된 클립을 Drive에 업로드하고, 권리 확인 컨트롤을 통해 인가 후 Mac 워커(Claude 편집 지시서 + FFmpeg + TTS)에서 최종 렌더링을 진행합니다.
+7. **게시 자료 생성:** 인스타그램 캡션([광고] 표기, 후킹, AI 고지, CTA), ManyChat 댓글 키워드 및 상품 링크 포함 DM 문구를 복사하여 게시합니다.
+
 ## Your four manual steps (nothing else needs you)
 
 | # | You do | Where | What the system blocks until you do it |
 |---|---|---|---|
-| ① | Pick the product. Enter the Coupang Partners link, the verified facts (one per line) and the media permission. | Google Sheets → PRODUCTS (then **상품** tab → *훅 5개 + 대본 생성*) | No scripts without facts. No video without permission. No publishing pack without a valid `link.coupang.com` / `coupa.ng` link. |
+| ① | Pick the product. Enter the Coupang Partners link, the verified facts (one per line) and the media permission (or confirm user-created rights directly in dashboard). | Dashboard **상품** tab or Google Sheets → PRODUCTS | No scripts without facts. No video without permission. No publishing pack without a valid `link.coupang.com` / `coupa.ng` link. |
 | ② | **Choose one of the five hooks** (edit its wording if you like). Then approve, edit, request changes, or reject the script. | **대본** tab → *훅 5개* | Video work starts only from the **exact approved script version**. If anyone edits the script afterwards (even directly in the sheet), video is blocked until the new version is approved. |
 | ③ | Watch the finished video, then approve, request changes, or reject it. | **영상** tab | Only an approved video can become *게시 준비 완료* (ready to publish). |
 | ④ | Post on Instagram, set up the ManyChat keyword, then tap both confirmations. | **게시** tab | Nothing is ever posted and no DM automation is ever switched on automatically. |

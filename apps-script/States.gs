@@ -71,7 +71,8 @@ const RF_ACTIONS = {
   SET_PRODUCTION_PLAN: { touchpoint: 0, from: ['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'], to: 'COMPUTED', label: '제작 계획 (Gemini)' },
   REJECT_SCRIPT: { touchpoint: 2, from: ['SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED'], to: 'SCRIPT_REJECTED', label: '대본 반려' },
   REOPEN_SCRIPT: { touchpoint: 2, from: ['SCRIPT_APPROVED'], to: 'SCRIPT_REVIEW_PENDING', label: '대본 승인 취소' },
-  START_VIDEO: { touchpoint: 0, from: ['SCRIPT_APPROVED', 'VIDEO_CHANGES_REQUESTED', 'VIDEO_FAILED'], to: 'VIDEO_IN_PRODUCTION', label: '영상 제작 시작' },
+  CONFIRM_MEDIA_RIGHTS: { touchpoint: 2, from: ['SCRIPT_APPROVED', 'SCRIPT_REVIEW_PENDING', 'SCRIPT_CHANGES_REQUESTED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'], to: 'COMPUTED', label: '영상 권리 확인' },
+  START_VIDEO: { touchpoint: 0, from: ['SCRIPT_APPROVED', 'VIDEO_CHANGES_REQUESTED', 'VIDEO_FAILED'], to: 'VIDEO_IN_PRODUCTION', label: '최종 편집 시작' },
   REGISTER_VIDEO: { touchpoint: 0, from: ['VIDEO_IN_PRODUCTION'], to: 'VIDEO_REVIEW_PENDING', label: '완성 영상 등록' },
   MARK_VIDEO_FAILED: { touchpoint: 0, from: ['VIDEO_IN_PRODUCTION'], to: 'VIDEO_FAILED', label: '영상 제작 오류', noteRequired: true },
   APPROVE_VIDEO: { touchpoint: 3, from: ['VIDEO_REVIEW_PENDING'], to: 'VIDEO_APPROVED', label: '영상 승인' },
@@ -401,6 +402,7 @@ function planTransition(row, product, action, input, ctx) {
     if (!isPermissionApproved(product.permission)) {
       throw new Error(
         'PRODUCTS의 "영상 사용 허가 상태"가 확인되지 않았습니다 (현재: "' + (normalizeText(product.permission) || '비어 있음') + '"). ' +
+          '대시보드에서 "자체 제작 / AI 생성 영상 권리 확인"에 체크하거나, ' +
           '판매처/제조사 미디어의 재사용·AI 편집 허가를 확인한 뒤 "허가 완료"로, 자체 촬영·AI 생성 영상만 쓴다면 "자체 제작"으로 입력하세요. ' +
           '마켓 등록만으로는 허가가 아닙니다.'
       );
@@ -579,8 +581,17 @@ function planTransition(row, product, action, input, ctx) {
       snapshot = { '제작 계획(JSON)': updates['제작 계획(JSON)'] };
       break;
     }
+    case 'CONFIRM_MEDIA_RIGHTS':
+      product.permission = '자체 제작';
+      to = status;
+      note = (note ? note + ' · ' : '') + '영상 사용 권리 확인 (자체 제작 / Google Flow AI 생성)';
+      snapshot = { permission: '자체 제작' };
+      break;
     case 'START_VIDEO':
       requireApprovedScript();
+      if (input.rightsConfirmed === true) {
+        product.permission = '자체 제작';
+      }
       requirePermission();
       updates['오류'] = '';
       break;
