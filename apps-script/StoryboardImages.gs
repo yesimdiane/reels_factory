@@ -212,6 +212,7 @@ function storyboardImageList_(row, product, plan, recoverableFiles) {
         };
       }),
       motionPrompt: motionPrompt,
+      imagePrompt: buildStoryboardImagePrompt_(s, product, plan),
     };
   });
 }

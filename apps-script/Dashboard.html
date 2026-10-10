@@ -314,7 +314,34 @@ function renderBrand(main) {
 }
 
 function renderProducts(main) {
-  main.appendChild(h('p', { class: 'muted', text: '① 상품 등록·제휴 링크·확인된 기능·영상 허가는 Google Sheets PRODUCTS에서 입력합니다. 여기서는 준비 상태를 확인하고 대본 생성을 요청할 수 있습니다.' }));
+  // Step 1: Product URL → create/select product project
+  const createCard = h('div', { class: 'card' });
+  createCard.appendChild(h('h3', { style: 'margin-top:0', text: '① 상품 URL로 프로젝트 생성 / 선택' }));
+  createCard.appendChild(h('div', { class: 'muted', text: '쿠팡 또는 제품 링크를 입력하여 새 상품 프로젝트를 만들거나 기존 프로젝트를 선택합니다.' }));
+
+  const urlInput = h('input', { type: 'url', placeholder: '상품 URL (예: https://link.coupang.com/… 또는 제품 링크)' });
+  const nameInput = h('input', { type: 'text', placeholder: '상품명 (예: 리템 우산꽂이 자석형, 비워두면 자동)' });
+  const featInput = h('textarea', { rows: '2', placeholder: '확인된 핵심 기능 (줄 단위, 선택 사항)' });
+  const createBtn = h('button', { class: 'b primary', type: 'button', text: '프로젝트 생성 / 선택' });
+
+  createBtn.addEventListener('click', function () {
+    const u = urlInput.value.trim();
+    if (!u) { toast('상품 URL을 입력하세요.'); return; }
+    busy(true, '프로젝트 생성/조회 중…');
+    call('apiCreateProductProject', { url: u, name: nameInput.value.trim(), features: featInput.value.trim() }).then(function (res) {
+      busy(false);
+      if (!res.ok) { toast(res.error, 8000); return; }
+      toast(res.created ? '새 상품 프로젝트 생성: ' + res.product.id : '기존 상품 프로젝트 선택: ' + res.product.id);
+      loadDashboard().then(function () { renderNav(); renderList(); });
+    });
+  });
+
+  createCard.appendChild(h('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-top:10px' }, [
+    urlInput, nameInput, featInput, createBtn
+  ]));
+  main.appendChild(createCard);
+
+  main.appendChild(h('h3', { text: '등록된 상품 목록' }));
   if (!S.dash.products.length) { main.appendChild(h('div', { class: 'empty', text: 'PRODUCTS에 상품이 없습니다' })); return; }
   S.dash.products.forEach(function (p) {
     const ready = p.factsCount > 0 && !p.duplicate;
@@ -330,7 +357,7 @@ function renderProducts(main) {
       h('div', { class: 'btns one' }, [h('button', {
         class: 'b', type: 'button', disabled: !ready,
         onclick: function () { generate(p, false); },
-        text: p.reelCount ? '훅 5개 + 대본 추가 생성' : '훅 5개 + 대본 생성 (Gemini)',
+        text: p.reelCount ? '③ 대본 컨셉 및 훅 5개 추가 생성' : '③ 대본 컨셉 및 훅 5개 생성 (Gemini)',
       })]),
     ]));
   });
@@ -517,18 +544,80 @@ function renderActions(main) {
       onclick: function () { const n = askNote('반려 사유 (선택)', false); if (n !== null) act('REJECT_SCRIPT', { note: n }, '이 대본을 반려할까요? 되돌릴 수 없습니다.'); } }));
     card.appendChild(b);
   } else if (['SCRIPT_APPROVED', 'VIDEO_IN_PRODUCTION', 'VIDEO_FAILED', 'VIDEO_CHANGES_REQUESTED'].indexOf(st) !== -1) {
-    card.appendChild(h('h3', { style: 'margin-top:0', text: '영상 제작 (실제 제품 촬영·Flow → Mac 렌더)' }));
+    card.appendChild(h('h3', { style: 'margin-top:0', text: '⑥ 최종 편집 (Mac 워커 · Claude 지시서 · FFmpeg)' }));
     if (st === 'VIDEO_CHANGES_REQUESTED') card.appendChild(h('div', { class: 'banner warn', text: '영상 수정 요청: ' + (d.videoReview.note || '') }));
-    if (!d.product.permissionOk) card.appendChild(h('div', { class: 'banner warn', text: '영상 사용 허가가 확인되지 않아 제작을 시작할 수 없습니다. PRODUCTS의 "영상 사용 허가 상태"를 확인하세요.' }));
+    let rightsBox = null;
+    if (!d.product.permissionOk) {
+      rightsBox = h('input', { type: 'checkbox', id: 'rightsConfirmed' });
+      const confirmRightsBtn = h('button', {
+        class: 'b ok', type: 'button', style: 'margin-top:6px',
+        text: '영상 사용 권리 확인 (자체 제작 / Google Flow AI 생성)',
+        onclick: function () { act('CONFIRM_MEDIA_RIGHTS', {}); }
+      });
+      card.appendChild(h('div', { class: 'banner warn' }, [
+        h('strong', { text: '영상 사용 권리 미확인' }),
+        h('div', { style: 'margin:4px 0 6px', text: 'Google Flow AI 생성 또는 직접 촬영한 영상만 사용 시, 아래 체크 후 바로 최종 편집을 시작할 수 있습니다 (PRODUCTS 시트 직접 수정 불필요).' }),
+        h('label', { style: 'display:flex;gap:8px;align-items:center;cursor:pointer' }, [
+          rightsBox,
+          h('span', { text: 'Google Flow 및 직접 제작(자체 촬영/AI 생성) 영상 권리를 확인합니다 (자체 제작)' })
+        ]),
+        confirmRightsBtn,
+      ]));
+    }
     if (!d.approvedIntact && st !== 'VIDEO_IN_PRODUCTION') card.appendChild(h('div', { class: 'banner bad', text: '승인된 대본이 변경되었습니다. 승인 취소 후 다시 승인하세요.' }));
+
+    if (d.media && d.media.clips && d.media.clips.length) {
+      const upCount = d.media.clips.filter(function (c) { return c.current; }).length;
+      const totCount = d.media.clips.length;
+      const allExist = upCount === totCount;
+      card.appendChild(h('div', { class: 'row', style: 'margin:8px 0' }, [
+        h('span', { class: 'chip ' + (allExist ? 'ok' : 'warn'), text: '클립 업로드 현황: ' + upCount + '/' + totCount + (allExist ? ' (모두 준비됨 ✓)' : '') }),
+        h('span', { class: 'chip ' + (d.media.allApproved ? 'ok' : 'warn'), text: '클립 승인: ' + d.media.approved + '/' + totCount }),
+      ]));
+      if (!allExist) {
+        card.appendChild(h('div', { class: 'banner warn', text: '최종 편집을 진행하려면 5개 장면 클립이 모두 업로드되어야 합니다 (현재 ' + upCount + '/' + totCount + '). 아래 클립 작업실에서 미등록 클립을 업로드하세요.' }));
+      }
+    }
+
     const b = h('div', { class: 'btns' });
-    if (can('START_VIDEO')) b.appendChild(h('button', { class: 'b primary', type: 'button', text: '영상 제작 시작', disabled: !d.product.permissionOk || !d.approvedIntact,
-      onclick: function () { act('START_VIDEO', {}); } }));
+    if (can('START_VIDEO')) {
+      const startBtn = h('button', {
+        class: 'b primary', type: 'button', text: '최종 편집 시작',
+        disabled: (!d.product.permissionOk && (!rightsBox || !rightsBox.checked)) || !d.approvedIntact,
+        onclick: function () {
+          if (!d.product.permissionOk && (!rightsBox || !rightsBox.checked)) {
+            alert('Google Flow 및 직접 제작 영상 권리 확인에 체크하세요.');
+            return;
+          }
+          act('START_VIDEO', { rightsConfirmed: !!(rightsBox && rightsBox.checked) });
+        }
+      });
+      if (rightsBox) {
+        rightsBox.addEventListener('change', function () {
+          startBtn.disabled = (!d.product.permissionOk && !rightsBox.checked) || !d.approvedIntact;
+        });
+      }
+      b.appendChild(startBtn);
+    }
+    if (d.media && d.media.clips && d.media.clips.some(function (c) { return c.status === 'PENDING_REVIEW'; })) {
+      b.appendChild(h('button', {
+        class: 'b ok', type: 'button', text: '전체 클립 일괄 승인',
+        onclick: function () {
+          busy(true, '전체 클립 승인 중…');
+          call('apiApproveAllClips', d.summary.reelId, {}).then(function (res) {
+            busy(false);
+            if (!res.ok) { toast(res.error, 8000); return; }
+            S.detail = res.detail; renderDetail();
+            toast(res.approvedCount + '개 클립을 일괄 승인했습니다.');
+          });
+        }
+      }));
+    }
     const clipGate = d.media && d.media.gated && !d.media.allApproved;
     if (st === 'VIDEO_IN_PRODUCTION') b.appendChild(h('button', { class: 'b', type: 'button', text: '렌더 작업 파일 (Mac)' + (clipGate ? ' — 클립 ' + d.media.approved + '/' + d.media.total + ' 승인' : ''), disabled: clipGate, onclick: openRenderJob }));
     if (can('REGISTER_VIDEO')) b.appendChild(h('button', { class: 'b ok', type: 'button', text: '완성 MP4 등록',
       onclick: function () { const u = askNote('Google Drive MP4 공유 링크를 붙여넣으세요', true); if (u !== null) act('REGISTER_VIDEO', { videoUrl: u }); } }));
-    if (can('MARK_VIDEO_FAILED')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '제작 오류 기록',
+    if (can('MARK_VIDEO_FAILED')) b.appendChild(h('button', { class: 'b bad', type: 'button', text: '편집 오류 기록',
       onclick: function () { const n = askNote('오류 내용', true); if (n !== null) act('MARK_VIDEO_FAILED', { note: n }); } }));
     if (can('REOPEN_SCRIPT')) b.appendChild(h('button', { class: 'b', type: 'button', text: '대본 승인 취소',
       onclick: function () { const n = askNote('승인 취소 사유 (선택)', false); if (n !== null) act('REOPEN_SCRIPT', { note: n }); } }));
@@ -952,8 +1041,8 @@ function renderStoryboard(main) {
   const sb = d.storyboard;
   if (!sb || !sb.visible) return;
   const card = h('div', { class: 'card' });
-  card.appendChild(h('h3', { style: 'margin-top:0', text: '🖼️ 9:16 스토리보드 이미지 (Gemini 2.5 Flash Image)' }));
-  card.appendChild(h('div', { class: 'muted', text: '실제 제품 사진과 승인된 대본으로 9:16 스토리보드 이미지를 생성하고 승인합니다. 완성된 이미지는 다운로드하여 Google Flow 이미지-투-비디오에 사용하세요.' }));
+  card.appendChild(h('h3', { style: 'margin-top:0', text: '⑤ 이미지(ChatGPT/Gemini) & 영상(Google Flow) 프롬프트 (수동 개발 · 무료)' }));
+  card.appendChild(h('div', { class: 'muted', text: '유료 이미지 생성 API 호출 없이, 각 장면에 최적화된 프롬프트를 복사하여 ChatGPT(DALL-E)나 Gemini에서 9:16 이미지를 만들고, Google Flow에서 비디오를 직접 제작하세요. 완성된 클립은 아래 6단계 클립 작업실에 업로드하면 됩니다.' }));
 
   if (sb.blocker) {
     card.appendChild(h('div', { class: 'banner warn', style: 'margin-top:8px', text: sb.blocker }));
@@ -966,17 +1055,17 @@ function renderStoryboard(main) {
     h('span', { class: 'chip ' + (sb.referencesCount ? 'ok' : 'warn'), text: '참고 사진 ' + sb.referencesCount + '장' }),
     h('span', { class: 'chip ' + (sb.allApproved ? 'ok' : 'warn'), text: '스토리보드 승인 ' + sb.approvedCount + '/' + sb.totalCount }),
   ]));
-  card.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:2px 0 10px 0', text: '💡 모델: ' + (sb.model || 'gemini-2.5-flash-image') + ' · 예상 비용: ' + (billing.costText || 'Cost estimate unavailable') }));
+  card.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin:2px 0 10px 0', text: '💡 [선택] Gemini 자동 생성 모델: ' + (sb.model || 'gemini-2.5-flash-image') + ' · 예상 비용: ' + (billing.costText || 'Cost estimate unavailable') }));
 
   if (sb.allApproved) {
-    card.appendChild(h('div', { class: 'banner ok', text: '모든 장면의 9:16 이미지가 승인되었습니다. 아래에서 각 장면의 이미지를 다운로드하고 모션 프롬프트를 복사하여 Google Flow에서 영상을 제작하세요.' }));
+    card.appendChild(h('div', { class: 'banner ok', text: '모든 장면의 9:16 이미지가 승인되었습니다. 각 장면의 이미지를 다운로드하고 모션 프롬프트를 복사하여 Google Flow에서 영상을 제작하세요.' }));
   }
 
   card.appendChild(h('div', { class: 'btns one', style: 'margin-bottom:12px' }, [
     h('button', {
-      class: 'b primary', type: 'button', disabled: !sb.canGenerate || !!S.generatingStoryboard,
+      class: 'b', type: 'button', disabled: !sb.canGenerate || !!S.generatingStoryboard,
       onclick: function () { generateStoryboard(0); },
-      text: '전체 스토리보드 생성 (S1~S' + sb.totalCount + ' · Gemini)',
+      text: '전체 스토리보드 생성 (S1~S' + sb.totalCount + ' · 선택 사항)',
     }),
   ]));
 
@@ -989,6 +1078,15 @@ function renderStoryboard(main) {
     ]));
     if (c.narration) box.appendChild(h('div', { class: 'hook', text: '“' + c.narration + '”' }));
     if (c.visual) box.appendChild(h('div', { class: 'muted', text: '연출: ' + c.visual }));
+
+    // Always provide copyable prompts for manual image and video generation
+    box.appendChild(h('div', { style: 'margin:8px 0' }, [
+      copyBlock('ChatGPT/Gemini 9:16 이미지 프롬프트 (무료 수동 생성용)', c.imagePrompt || c.visual),
+      copyBlock('Google Flow 모션/비디오 프롬프트', c.motionPrompt),
+      h('div', { class: 'row', style: 'margin-top:6px' }, [
+        h('a', { class: 'b', href: sb.flowUrl, target: '_blank', rel: 'noopener', text: 'Google Flow 열기 ↗' }),
+      ]),
+    ]));
 
     if (c.current) {
       const previewBox = h('div', { style: 'text-align:center;margin:8px 0' });
@@ -1019,14 +1117,10 @@ function renderStoryboard(main) {
 
       box.appendChild(h('div', { class: 'row', style: 'margin-top:8px' }, [
         h('a', { class: 'b', href: c.current.downloadUrl, target: '_blank', rel: 'noopener', text: '이미지 다운로드 ↓' }),
-        h('button', { class: 'b', type: 'button', text: '모션 프롬프트 복사', onclick: function () { copyText(c.motionPrompt); } }),
-        h('a', { class: 'b', href: sb.flowUrl, target: '_blank', rel: 'noopener', text: 'Google Flow 열기 ↗' }),
       ]));
 
       box.appendChild(h('details', { style: 'margin-top:8px' }, [
-        h('summary', { text: '프롬프트 및 버전 기록 (' + c.versions.length + ')' }),
-        copyBlock('Google Flow 모션 프롬프트', c.motionPrompt, true),
-        copyBlock('Gemini 2.5 Flash Image 생성 프롬프트', c.current.prompt, true),
+        h('summary', { text: '버전 기록 (' + c.versions.length + ')' }),
         h('div', { class: 'muted', style: 'white-space:pre-wrap;margin-top:6px', text: c.versions.map(function (v) {
           return 'v' + v.v + ' · ' + v.status + ' · ' + fmt(v.generatedAt) + (v.reviewedBy ? ' · ' + v.reviewedBy : '') + (v.note ? ' · ' + v.note : '');
         }).join('\n') }),
@@ -1048,7 +1142,7 @@ function renderStoryboard(main) {
         h('button', {
           class: 'b', type: 'button', disabled: !sb.canGenerate || !!S.generatingStoryboard,
           onclick: function () { generateStoryboard(c.scene); },
-          text: c.key + ' 이미지 생성 (Gemini)',
+          text: c.key + ' 이미지 생성 (선택 · Gemini)',
         }),
       ]));
     }
@@ -1069,7 +1163,7 @@ function renderMedia(main) {
 
   // Verified product reference photos (max 4): saved in Drive, linked into this product's PRODUCTS cell.
   const ref = md.references;
-  card.appendChild(h('h3', { text: '제품 참고 사진 ' + ref.count + '/' + ref.max }));
+  card.appendChild(h('h3', { text: '② 제품 참고 사진 ' + ref.count + '/' + ref.max + ' (Google Drive)' }));
   (ref.items || []).forEach(function (it, i) {
     card.appendChild(h('div', {}, [h('a', { href: it.url, target: '_blank', rel: 'noopener', text: '사진 ' + (i + 1) + ' 열기' })]));
   });

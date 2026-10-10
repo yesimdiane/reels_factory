@@ -16,6 +16,7 @@ const RF_CLIENT_ACTIONS = [
   'EDIT_SCRIPT',
   'REJECT_SCRIPT',
   'REOPEN_SCRIPT',
+  'CONFIRM_MEDIA_RIGHTS',
   'START_VIDEO',
   'REGISTER_VIDEO',
   'MARK_VIDEO_FAILED',
@@ -372,10 +373,28 @@ function reelDetail_(ss, reelId) {
   };
 }
 
+function updateProductPermission_(ss, productId, value) {
+  try {
+    const sheet = getProductsSheet_(ss);
+    const rowNumber = findProductRow_(sheet, productId);
+    const map = getHeaderMap_(sheet);
+    const col = colOf_(map, RF_CONFIG.PRODUCT_FIELDS.permission);
+    if (col) {
+      sheet.getRange(rowNumber, col, 1, 1).setValues([[value]]);
+    }
+  } catch (e) {
+    // Non-fatal if sheet row cannot be updated
+  }
+}
+
 /** Plans and writes one transition (caller holds the lock). Returns the plan. */
 function applyTransition_(ss, reelId, action, input, actor) {
   const data = loadData_(ss);
   const found = findReel_(data, reelId);
+  if (action === 'CONFIRM_MEDIA_RIGHTS' || (action === 'START_VIDEO' && input && input.rightsConfirmed === true)) {
+    updateProductPermission_(ss, found.product.id, '자체 제작');
+    found.product.permission = '자체 제작';
+  }
   const plan = planTransition(found.row, found.product, action, input, { actor: actor, now: new Date() });
   if (!plan.noop) {
     updateRecord_(data.reelsSheet, found.row._row, plan.updates);
@@ -823,4 +842,135 @@ function showRenderSecret() {
     ).setWidth(460).setHeight(200),
     '렌더 키 (Mac 설정용)'
   );
+}
+
+/**
+ * Step 1: Create or select a product project using a product URL.
+ * input: { url, name, category, features, target }
+ */
+function apiCreateProductProject(input) {
+  return api_(function (user) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    input = input || {};
+    const url = normalizeText(input.url);
+    if (!url) throw new Error('상품 URL을 입력하세요.');
+
+    return withLock_(function () {
+      const sheet = getProductsSheet_(ss);
+      const data = loadData_(ss);
+      const existingProducts = Object.keys(data.productById)
+        .filter(function (id) { return id && data.productById[id] !== 'DUPLICATE'; })
+        .map(function (id) { return data.productById[id]; });
+
+      // Check if product with this URL already exists
+      const match = existingProducts.filter(function (p) {
+        return (normalizeText(p.affiliateUrl) && normalizeText(p.affiliateUrl) === url) ||
+               (normalizeText(p.sourceUrl) && normalizeText(p.sourceUrl) === url);
+      })[0];
+
+      if (match) {
+        return { product: match, created: false };
+      }
+
+      // Generate next product ID (e.g., PRD-001, PRD-002, ...)
+      let maxNum = 0;
+      existingProducts.forEach(function (p) {
+        const m = /^PRD-(\d+)$/.exec(p.id);
+        if (m) {
+          const num = parseInt(m[1], 10);
+          if (num > maxNum) maxNum = num;
+        }
+      });
+      const nextNum = maxNum + 1;
+      const nextId = 'PRD-' + (nextNum < 10 ? '00' : nextNum < 100 ? '0' : '') + nextNum;
+
+      const isCoupang = url.indexOf('coupang') !== -1 || url.indexOf('coupa.ng') !== -1;
+      const rec = {};
+      rec[RF_CONFIG.PRODUCT_FIELDS.id] = nextId;
+      rec[RF_CONFIG.PRODUCT_FIELDS.name] = normalizeText(input.name) || ('새 상품 ' + nextId);
+      rec[RF_CONFIG.PRODUCT_FIELDS.category] = normalizeText(input.category) || '일반';
+      rec[RF_CONFIG.PRODUCT_FIELDS.features] = normalizeText(input.features) || '';
+      rec[RF_CONFIG.PRODUCT_FIELDS.target] = normalizeText(input.target) || '일반';
+      rec[RF_CONFIG.PRODUCT_FIELDS.affiliateUrl] = isCoupang ? url : '';
+      rec[RF_CONFIG.PRODUCT_FIELDS.sourceUrl] = !isCoupang ? url : '';
+      rec[RF_CONFIG.PRODUCT_FIELDS.permission] = '자체 제작';
+      rec[RF_CONFIG.PRODUCT_FIELDS.status] = '준비';
+
+      appendRecords_(sheet, [rec]);
+
+      appendAudit_(ss, [{
+        '일시': new Date(),
+        '상품ID': nextId,
+        '작업': 'PRODUCT_PROJECT_CREATED',
+        '작업자': user,
+        '메모': 'Step 1: 상품 URL로 프로젝트 생성 (' + url + ')',
+        '스냅샷(JSON)': JSON.stringify({ id: nextId, url: url, name: rec[RF_CONFIG.PRODUCT_FIELDS.name] })
+      }]);
+
+      logEvent_('INFO', 'createProductProject', nextId, '새 상품 프로젝트 생성: ' + nextId, url);
+
+      return {
+        product: {
+          id: nextId,
+          name: rec[RF_CONFIG.PRODUCT_FIELDS.name],
+          category: rec[RF_CONFIG.PRODUCT_FIELDS.category],
+          features: rec[RF_CONFIG.PRODUCT_FIELDS.features],
+          target: rec[RF_CONFIG.PRODUCT_FIELDS.target],
+          affiliateUrl: rec[RF_CONFIG.PRODUCT_FIELDS.affiliateUrl],
+          sourceUrl: rec[RF_CONFIG.PRODUCT_FIELDS.sourceUrl],
+          permission: '자체 제작',
+          status: '준비',
+        },
+        created: true,
+      };
+    });
+  });
+}
+
+/**
+ * Step 6: Approves all uploaded/attached clips in PENDING_REVIEW for this reel.
+ */
+function apiApproveAllClips(reelId, input) {
+  return api_(function (user) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const id = normalizeText(reelId);
+    input = input || {};
+    return withLock_(function () {
+      const data = loadData_(ss);
+      const found = findReel_(data, id);
+      const store = parseClipStore_(found.row);
+      const hash = cellText_(found.row['승인 대본 해시']);
+      const list = clipList_(found.row);
+      let approvedCount = 0;
+
+      list.forEach(function (c) {
+        const entry = store.clips[c.key];
+        const cur = entry && entry.versions.filter(function (v) { return v.v === entry.current; })[0];
+        if (cur && cur.status !== 'APPROVED') {
+          cur.status = 'APPROVED';
+          cur.approvedHash = hash;
+          cur.reviewedBy = user;
+          cur.reviewedAt = new Date().toISOString();
+          approvedCount++;
+        }
+      });
+
+      if (approvedCount > 0) {
+        updateRecord_(data.reelsSheet, found.row._row, { '장면 클립(JSON)': JSON.stringify(store) });
+        appendAudit_(ss, [{
+          '일시': new Date(),
+          '릴스ID': id,
+          '상품ID': found.row['상품ID'],
+          '작업': 'CLIPS_APPROVED_ALL',
+          '이전 상태': reelStatus(found.row),
+          '새 상태': reelStatus(found.row),
+          '대본 버전': scriptVersionOf(found.row),
+          '영상 버전': videoVersionOf(found.row),
+          '작업자': user,
+          '메모': '전체 ' + approvedCount + '개 클립 일괄 승인',
+        }]);
+      }
+      return { detail: reelDetail_(ss, id), approvedCount: approvedCount };
+    });
+  });
 }
