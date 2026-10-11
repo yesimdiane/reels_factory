@@ -113,6 +113,8 @@ function createAuth({ password = '', secret = '', ttlMs = 12 * 3600 * 1000, now 
   };
 }
 
+const RAILWAY_HEALTHCHECK_HOST = 'healthcheck.railway.app'; // https://docs.railway.com/deployments/healthchecks
+
 function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () => {}, bridge = null, auth = createAuth(), publicHost = '' } = {}) {
   const S = studio;
   const routes = [];
@@ -293,7 +295,9 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
     try {
       const url = new URL(req.url, 'http://x');
       const reqHost = String(req.headers.host || '');
-      if (port && (loopback || publicHost) && !allowedHosts.has(reqHost)) return sendJson(res, 403, { error: { code: 'HOST', message: '허용되지 않은 호스트입니다.' } });
+      // Railway's deploy healthcheck calls GET /healthz with Host: healthcheck.railway.app. Only that exact request is exempt.
+      const railwayHealthcheck = req.method === 'GET' && url.pathname === '/healthz' && reqHost === RAILWAY_HEALTHCHECK_HOST;
+      if (port && (loopback || publicHost) && !railwayHealthcheck && !allowedHosts.has(reqHost)) return sendJson(res, 403, { error: { code: 'HOST', message: '허용되지 않은 호스트입니다.' } });
       const isApi = url.pathname.startsWith('/api/');
       const isMedia = url.pathname.startsWith('/media/');
       const cookies = req.headers.cookie || '';
