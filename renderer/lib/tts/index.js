@@ -73,11 +73,12 @@ async function acquireLock(lockFile, done, { staleMs = LOCK_STALE_MS, pollMs = 2
   return () => fs.rmSync(lockFile, { force: true });
 }
 
-function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledgerFile, maxCharsPerJob = 1500, monthlyCharLimit = 500000, now = () => new Date() }) {
+function createTtsService({ provider, voice, language = 'ko', speakingRate = 1.0, cacheDir, ledgerFile, maxCharsPerJob = 1500, monthlyCharLimit = 500000, now = () => new Date() }) {
   // rate: per-line speaking rate from Gemini's production plan (default: the configured rate). A different
   // rate is a different recording, so it is part of the cache key.
   const keyOf = (text, rate = speakingRate) =>
-    crypto.createHash('sha256').update(JSON.stringify({ p: provider.name, voice, speakingRate: rate, text })).digest('hex');
+    // Korean (the original workflow) keeps its original key so existing caches stay valid; other languages are keyed apart.
+    crypto.createHash('sha256').update(JSON.stringify(language === 'ko' ? { p: provider.name, voice, speakingRate: rate, text } : { p: provider.name, voice, speakingRate: rate, text, l: language })).digest('hex');
   const cachePath = (text, rate) => path.join(cacheDir, keyOf(text, rate) + '.wav');
   const month = () => now().toISOString().slice(0, 7);
 
@@ -166,7 +167,7 @@ function createTtsService({ provider, voice, speakingRate = 1.0, cacheDir, ledge
             };
             // Counted before the request is sent. Providers that retry (Google) report each attempt.
             if (!provider.reportsAttempts) attempt();
-            const audio = await provider.synthesize({ text, voice, speakingRate: rate, onAttempt: provider.reportsAttempts ? attempt : undefined });
+            const audio = await provider.synthesize({ text, voice, language, speakingRate: rate, onAttempt: provider.reportsAttempts ? attempt : undefined });
             parseWav(audio); // validate before caching
             fs.writeFileSync(file + '.tmp', audio);
             fs.renameSync(file + '.tmp', file);

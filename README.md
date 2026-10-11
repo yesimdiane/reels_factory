@@ -1,5 +1,7 @@
 # Seoul Home Reels Factory
 
+> **v2.3**: 클라우드 배포(Docker) + Story Lab 파이프라인 — `docs/DEPLOYMENT.md`, `docs/STUDIO-V2.3.md`, `docs/MIGRATION-V2.3.md` 참고.
+
 Instagram account: **서울에서 집꾸미기** — "우리 집에 들이기 전에, 먼저 보여드릴게요." Brand rules, content pillars and script logic: [docs/brand.md](docs/brand.md). Five-hook script workflow (H1–H5, operator picks the hook): [docs/five-hook-workflow.md](docs/five-hook-workflow.md). **Gemini is the production orchestrator** (plans; code and the renderer execute; Claude Code only maintains the code): [docs/gemini-orchestration.md](docs/gemini-orchestration.md).
 
 Low-cost Instagram home-decor affiliate reels production workflow.
@@ -54,3 +56,9 @@ Asset URL and actual reuse/AI-edit permissions must be verified, not inferred fr
 - Operator: Flow generation, permissions, final content approval.
 
 Never commit API keys, tokens, private customer data, or affiliate account credentials.
+
+## Studio V2 (Muapi + redesigned dashboard)
+
+`npm run studio` starts the local Studio at http://127.0.0.1:4173 (MOCK mode by default, no costs). It covers script →
+storyboard → animation (Muapi image-to-video) → clip review → multi-character voices → 9:16 render → publishing pack, with
+approval gates and cost controls. See [docs/studio-v2.md](docs/studio-v2.md) for the safety model, env variables and what is mock vs real.

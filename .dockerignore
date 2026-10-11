@@ -1,8 +1,11 @@
-.git
 node_modules
+.git
+.env
 renderer/.env
 renderer/output
 renderer/clips
+renderer/refs
 renderer/jobs
-dist
 tests
+dist
+*.zip

@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'apps-script');
-const ORDER = ['Config.gs', 'Validation.gs', 'States.gs', 'Reels.gs', 'Prompt.gs', 'Gemini.gs', 'Sheets.gs', 'Fixtures.gs', 'FlowPrompts.gs', 'Production.gs', 'Media.gs', 'StoryboardImages.gs', 'RenderJob.gs', 'Code.gs', 'WebApp.gs'];
+const ORDER = ['Config.gs', 'Validation.gs', 'States.gs', 'Reels.gs', 'Prompt.gs', 'Gemini.gs', 'Sheets.gs', 'Fixtures.gs', 'FlowPrompts.gs', 'Production.gs', 'Media.gs', 'StoryboardImages.gs', 'RenderJob.gs', 'StudioBridge.gs', 'Code.gs', 'WebApp.gs'];
 // HTML files are embedded as string constants so the bundle stays a single paste-able file.
 const HTML = { 'Dashboard.html': 'RF_DASHBOARD_HTML' };
 const OUT = path.join(ROOT, 'dist', 'ReelsFactory.gs');

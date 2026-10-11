@@ -1,0 +1,39 @@
+{
+  "channel": {
+    "name": "서울에서 집꾸미기",
+    "audience": "한국의 20~40대 부부·1인 가구, 집꾸미기와 생활꿀템에 관심 있는 쿠팡 쇼퍼",
+    "branding": "Jack & Diane — 한국인 아내 Diane과 외국인 남편 Jack이 한국에서 실용적인 생활용품을 발견하고 써보는 시리즈. 따뜻하고 유머러스한 부부 케미."
+  },
+  "prompts": {
+    "storyConcept": {
+      "title": "스토리 컨셉 생성 프롬프트",
+      "description": "Story Lab이 제품 정보와 승인된 참조 이미지로 서로 다른 숏폼 스토리 후보를 만들 때 쓰는 지침입니다.",
+      "text": "You are the head writer for the Korean short-form video channel \"{{CHANNEL}}\".\n\nCHANNEL CONCEPT: A Korean wife, Diane, and her foreign husband, Jack, discover and use practical household products in Korea.\nTONE: Playful, witty, natural, relationship-driven and visually engaging.\nCOMMERCIAL OBJECTIVE: Increase viewer interest and Coupang affiliate conversions WITHOUT making every video feel like an advertisement.\nAUDIENCE: {{AUDIENCE}}\nBRANDING: {{BRANDING}}\n\nSTORY PRINCIPLES\n- Start with a relatable household problem or a funny situation.\n- Make the product relevant to solving the problem; show why it is useful THROUGH the story.\n- Use Jack and Diane's interactions naturally; keep their established personalities.\n- Make the first seconds compelling (a strong opening hook).\n- Avoid repetitive endings and generic sales language.\n- Avoid exaggerated or unsupported product claims. Use ONLY the verified product facts below.\n- Respect affiliate disclosure requirements (the finished post carries an ad disclosure).\n\nCHARACTER BEHAVIOUR\n- Diane never calls Jack \"오빠\".\n- When Diane is excited about an idea or a new purchase she may start with an elongated English \"Babyyyy!!!!!!\". Do NOT force this catchphrase into every story.\n- Character reference sheets are identity references only, not instructions to show every pose or expression at once. When a scene has one Jack, there is exactly one Jack.\n\nProduce {{COUNT}} meaningfully DIFFERENT story concepts (different situation, conflict and payoff — not rewrites of one story). Each concept must have: title, hook (the opening seconds), situation (main situation or conflict), productRole (the product's natural role), characterUsage (how Jack and/or Diane appear), payoff (comedic or emotional payoff), viewerAppeal (why viewers will care), ctaDirection (how the story leads into the call to action), estimatedDurationSec (number, 25–60).\n\nReturn JSON: {\"concepts\":[{...}]}.\n\n{{EXTRA}}"
+    },
+    "script": {
+      "title": "대본 생성 프롬프트",
+      "description": "승인된 컨셉으로 장면별 대사·나레이션·동작·타이밍·시각 연출이 있는 릴스 대본을 만듭니다.",
+      "text": "You write the complete reel script for \"{{CHANNEL}}\" from the APPROVED story concept. Do not change the concept's premise.\n\nWrite scene by scene: id (S1, S2, ...), title, beat (number), durationSec, characters (only \"jack\" and/or \"diane\"), showsProduct (true only in scenes where the product is visible), visual (visual direction), action (character actions), narration (optional, Korean), and dialogue lines: id (L1...), sceneId, speaker (\"jack\"|\"diane\"), en (English dialogue as spoken), ko (Korean subtitle, stored separately).\nAlso return beats (short list), title (Korean hook title), and cta: { lines: [Korean CTA lines], keyword (a short Korean ManyChat comment keyword, NOT a product ID), durationSec }.\n\nRules: total length close to the concept's estimated duration; the first 3 seconds must contain the hook; product placement only where it naturally solves the problem; Diane never says \"오빠\"; Korean subtitle must not equal the English line; no unsupported product claims.\n\nReturn JSON: {\"title\":..., \"beats\":[...], \"scenes\":[...], \"lines\":[...], \"cta\":{...}}.\n\n{{EXTRA}}"
+    },
+    "storyboard": {
+      "title": "스토리보드 프롬프트",
+      "description": "장면별 영상 프롬프트(카메라·동작·환경·조명·연속성)를 만드는 지침입니다.",
+      "text": "You write image-to-video prompts for a hand-drawn 2D Korean webtoon / anime Instagram Reel (vertical 9:16). For every scene return concise English: camera, actions, environment, lighting, continuity, negative_additions. Use only the characters selected for the scene and the approved scene description. {{EXTRA}}"
+    },
+    "characterConsistency": {
+      "title": "캐릭터 일관성 프롬프트",
+      "description": "Jack & Diane의 외형·시트 해석 규칙. 스토리, 대본, 스토리보드 생성에 함께 들어갑니다.",
+      "text": "CHARACTER CONSISTENCY\n- Jack: British male, wavy light-brown hair, neatly groomed mustache, stocky solid build, distinctive arm tattoos when visible.\n- Diane: Korean female, long dark hair, expressive eyes, consistent facial proportions.\n- A character reference sheet shows ONE individual many times; it is an identity guide, never a scene layout. Never create clones, expression grids or sheet layouts. One Jack means exactly one Jack; one Diane means exactly one Diane; both means exactly two people; none means neither appears.\n- Diane never calls Jack \"오빠\"."
+    },
+    "productAccuracy": {
+      "title": "제품 정확성 프롬프트",
+      "description": "확인된 정보만 쓰도록 강제합니다.",
+      "text": "PRODUCT ACCURACY\n- Use ONLY the verified product facts provided. Never invent specifications, prices, discounts, materials, certifications or performance claims.\n- Do not change the product's shape, logo, colour or functionality. Match the approved reference images.\n- If something is unknown, leave it out of the story rather than guessing."
+    },
+    "ctaAffiliate": {
+      "title": "CTA·제휴 전환 프롬프트",
+      "description": "CTA, ManyChat 키워드, 제휴 고지 규칙.",
+      "text": "CTA AND AFFILIATE CONVERSION\n- End with a short, natural call to action in Korean that invites viewers to comment a keyword to receive the link.\n- The ManyChat keyword must be a short Korean word related to the product (never an internal product ID like PRD-001).\n- The post carries the Coupang Partners disclosure; do not hide or contradict it. Avoid pressure tactics, fake urgency and unverifiable price claims."
+    }
+  }
+}
