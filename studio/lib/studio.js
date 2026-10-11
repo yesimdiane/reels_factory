@@ -155,6 +155,11 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         audit: store.episodes.auditLog(id, 40),
         versions: store.episodes.versions(id),
       },
+      productRefImages: (() => {
+        const refs = ep.productRefs && ep.productRefs.imageIds;
+        if (!refs || !refs.length || !ep.productId) return [];
+        try { const pv = products.get(ep.productId); return refs.map((i) => pv.images.find((x) => x.id === i)).filter(Boolean).map((im) => ({ id: im.id, url: im.url, kind: im.kind, kindLabel: im.kindLabel, label: im.label })); } catch (_) { return []; }
+      })(),
       renders: ep.renders.map((r) => Object.assign({}, r, { url: `/media/render/${id}/${r.v}`, current: !!(ep.approvals.final && ep.approvals.final.v === r.v) })),
       sfx: ep.sfx,
       timeline: used,
@@ -231,9 +236,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const num = (v, d) => (Number.isFinite(Number(v)) && v !== '' && v !== null ? Number(v) : d);
 
   /** Normal path: an episode starts from an APPROVED story concept (Product → Story Lab → episode). */
-  async function createEpisodeFromConcept({ productId, conceptId, id }) {
-    const epId = await scriptgen.createEpisodeFromConcept(productId, conceptId, { id });
-    store.episodes.audit(epId, 'episode.from_concept', { productId, conceptId });
+  async function createEpisodeFromConcept({ productId, conceptId, id, newVersion = false }) {
+    const epId = await scriptgen.createEpisodeFromConcept(productId, conceptId, { id, newVersion });
+    store.episodes.audit(epId, 'episode.from_concept', { productId, conceptId, newVersion: !!newVersion });
     return epId;
   }
 

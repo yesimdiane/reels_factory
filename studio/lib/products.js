@@ -10,11 +10,19 @@ const { extractProduct, downloadImage, sniffImage } = require('./extract');
 
 const MAX_UPLOADS = 5;
 const MAX_RETRIEVED = 8;
-const MAX_GENERATED = 5;
+const MAX_GENERATED = 8;
 const MAX_SET = 8;
 const KIND_LABEL = { retrieved: '원본 (쇼핑몰에서 수집)', uploaded: '직접 업로드', ai_generated: 'AI 생성 (제조사 사진 아님)' };
 const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 const PID_RE = /^PRD-[A-Za-z0-9-]{1,30}$/;
+
+/** Price is ONLY what the operator typed (never scraped or guessed). Prices change: it always carries the date it was entered. */
+function cleanPrice(v) {
+  if (!v || typeof v !== 'object') return null;
+  const text = String(v.text || '').trim().slice(0, 60);
+  if (!text) return null;
+  return { text, source: 'operator', note: '운영자가 직접 입력한 값 · 가격과 재고는 수시로 바뀌므로 게시 전에 쿠팡에서 다시 확인하세요', enteredAt: String(v.enteredAt || '') || nowIso() };
+}
 
 function createProductService({ store, router, extractFn = extractProduct, downloadFn = downloadImage, log = () => {} }) {
   const root = () => store.path('products');
@@ -69,10 +77,28 @@ function createProductService({ store, router, extractFn = extractProduct, downl
       images: p.images.map((im) => Object.assign({}, im, { kindLabel: KIND_LABEL[im.kind], url: `/media/product/${p.id}/${im.id}` })),
       reference: refs,
       verifiedFacts: verifiedFacts(p),
-      limits: { uploads: MAX_UPLOADS, retrieved: MAX_RETRIEVED, generated: MAX_GENERATED },
+      limits: { uploads: MAX_UPLOADS, retrieved: MAX_RETRIEVED, generated: MAX_GENERATED, extraRefs: 5 },
       counts: { uploaded: p.images.filter((i) => i.kind === 'uploaded' && i.status !== 'replaced').length, retrieved: p.images.filter((i) => i.kind === 'retrieved').length, generated: p.images.filter((i) => i.kind === 'ai_generated').length },
       readiness: readiness(p, refs),
+      generations: generationsOf(p),
+      linkedEpisodes: linkedEpisodes(p.id),
     });
+  }
+  /** Episodes created for this product (any state). Read-only: nothing is created or changed here. */
+  function linkedEpisodes(pid) {
+    try {
+      return store.episodes.list().filter((e) => e.productId === pid).map((e) => ({ id: e.id, title: e.title || '', conceptId: (e.concept || {}).conceptId || '' }));
+    } catch (_) { return []; }
+  }
+  /** AI image versions grouped by the generation request that produced them (history, newest first). */
+  function generationsOf(p) {
+    const by = new Map();
+    p.images.filter((i) => i.kind === 'ai_generated').forEach((i) => {
+      const g = by.get(i.generationId || i.id) || { id: i.generationId || i.id, at: i.createdAt || '', prompt: (i.params || {}).prompt || '', style: (i.params || {}).style || '', basedOn: i.derivedFrom || [], extraRefs: (i.params || {}).extraRefs || [], imageIds: [] };
+      g.imageIds.push(i.id);
+      by.set(g.id, g);
+    });
+    return Array.from(by.values()).reverse();
   }
   function readiness(p, refs = referenceState(p)) {
     const missing = [];
@@ -84,7 +110,7 @@ function createProductService({ store, router, extractFn = extractProduct, downl
 
   const list = () => ids().map((i) => { const p = get(i); return { id: p.id, name: p.name, url: p.url, extraction: p.extraction && p.extraction.status, reference: referenceState(p).state, images: p.images.length, readiness: readiness(p), updatedAt: p.updatedAt }; });
 
-  async function create({ id, name, url = '', affiliateUrl = '', description = '', category = '', features = [], forbiddenClaims = [], legacy = false } = {}) {
+  async function create({ id, name, url = '', affiliateUrl = '', description = '', category = '', features = [], forbiddenClaims = [], legacy = false, price = null } = {}) {
     if (!String(name || '').trim() && !String(url || '').trim()) throw new StudioError('NEED_INPUT', '상품명이나 상품 URL 중 하나는 필요합니다.', { status: 400 });
     if (url) require('./extract').parseUrl(url);
     const pid = id || nextId();
@@ -93,7 +119,7 @@ function createProductService({ store, router, extractFn = extractProduct, downl
       id: pid, name: String(name || '').trim().slice(0, 200), url: String(url || '').trim(), affiliateUrl: String(affiliateUrl || '').trim(), description: String(description || '').slice(0, 3000), category: String(category || '').slice(0, 100),
       specs: (features || []).map(String).map((t) => t.trim()).filter(Boolean).map((text) => ({ text, source: 'manual', verified: true, at: nowIso() })),
       sellingPoints: [], forbiddenClaims: (forbiddenClaims || []).map(String).filter(Boolean),
-      extraction: { status: 'none', note: '', at: '' }, images: [], referenceSet: null, legacy: !!legacy, createdAt: nowIso(), updatedAt: nowIso(),
+      price: cleanPrice(price), extraction: { status: 'none', note: '', at: '' }, images: [], referenceSet: null, legacy: !!legacy, createdAt: nowIso(), updatedAt: nowIso(),
     };
     fs.mkdirSync(dirOf(pid), { recursive: true });
     writeJsonAtomic(fileOf(pid), p);
@@ -104,6 +130,7 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     const p = await update(id, (p) => {
       ['name', 'category', 'description', 'url', 'affiliateUrl'].forEach((k) => patch[k] !== undefined && (p[k] = String(patch[k]).trim().slice(0, k === 'description' ? 3000 : 300)));
       if (patch.url) require('./extract').parseUrl(patch.url);
+      if (patch.price !== undefined) p.price = cleanPrice(patch.price);
       if (Array.isArray(patch.forbiddenClaims)) p.forbiddenClaims = patch.forbiddenClaims.map(String).filter(Boolean);
       // specs: [{text, verified}] — a text the operator types or confirms is "verified"; changing text re-sets source to manual.
       if (Array.isArray(patch.specs)) {
@@ -193,24 +220,71 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     return view(p);
   }
 
-  /** AI product image (Gemini image-capable model). Always labelled AI-generated; needs explicit paid confirmation. */
-  async function generateImage(id, { basedOn = [], prompt = '', confirm } = {}) {
-    const p0 = get(id);
-    if (p0.images.filter((i) => i.kind === 'ai_generated').length >= MAX_GENERATED) throw new StudioError('GEN_LIMIT', `AI 생성 이미지는 최대 ${MAX_GENERATED}장입니다.`, { status: 409 });
-    const srcs = p0.images.filter((i) => basedOn.includes(i.id) && i.kind !== 'ai_generated' && i.status === 'approved');
+  const MAX_EXTRA_REFS = 5;
+  const STYLES = {
+    anime: 'Render it as a clean 2D anime / Korean webtoon illustration: confident ink outlines, flat cel shading, soft studio lighting, simple uncluttered background. It must still be recognisably the SAME product.',
+    product: 'Render it as a clean, realistic product image on a neutral light background.',
+  };
+  /** Picks the source images for a request. Returns { srcs (approved originals), extras (up to 5 additional references) }. */
+  function pickSources(p, basedOn, extraImageIds) {
+    const srcs = p.images.filter((i) => (basedOn || []).includes(i.id) && i.kind !== 'ai_generated' && i.status === 'approved');
     if (!srcs.length) throw new StudioError('NO_SOURCE', '기준이 될 승인된 원본/업로드 이미지를 선택하세요. (제품 모양을 임의로 만들지 않습니다.)', { status: 409 });
-    const images = srcs.map((s) => ({ label: 'Product reference photo (keep exact shape, logo, colour and function):', mimeType: MIME[path.extname(s.file)] || 'image/png', data: fs.readFileSync(path.join(dirOf(id), s.file)).toString('base64') }));
+    const extraIds = Array.from(new Set(extraImageIds || [])).filter((i) => !srcs.some((s) => s.id === i));
+    if (extraIds.length > MAX_EXTRA_REFS) throw new StudioError('EXTRA_LIMIT', `추가 참조 이미지는 한 번에 최대 ${MAX_EXTRA_REFS}장입니다.`, { status: 409 });
+    const extras = extraIds.map((i) => {
+      const im = p.images.find((x) => x.id === i);
+      if (!im || im.kind === 'ai_generated' || ['rejected', 'replaced'].includes(im.status)) throw new StudioError('BAD_EXTRA', '추가 참조로 쓸 수 없는 이미지입니다: ' + i, { status: 409 });
+      return im;
+    });
+    return { srcs, extras };
+  }
+  /** Number of images that will be sent (drives the cost estimate). */
+  function imageCount(id, { basedOn = [], extraImageIds = [] } = {}) {
+    const { srcs, extras } = pickSources(get(id), basedOn, extraImageIds);
+    return srcs.length + extras.length;
+  }
+
+  /**
+   * AI product reference image (Gemini image-capable model). Always labelled AI-generated; needs explicit paid confirmation.
+   * Each call is one "generation" (numbered version) whose parameters are stored so it can be regenerated or compared.
+   */
+  async function generateImage(id, { basedOn = [], extraImageIds = [], prompt = '', style = 'anime', confirm } = {}) {
+    const p0 = get(id);
+    if (!STYLES[style]) throw new StudioError('BAD_STYLE', '알 수 없는 스타일입니다: ' + style, { status: 400 });
+    if (p0.images.filter((i) => i.kind === 'ai_generated' && i.status !== 'rejected').length >= MAX_GENERATED) throw new StudioError('GEN_LIMIT', `거절하지 않은 AI 생성 이미지는 최대 ${MAX_GENERATED}장입니다. 마음에 들지 않는 버전은 거절하면 다시 만들 수 있습니다.`, { status: 409 });
+    const { srcs, extras } = pickSources(p0, basedOn, extraImageIds);
+    const read = (im) => fs.readFileSync(path.join(dirOf(id), im.file)).toString('base64');
+    const mime = (im) => MIME[path.extname(im.file)] || 'image/png';
+    const images = srcs.map((s) => ({ label: 'APPROVED product reference photo (source of truth: keep exact shape, logo, colour and function):', mimeType: mime(s), data: read(s) }))
+      .concat(extras.map((s) => ({ label: 'Additional reference (extra angle/detail of the SAME product):', mimeType: mime(s), data: read(s) })));
     const instruction = [
-      'Create a clean product image of EXACTLY the product shown in the reference photo(s).',
-      'Do NOT change the product shape, proportions, logo, text, colour or functionality. Do not add features. No people, no extra text.',
-      prompt ? 'Requested variation (background/angle/lighting only): ' + String(prompt).slice(0, 500) : 'Variation: neutral light background, product centered.',
+      'Create a product reference image of EXACTLY the product shown in the reference photo(s).',
+      'Do NOT change the product shape, proportions, logo, text, colour, materials or functionality. Do not add features or accessories. No people, no extra text.',
+      STYLES[style],
+      prompt ? 'Requested variation (background/angle/lighting only): ' + String(prompt).slice(0, 500) : 'Variation: front view, product centered.',
     ].join('\n');
     const out = await router.runImage('imageGeneration', { prompt: instruction, images, confirm });
+    const generationId = 'gen_' + sha256(instruction + nowIso() + Math.random()).slice(0, 8);
     const p = await update(id, (p) => {
-      out.images.forEach((g) => {
+      const version = p.images.filter((i) => i.kind === 'ai_generated').reduce((m, i) => Math.max(m, i.version || 0), 0) + 1;
+      out.images.forEach((g, n) => {
         const buf = Buffer.from(g.data, 'base64');
-        saveImage(p, id, { buffer: buf, filename: 'ai.png', kind: 'ai_generated', label: 'AI 생성 이미지', extra: { derivedFrom: srcs.map((s) => s.id), provider: out.provider, model: out.model, prompt: instruction, disclosure: 'AI가 만든 이미지입니다. 제조사 사진이 아닙니다.' } });
+        saveImage(p, id, { buffer: buf, filename: 'ai.png', kind: 'ai_generated', label: `AI 생성 v${version + n}`, extra: { version: version + n, generationId, derivedFrom: srcs.map((s) => s.id), provider: out.provider, model: out.model, prompt: instruction, params: { prompt: String(prompt).slice(0, 500), style, extraRefs: extras.map((e) => e.id) }, disclosure: 'AI가 만든 이미지입니다. 제조사 사진이 아닙니다.' } });
       });
+    });
+    return view(p);
+  }
+
+  /** Approve exactly one AI version; its still-pending siblings from the same generation are rejected (history is kept). */
+  async function chooseVersion(id, imgId, by = 'operator') {
+    const p = await update(id, (p) => {
+      const im = p.images.find((i) => i.id === imgId);
+      if (!im || im.kind !== 'ai_generated') throw new StudioError('NOT_FOUND', 'AI 생성 이미지를 찾을 수 없습니다.', { status: 404 });
+      if (im.status === 'rejected' || im.status === 'replaced') throw new StudioError('REJECTED', '거절된 이미지는 선택할 수 없습니다. 먼저 승인 대기로 되돌리세요.', { status: 409 });
+      im.status = 'approved';
+      im.decidedBy = by;
+      im.decidedAt = nowIso();
+      p.images.filter((i) => i.kind === 'ai_generated' && i.generationId === im.generationId && i.id !== im.id && i.status === 'pending').forEach((i) => { i.status = 'rejected'; i.decidedBy = by; i.decidedAt = nowIso(); i.decisionNote = `v${im.version} 선택으로 자동 거절`; });
     });
     return view(p);
   }
@@ -250,7 +324,7 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     return path.join(dirOf(id), im.file);
   }
 
-  return { list, get: (id) => view(get(id)), raw: get, create, edit, extract, upload, replace, setStatus, generateImage, approveReferenceSet, waiveReferences, bindingFor, imageFiles, mediaFile, referenceState, verifiedFacts, readiness, MAX_UPLOADS };
+  return { list, get: (id) => view(get(id)), raw: get, create, edit, extract, upload, replace, setStatus, generateImage, chooseVersion, imageCount, approveReferenceSet, waiveReferences, bindingFor, imageFiles, mediaFile, referenceState, verifiedFacts, readiness, MAX_UPLOADS };
 }
 
 module.exports = { createProductService, KIND_LABEL, MAX_UPLOADS };

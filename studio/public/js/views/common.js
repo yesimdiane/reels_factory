@@ -92,3 +92,14 @@ export function charAvatar(c, big) {
 export function lockedNotice(text, view, label) {
   return h('div', { class: 'banner warn' }, icon('lock'), h('div', null, text, ' ', view && h('a', { href: '#/' + view + '/' + state.episodeId }, label || '이동')));
 }
+
+/** Approved product reference images that travelled with the episode from Product Studio (read-only strip). */
+export function productRefStrip(ep) {
+  const imgs = ep.productRefImages || [];
+  if (!ep.productId) return null;
+  if (!imgs.length) return h('div', { class: 'small muted' }, ep.productRefs && ep.productRefs.waived ? '제품 참조 이미지 없이 진행(사유 기록됨): ' + ep.productRefs.waived : '이 에피소드에는 연결된 제품 참조 이미지가 없습니다.');
+  return h('div', { class: 'card stack', style: 'gap:8px' },
+    h('div', { class: 'row between' }, h('b', null, '승인된 제품 참조 이미지'), h('a', { class: 'small', href: '#/products/' + ep.productId }, 'Product Studio에서 보기')),
+    h('div', { class: 'row', style: 'gap:10px;flex-wrap:wrap' }, imgs.map((im) => h('figure', { style: 'margin:0;width:96px' }, h('img', { src: im.url, alt: im.label || '제품 참조', style: 'width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid var(--line)' }), h('figcaption', { class: 'small muted' }, im.kindLabel || im.kind)))),
+    h('div', { class: 'small muted' }, '장면 프롬프트와 시작 이미지를 정할 때 제품의 모양·색·기능은 이 승인된 이미지를 기준으로 하세요.'));
+}

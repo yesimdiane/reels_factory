@@ -17,7 +17,7 @@ const goodConcepts = (n = 3, tag = '') => ({
     ['정리 내기', '두 사람이 누가 더 빨리 정리하는지 내기를 한다', '정리가 끝난 현관을 보고 둘 다 놀란다'],
     ['택배 미스터리', '밤늦게 도착한 택배 상자를 두고 Jack이 추궁한다', '상자 속 물건이 오히려 Jack의 고민을 풀어준다'],
     ['아침 출근 전쟁', '출근 직전 우산을 찾느라 집이 난장판이 된다', '다음 날은 우산이 제자리에 있어 둘이 여유롭다'],
-  ].slice(0, n).map((c, i) => ({ title: c[0] + tag, hook: c[1], situation: c[1] + ' ' + (i + 1), productRole: '확인된 기능 범위에서만 보여줌', characterUsage: i % 2 ? 'Diane 중심' : 'Jack 중심', payoff: c[2], viewerAppeal: '공감', ctaDirection: '댓글 키워드로 링크 안내', estimatedDurationSec: 40 })),
+  ].slice(0, n).map((c, i) => ({ title: c[0] + tag, hook: c[1], situation: c[1] + ' ' + (i + 1), plot: c[1] + ' → ' + c[2] + ' (' + (i + 1) + ')', visualComedy: '과장된 표정 리액션 ' + (i + 1), estimatedScenes: 6, productRole: '확인된 기능 범위에서만 보여줌', characterUsage: i % 2 ? 'Diane 중심' : 'Jack 중심', payoff: c[2], viewerAppeal: '공감', ctaDirection: '댓글 키워드로 링크 안내', estimatedDurationSec: 40 })),
 });
 
 const goodScript = () => ({

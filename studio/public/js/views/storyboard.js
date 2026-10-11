@@ -1,7 +1,7 @@
 import { h, chip, icon, copyText, confirmDialog, toast } from '../ui.js';
 import { state, act, requireEpisode } from '../state.js';
 import { api } from '../api.js';
-import { pageHead, pipelineBar, noEpisode, episodePicker, lockedNotice, charAvatar } from './common.js';
+import { pageHead, pipelineBar, noEpisode, episodePicker, lockedNotice, charAvatar, productRefStrip } from './common.js';
 
 export function storyboard() {
   const ep = requireEpisode();
@@ -13,6 +13,7 @@ export function storyboard() {
     h('button', { class: 'btn ghost', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/storyboard/prompts`, { force: false }), { ok: '비어 있는 장면의 프롬프트를 만들었습니다 (수정한 프롬프트는 그대로 둠)' }) }, icon('refresh'), '템플릿으로 만들기 (무료)'),
     h('button', { class: 'btn', disabled: !ep.derived.scriptApproved, title: ep.derived.scriptApproved ? '' : '대본 승인 후 사용할 수 있습니다', onclick: () => aiPrompts(ep, null) }, icon('play'), 'AI로 프롬프트 만들기')));
   wrap.append(pipelineBar(ep));
+  { const strip = productRefStrip(ep); if (strip) wrap.append(strip); }
   autoBuild(ep);
   if (!ep.derived.scriptApproved) wrap.append(lockedNotice('대본이 승인되어야 스토리보드를 승인할 수 있습니다.', 'script', '대본으로 이동'));
   if (ep.derived.storyboardChangedSinceApproval) wrap.append(h('div', { class: 'banner warn' }, h('div', null, h('b', null, '승인 후 스토리보드가 수정되었습니다'), '다시 확인하고 승인하세요. 이전 승인으로는 유료 생성을 시작할 수 없습니다.')));
