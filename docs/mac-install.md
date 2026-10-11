@@ -122,3 +122,13 @@ Single job, by hand:
 - `npm run render:estimate -- --job <file>` is free;
 - `npm run render -- --job <file> --preview` is free (local voice);
 - `npm run render -- --job <file>` is the final render.
+
+
+## Studio V2 (optional)
+
+```
+node studio/server.js     # http://127.0.0.1:4173 — MOCK mode, no API keys needed
+```
+
+Put `MUAPI_API_KEY` (and optionally `HEYGEN_API_KEY`) in `renderer/.env` only when you are ready for real generation, and
+set `RF_MUAPI_MODE=live` / `RF_STUDIO_VOICE_MODE=live` deliberately. Details: [studio-v2.md](studio-v2.md).

@@ -1,0 +1,21 @@
+{
+  "comment": "Video model registry. Muapi documents the submit/poll protocol but NOT a per-model price list or a complete parameter list. Entries below are limited to what the official docs show. Confirm the endpoint and parameters for any model on the Muapi playground before the first live run, and enter your own per-clip price estimate in Settings (prices are never invented here).",
+  "models": [
+    {
+      "id": "kling-master",
+      "label": "Kling Master · image-to-video",
+      "provider": "muapi",
+      "endpoint": "kling-master",
+      "mode": "image-to-video",
+      "promptField": "prompt",
+      "imageField": "image_url",
+      "durations": [5, 10],
+      "aspectRatios": ["16:9", "9:16", "1:1"],
+      "supportsNegativePrompt": true,
+      "lipSync": false,
+      "verification": "docs-example",
+      "docsUrl": "https://muapi.ai/docs/kling",
+      "notes": "Request example in the official Kling guide: POST /api/v1/kling-master with prompt, image_url, duration (5 or 10). aspect_ratio (16:9, 9:16, 1:1) and negative_prompt are listed in the parameter table. The docs do not list a price."
+    }
+  ]
+}

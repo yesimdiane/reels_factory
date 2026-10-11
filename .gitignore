@@ -8,3 +8,5 @@ renderer/output/
 renderer/clips/
 renderer/refs/
 renderer/jobs/*.json
+*.tar.gz
+master.key
