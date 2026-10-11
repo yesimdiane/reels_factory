@@ -46,7 +46,7 @@ function createHeyGenTts({
     name: 'heygen',
     paid: true,
     reportsAttempts: true,
-    async synthesize({ text, voice, speakingRate, onAttempt }) {
+    async synthesize({ text, voice, speakingRate, language = 'ko', onAttempt }) {
       if (!apiKey) throw new Error('HEYGEN_API_KEY가 없습니다 (renderer/.env).');
       if (!voice) throw new Error('HeyGen Voice ID가 설정되지 않았습니다.');
 
@@ -64,7 +64,7 @@ function createHeyGenTts({
               text,
               voice_id: voice,
               speed: Number(speakingRate) || 1.0,
-              language: 'ko',
+              language,
             }),
           });
 
