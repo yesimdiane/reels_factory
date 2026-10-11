@@ -139,8 +139,9 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('PUT', '/api/products/:id', async ({ p, body }) => S.products.edit(p.id, body));
   route('POST', '/api/products/:id/extract', async ({ p }) => S.products.extract(p.id));
   route('POST', '/api/products/:id/images', async ({ p, raw, headers, query }) => S.products.upload(p.id, raw, decodeURIComponent(headers['x-filename'] || 'image.png'), { label: query.label }), { upload: true });
-  route('POST', '/api/products/:id/images/generate', async ({ p, body }) => S.products.generateImage(p.id, { basedOn: body.basedOn || [], prompt: body.prompt, confirm: body.confirm }));
-  route('POST', '/api/products/:id/images/estimate', async () => S.router.estimate('imageGeneration', { inputChars: 1200, outputTokens: 1500, images: 2 }));
+  route('POST', '/api/products/:id/images/generate', async ({ p, body }) => S.products.generateImage(p.id, { basedOn: body.basedOn || [], extraImageIds: body.extraImageIds || [], style: body.style || 'anime', prompt: body.prompt, confirm: body.confirm }));
+  route('POST', '/api/products/:id/images/:iid/choose', async ({ p }) => S.products.chooseVersion(p.id, p.iid));
+  route('POST', '/api/products/:id/images/estimate', async ({ p, body }) => S.router.estimate('imageGeneration', { inputChars: 1200, outputTokens: 1500, images: Math.max(1, (body.basedOn || body.extraImageIds) ? S.products.imageCount(p.id, { basedOn: body.basedOn || [], extraImageIds: body.extraImageIds || [] }) : 2) }));
   route('POST', '/api/products/:id/images/:iid/replace', async ({ p, raw, headers }) => S.products.replace(p.id, p.iid, raw, decodeURIComponent(headers['x-filename'] || 'image.png')), { upload: true });
   route('POST', '/api/products/:id/images/:iid/status', async ({ p, body }) => S.products.setStatus(p.id, p.iid, body.status));
   route('POST', '/api/products/:id/references/approve', async ({ p, body }) => S.products.approveReferenceSet(p.id, { imageIds: body.imageIds }));
@@ -156,7 +157,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/storylab/:pid/concepts/:cid/revoke', async ({ p }) => S.storylab.revoke(p.pid, p.cid));
   route('POST', '/api/storylab/:pid/concepts/:cid/reject', async ({ p, body }) => S.storylab.reject(p.pid, p.cid, body.reason));
   route('POST', '/api/storylab/:pid/concepts/:cid/reopen', async ({ p }) => S.storylab.reopen(p.pid, p.cid));
-  route('POST', '/api/storylab/:pid/concepts/:cid/episode', async ({ p }) => { const id = await S.createEpisodeFromConcept({ productId: p.pid, conceptId: p.cid }); return ep(id); });
+  route('POST', '/api/storylab/:pid/concepts/:cid/episode', async ({ p, body }) => { const id = await S.createEpisodeFromConcept({ productId: p.pid, conceptId: p.cid, newVersion: body.newVersion === true }); return ep(id); });
 
   // ---- Settings: AI integrations / prompts ----
   route('GET', '/api/ai', async () => S.integrations.overview());

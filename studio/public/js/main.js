@@ -18,7 +18,7 @@ import { settings } from './views/settings.js';
 // [key, ko, en, view, inRail]   Dashboard → Products → Story Lab → Script → Storyboard → Video Studio → Review → Publishing → Settings
 export const NAV = [
   ['overview', '대시보드', 'Dashboard', overview, true],
-  ['products', '제품', 'Products', products, true],
+  ['products', '제품 스튜디오', 'Product Studio', products, true],
   ['storylab', '스토리 랩', 'Story Lab', storylab, true],
   ['episodes', '에피소드', 'Episodes', episodes, true],
   ['script', '대본 스튜디오', 'Script Studio', script, true],

@@ -14,10 +14,14 @@ function createScriptGen({ store, products, storylab, prompts, router, lib }) {
   }
 
   /** Creates an (empty) episode bound to an approved concept. Product facts are copied from the verified product record. */
-  async function createEpisodeFromConcept(pid, cid, { id } = {}) {
+  async function createEpisodeFromConcept(pid, cid, { id, newVersion = false } = {}) {
     const concept = storylab.requireApproved(pid, cid);
     const b = products.bindingFor(pid);
     const p = b.product;
+    // A concept that already produced an episode never silently produces another one, and an existing episode is never touched:
+    // a repeat handoff is only allowed with an explicit confirmation and always creates a NEW episode (a version of the earlier one).
+    const existing = store.episodes.list().filter((e) => e.concept && e.concept.conceptId === cid);
+    if (existing.length && !newVersion) throw new StudioError('EPISODE_EXISTS', `이 컨셉으로 만든 에피소드가 이미 있습니다: ${existing.map((e) => e.id).join(', ')}`, { details: existing.map((e) => e.id), recovery: '기존 에피소드를 열거나, 확인 후 새 버전 에피소드를 만드세요. 기존 에피소드는 변경되지 않습니다.', status: 409 });
     const epId = id || episodeIdFor(pid);
     const seed = {
       id: epId, reelId: epId, productId: pid, title: concept.title, titleEn: '', series: 'Jack & Diane',
@@ -26,7 +30,10 @@ function createScriptGen({ store, products, storylab, prompts, router, lib }) {
       scenes: [{ id: 'S1', title: '첫 장면', beat: 1, durationSec: 5, characters: ['jack'], showsProduct: false, visual: '' }], lines: [], suggestions: [],
       cta: { lines: [], durationSec: 3.5, keyword: '' },
       publishing: { keyword: '', affiliateUrl: p.affiliateUrl || '', disclosure: '[광고] 이 게시물은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.' },
-      concept: { productId: pid, conceptId: cid, revision: concept.revision, title: concept.title, approvedAt: concept.approval.at },
+      concept: { productId: pid, conceptId: cid, revision: concept.revision, title: concept.title, approvedAt: concept.approval.at, hook: concept.hook, ctaDirection: concept.ctaDirection, estimatedScenes: concept.estimatedScenes || null, versionOf: existing.length ? existing[0].id : null },
+      // Approved product reference images travel with the episode so Storyboard / Animation can show and use the same images.
+      productRefs: { referenceSetId: b.reference.waived ? 'waived' : (p.referenceSet || {}).id || '', imageIds: b.reference.imageIds || [], waived: b.reference.waived || '' },
+      characterRules: ['Diane never calls Jack "오빠".', 'Spoken dialogue in English; subtitles in Korean.', 'Diane may shout "BABYYYY!!!!!!" when excited (not in every scene).', 'Keep the approved 2D character references; exactly one Jack and one Diane.'],
       scriptSource: null,
     };
     store.episodes.create(seed);
@@ -41,7 +48,9 @@ function createScriptGen({ store, products, storylab, prompts, router, lib }) {
       '--- INPUT DATA (authoritative) ---',
       'CONCEPT_ID: ' + concept.id + ' (revision ' + concept.revision + ')',
       'CONCEPT_TITLE: ' + concept.title,
-      ...['hook', 'situation', 'productRole', 'characterUsage', 'payoff', 'viewerAppeal', 'ctaDirection'].map((k) => `CONCEPT_${k.toUpperCase()}: ${concept[k]}`),
+      ...['hook', 'situation', 'plot', 'productRole', 'characterUsage', 'visualComedy', 'payoff', 'viewerAppeal', 'ctaDirection'].filter((k) => concept[k]).map((k) => `CONCEPT_${k.toUpperCase()}: ${concept[k]}`),
+      ...(concept.estimatedScenes ? ['ESTIMATED_SCENES: ' + concept.estimatedScenes] : []),
+      'LANGUAGE: spoken dialogue in ENGLISH, subtitles in KOREAN. Diane never calls Jack "오빠".',
       'ESTIMATED_DURATION_SEC: ' + concept.estimatedDurationSec,
       'PRODUCT_NAME: ' + ep.product.name,
       'VERIFIED_PRODUCT_FACTS (use ONLY these):',

@@ -1,7 +1,7 @@
 import { h, chip, icon, confirmDialog, fmtUsd, toast } from '../ui.js';
 import { state, act, requireEpisode, go } from '../state.js';
 import { api } from '../api.js';
-import { pageHead, pipelineBar, noEpisode, episodePicker, modeBanner, issueList, lockedNotice, videoTabs } from './common.js';
+import { pageHead, pipelineBar, noEpisode, episodePicker, modeBanner, issueList, lockedNotice, videoTabs, productRefStrip } from './common.js';
 
 const JOB_LABEL = { preparing: '준비 중', submitting: '제출 중', processing: '생성 중', completed: '완료', failed: '실패', uncertain: '확인 필요', polling_interrupted: '확인 중단', download_failed: '다운로드 실패', dismissed: '닫음' };
 const JOB_KIND = { completed: 'done', failed: 'err', uncertain: 'err', polling_interrupted: 'attention', download_failed: 'attention', processing: 'processing', submitting: 'processing', preparing: 'processing', dismissed: '' };
@@ -13,6 +13,7 @@ export function animation() {
   wrap.append(pageHead('Animation Studio', '애니메이션 스튜디오', '승인된 캐릭터 이미지로 장면별 9:16 클립을 만듭니다. 생성 전 예상 비용을 확인·승인하고, 만들어진 클립은 하나씩 검토해 승인합니다.', episodePicker()));
   wrap.append(videoTabs('animation'));
   wrap.append(pipelineBar(ep));
+  { const strip = productRefStrip(ep); if (strip) wrap.append(strip); }
   wrap.append(modeBanner(state.summary));
   if (!ep.derived.storyboardApproved) wrap.append(lockedNotice('대본과 스토리보드가 승인되어야 생성을 시작할 수 있습니다.', 'storyboard', '스토리보드로 이동'));
 

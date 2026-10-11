@@ -7,8 +7,10 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { StudioError, nowIso, readJson, writeJsonAtomic, sha256 } = require('./util');
 
-const FIELDS = ['title', 'hook', 'situation', 'productRole', 'characterUsage', 'payoff', 'viewerAppeal', 'ctaDirection'];
-const FIELD_LABEL = { title: '제목', hook: '오프닝 훅', situation: '상황/갈등', productRole: '제품의 자연스러운 역할', characterUsage: 'Jack/Diane 사용 방식', payoff: '결말/페이오프', viewerAppeal: '시청자 공감 포인트', ctaDirection: 'CTA 방향' };
+const FIELDS = ['title', 'hook', 'situation', 'plot', 'productRole', 'characterUsage', 'visualComedy', 'payoff', 'viewerAppeal', 'ctaDirection'];
+// Added in the Product Studio update: stored concepts from before it may lack these, so they are required for NEW concepts only.
+const NEW_FIELDS = ['plot', 'visualComedy'];
+const FIELD_LABEL = { title: '제목', hook: '오프닝 훅 (첫 3초)', situation: '제품 문제 / 사용 상황', plot: '30~45초 줄거리', productRole: '자연스러운 제품 등장', characterUsage: 'Jack·Diane 상호작용', visualComedy: '비주얼 코미디 포인트', payoff: '결말/페이오프', viewerAppeal: '시청자 공감 포인트', ctaDirection: '마지막 CTA' };
 const MAX_REFS_TO_AI = 4;
 
 const tokens = (s) => new Set(String(s).toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter((w) => w.length > 1));
@@ -20,6 +22,18 @@ function similarity(a, b) {
   A.forEach((w) => B.has(w) && inter++);
   return inter / (A.size + B.size - inter);
 }
+
+// Appended by CODE to every concept request so these rules never depend on which prompt version is stored.
+const STORY_RULES = [
+  '--- STORY RULES (mandatory, in addition to the instructions above) ---',
+  'Every concept MUST include these JSON fields: title, hook (what happens in the FIRST 3 SECONDS), situation (the product problem and use case),',
+  'plot (the 30-45 second plot, beat by beat), productRole (the natural product reveal), characterUsage (Jack and Diane interactions),',
+  'visualComedy (visual comedy opportunities), payoff, viewerAppeal, ctaDirection (the final CTA), estimatedDurationSec (30-45), estimatedScenes (integer 4-12).',
+  'CHARACTERS: Diane = Korean wife, long black hair, energetic, impulsive shopper. When excited she shouts "BABYYYY!!!!!!" (do not force it into every concept).',
+  'Jack = British husband, muscular/stocky, brown wavy hair, thick mustache, tattooed arms, affectionate dry humour.',
+  'Diane NEVER calls Jack "오빠". Spoken dialogue is in ENGLISH; on-screen subtitles are in KOREAN. Keep the approved 2D character look.',
+  'Concepts must be meaningfully different (different situation and payoff). Use ONLY the verified product facts; never invent specs, prices or availability.',
+].join('\n');
 
 function createStoryLab({ store, products, prompts, router, log = () => {} }) {
   const file = (pid) => store.path('storylab', pid + '.json');
@@ -43,14 +57,17 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
     return { productId: pid, concepts: d.concepts.map(view), batches: d.batches, fields: FIELD_LABEL };
   }
 
-  function clean(raw, product) {
+  function clean(raw, product, { strictNew = true } = {}) {
     const out = {};
     const problems = [];
     FIELDS.forEach((k) => {
       const v = String((raw && raw[k]) || '').trim();
-      if (!v) problems.push(`${FIELD_LABEL[k]} 누락`);
+      if (!v && (strictNew || !NEW_FIELDS.includes(k))) problems.push(`${FIELD_LABEL[k]} 누락`);
       out[k] = v.slice(0, 1200);
     });
+    const scenes = Number(raw && raw.estimatedScenes);
+    if (scenes >= 3 && scenes <= 20) out.estimatedScenes = Math.round(scenes);
+    else if (strictNew) problems.push('예상 장면 수(3~20) 오류');
     const dur = Number(raw && raw.estimatedDurationSec);
     if (!(dur >= 10 && dur <= 90)) problems.push('예상 길이(10~90초) 오류');
     out.estimatedDurationSec = Math.round(dur);
@@ -75,6 +92,8 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
       'FORBIDDEN_CLAIMS (never imply): ' + ((p.forbiddenClaims || []).join(', ') || 'none'),
       'COUNT: ' + count,
       'The attached product images are the APPROVED reference photos. Do not change the product\'s shape, logo or colour.',
+      '',
+      STORY_RULES,
     ].join('\n');
     const refs = b.reference.imageIds || [];
     const imgFiles = products.imageFiles(pid, refs).slice(0, MAX_REFS_TO_AI);
@@ -166,11 +185,13 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
       const c = find(d, cid);
       if (['superseded', 'rejected'].includes(c.status)) throw new StudioError('LOCKED', '이 컨셉은 수정할 수 없습니다(되살린 뒤 수정하세요).', { status: 409 });
       const p = products.raw(pid);
-      const next = Object.assign({}, Object.fromEntries(FIELDS.map((k) => [k, c[k]])), { estimatedDurationSec: c.estimatedDurationSec });
+      const next = Object.assign({}, Object.fromEntries(FIELDS.map((k) => [k, c[k] || ''])), { estimatedDurationSec: c.estimatedDurationSec, estimatedScenes: c.estimatedScenes });
       const before = JSON.stringify(next);
       FIELDS.forEach((k) => patch[k] !== undefined && (next[k] = String(patch[k]).trim().slice(0, 1200)));
       if (patch.estimatedDurationSec !== undefined) next.estimatedDurationSec = Math.round(Number(patch.estimatedDurationSec));
-      const { out, problems } = clean(next, p);
+      if (patch.estimatedScenes !== undefined) next.estimatedScenes = Number(patch.estimatedScenes);
+      const legacy = !c.plot; // concepts made before the Product Studio update keep working without the new fields
+      const { out, problems } = clean(next, p, { strictNew: !legacy || NEW_FIELDS.some((k) => String(patch[k] || '').trim()) });
       if (problems.length) throw new StudioError('INVALID_CONCEPT', problems[0], { details: problems, status: 422 });
       if (JSON.stringify(out) === before) return list(pid);
       c.edits.push({ at: nowIso(), by, revisionBefore: c.revision, before: JSON.parse(before) });
@@ -241,4 +262,4 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
   return { list, generate, regenerate, edit, approve, revoke, reject, reopen, estimate, requireApproved, peek, isApproved, FIELDS, FIELD_LABEL, similarity };
 }
 
-module.exports = { createStoryLab, FIELDS, similarity };
+module.exports = { createStoryLab, FIELDS, NEW_FIELDS, STORY_RULES, similarity };

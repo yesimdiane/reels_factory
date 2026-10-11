@@ -21,7 +21,7 @@ function createMockText() {
           ['보이지 않는 집 정리 대결', 'A tidy-off competition between Diane and Jack ends with a surprise.', '정리 내기에서 뜻밖의 반전'],
           ['한밤의 택배 미스터리', 'A late-night parcel arrives and Jack suspects Diane\'s Coupang habit.', '택배 상자를 둘러싼 유쾌한 추궁'],
         ];
-        return { text: '', json: { concepts: base.slice(0, Math.max(3, n)).map((b, i) => ({ title: `[샘플] ${b[0]}`, hook: `${product}: ${b[1]}`, situation: b[2], productRole: `${product}를 확인된 기능 범위에서만 보여줍니다.`, characterUsage: i === 2 ? 'Diane과 Jack 모두 등장' : i === 1 ? 'Diane 중심, Jack 반응' : 'Jack 중심, Diane 개입', payoff: '반전 대사로 마무리', viewerAppeal: '공감 가는 집안 상황', ctaDirection: '댓글 키워드로 링크 안내', estimatedDurationSec: 38 + i * 2 })) }, usage: { inputTokens: null, outputTokens: null } };
+        return { text: '', json: { concepts: base.slice(0, Math.max(3, n)).map((b, i) => ({ title: `[샘플] ${b[0]}`, hook: `${product}: ${b[1]}`, situation: b[2], productRole: `${product}를 확인된 기능 범위에서만 보여줍니다.`, characterUsage: i === 2 ? 'Diane과 Jack 모두 등장' : i === 1 ? 'Diane 중심, Jack 반응' : 'Jack 중심, Diane 개입', plot: `[샘플] ${b[2]} → Jack과 Diane의 티키타카 → 제품 등장 → 반전 마무리 (약 ${38 + i * 2}초)`, visualComedy: '[샘플] 과장된 표정 클로즈업과 리액션 컷', payoff: '반전 대사로 마무리', viewerAppeal: '공감 가는 집안 상황', ctaDirection: '댓글 키워드로 링크 안내', estimatedDurationSec: 38 + i * 2, estimatedScenes: 6 + i })) }, usage: { inputTokens: null, outputTokens: null } };
       }
       if (task === 'scriptWriting') {
         const c = (/CONCEPT_TITLE:\s*(.+)/.exec(prompt) || [, '샘플'])[1].trim();
