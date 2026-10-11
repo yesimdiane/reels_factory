@@ -185,3 +185,20 @@ test('TTS service calculates HeyGen budget and cost estimate accurately', () => 
   const expectedCost = (est.billableChars / 1000000) * 150;
   assert.equal(est.estimatedUsd.toFixed(6), expectedCost.toFixed(6));
 });
+
+
+test('createHeyGenTts: supports English character dialogue without changing Korean default', async () => {
+  const requests = [];
+  const tts = createHeyGenTts({
+    apiKey: 'test_key',
+    maxAttempts: 1,
+    fetchFn: async (url, init) => {
+      requests.push(JSON.parse(init.body));
+      return { ok: false, status: 400, json: async () => ({ message: 'mock stop' }) };
+    },
+  });
+  await assert.rejects(tts.synthesize({ text: 'BABYYYY!', voice: 'diane-voice', language: 'en' }), /mock stop/);
+  await assert.rejects(tts.synthesize({ text: '안녕하세요', voice: 'diane-voice' }), /mock stop/);
+  assert.equal(requests[0].language, 'en');
+  assert.equal(requests[1].language, 'ko');
+});
