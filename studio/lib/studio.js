@@ -114,6 +114,16 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     let genEstimate = null;
     try { genEstimate = gen.estimate(id, { modelId: settings.defaultModelId }); } catch (e) { genEstimate = { error: e.message }; }
     const renderPlan = renderer.plan(id);
+    // Resolve current Product Studio uploads at read time, including older episodes
+    // without a reference-set snapshot. Previewing does not approve these images.
+    let productStudioImages = [];
+    if (ep.productId) {
+      try {
+        productStudioImages = products.get(ep.productId).images
+          .filter((im) => !['replaced', 'rejected'].includes(im.status))
+          .map((im) => ({ id: im.id, url: im.url, kind: im.kind, kindLabel: im.kindLabel, label: im.label, status: im.status }));
+      } catch (e) { if (!['NOT_FOUND', 'BAD_ID'].includes(e.code)) throw e; }
+    }
     const sceneViews = ep.scenes.map((s) => {
       const img = gen.startImage(ep, s);
       const clips = ep.clips[s.id] || { versions: [], approvedVersion: null };
@@ -124,6 +134,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         promptWarnings: ep.prompts[s.id] ? lintPrompt(ep.prompts[s.id].video, ep) : [],
         castWarnings: ep.prompts[s.id] ? lintCast(ep.prompts[s.id].video, s, L) : [],
         usesSheet: promptSvc.usesSheetFor(s, L),
+        productImages: s.showsProduct ? productStudioImages : [],
         startImageInfo: img.error ? { error: img.error } : { label: img.label, approved: img.approved, placeholder: img.placeholder, url: img.characterId ? `/media/ref/${img.characterId}/${img.refId}` : `/media/startframe/${id}/${s.id}` },
         clips: { approvedVersion: clips.approvedVersion, versions: clips.versions.map((v) => Object.assign({}, v, { url: `/media/clip/${id}/${s.id}/${v.v}` })) },
         line: ep.lines.filter((l) => l.sceneId === s.id).map((l) => l.id),
@@ -160,6 +171,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         if (!refs || !refs.length || !ep.productId) return [];
         try { const pv = products.get(ep.productId); return refs.map((i) => pv.images.find((x) => x.id === i)).filter(Boolean).map((im) => ({ id: im.id, url: im.url, kind: im.kind, kindLabel: im.kindLabel, label: im.label })); } catch (_) { return []; }
       })(),
+      productStudioImages,
       renders: ep.renders.map((r) => Object.assign({}, r, { url: `/media/render/${id}/${r.v}`, current: !!(ep.approvals.final && ep.approvals.final.v === r.v) })),
       sfx: ep.sfx,
       timeline: used,
@@ -601,3 +613,4 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
 }
 
 module.exports = { createStudio };
+
