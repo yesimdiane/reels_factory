@@ -204,6 +204,8 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('PUT', '/api/episodes/:id/script/ending', async ({ p, body }) => { await S.scriptgen.selectEnding(p.id, { templateId: body.templateId, version: body.version, resetEdits: body.resetEdits === true }); return ep(p.id); });
   route('POST', '/api/episodes/:id/script/ending/reuse', async ({ p, body }) => { const r = await S.reuseEndingAssets(p.id, body.fromEpisodeId); const v = ep(p.id); v.reuse = { copied: r.copied, skipped: r.skipped }; return v; });
   route('POST', '/api/episodes/:id/script/regenerate', async ({ p, body }) => { const r = await S.scriptgen.regenerate(p.id, body.action, { confirm: body.confirm, overwrite: body.overwrite === true, extra: body.extra }); const v = ep(p.id); v.generated = r; return v; });
+  route('POST', '/api/episodes/:id/script/timing/estimate', async ({ p, body }) => S.scriptgen.fitEstimate(p.id, body.sceneIds, body.preset));
+  route('POST', '/api/episodes/:id/script/timing/fit', async ({ p, body }) => { const r = await S.scriptgen.fitDialogue(p.id, { sceneIds: body.sceneIds, confirm: body.confirm, overwrite: body.overwrite === true, extra: body.extra, sel: body.preset }); const v = ep(p.id); v.fitResult = r; return v; });
   route('POST', '/api/episodes/:id/script/estimate', async ({ p, body }) => { const e = S.store.episodes.get(p.id); const c = S.storylab.requireApproved(e.concept && e.concept.productId, e.concept && e.concept.conceptId); const q = S.scriptgen.buildPrompt(e, c, body.extra, body.preset, body.action); return S.router.estimate('scriptWriting', { inputChars: q.prompt.length, outputTokens: 6000, override: q.composed.providerOverride || undefined }); });
 
   // ---- state ----

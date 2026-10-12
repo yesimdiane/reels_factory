@@ -7,7 +7,8 @@
 const { StudioError, nowIso } = require('./util');
 const fs = require('node:fs');
 const path = require('node:path');
-const { validateScript, checkTitleKo, isScriptApproved } = require('./episode');
+const { validateScript, checkTitleKo, isScriptApproved, dialogueTiming, speechNeed, wordBudget, TIGHT_OVER } = require('./episode');
+const { claimHits } = require('./claims');
 const F = require('./formula');
 const SF = require('./scriptformula');
 const { sha256, uid } = require('./util');
@@ -73,6 +74,9 @@ function createScriptGen({ store, products, storylab, prompts, presets, endings,
     const v = SF.endingVars(ep);
     lines.push('ENDING (added by the application, Part B, three fixed shots): Diane\'s shopping excuse → product demonstration → Jack\'s recurring refusal.');
     lines.push('CURRENT_ENDING_VARS: ' + JSON.stringify(v));
+    // the ending's fixed lines already use most of each shot's time: keep the product-specific words short so the shots still fit
+    const demo = (ep.scenes.find((x) => x.beatKey === 'product_demonstration') || {}).durationSec || 5;
+    lines.push(`ENDING_TIMING: keep PRODUCT_NAME and USE_PHRASE to at most 3 words each, and DEMO_LINE_EN to at most ${Math.min(8, wordBudget(demo, 1))} words (the demo shot lasts ${demo} s). Shorter is better.`);
     return lines;
   }
 
@@ -230,6 +234,102 @@ function createScriptGen({ store, products, storylab, prompts, presets, endings,
     return store.episodes.get(epId).ending;
   }
 
+
+  // ---------- dialogue timing: shorten (not extend) ----------
+  const fitTargets = (ep, sceneIds) => {
+    const structured = F.isStructured(ep);
+    const all = dialogueTiming(ep).filter((t) => t.lineCount && t.status !== 'ok');
+    const want = sceneIds && sceneIds.length ? all.filter((t) => sceneIds.includes(t.sceneId)) : all;
+    const ending = want.filter((t) => structured && (ep.scenes.find((x) => x.id === t.sceneId) || {}).part === 'B');
+    const targets = want.filter((t) => !ending.includes(t));
+    return { targets, ending, all };
+  };
+  const timingSel = (ep, sel) => Object.assign(F.isStructured(ep) ? { comedyLevel: 3 } : {}, ep.promptPreset || {}, sel || {});
+  function buildTimingPrompt(ep, concept, targets, extra, sel) {
+    const pc = presets.compose(timingSel(ep, sel), { EXTRA: '' }, { mode: 'timing' });
+    const data = [
+      '--- INPUT DATA (authoritative) ---',
+      'CONCEPT_TITLE: ' + concept.title,
+      'PRODUCT_NAME: ' + ep.product.name,
+      'FORBIDDEN_CLAIMS: ' + ((ep.product.forbiddenClaims || []).join(', ') || 'none'),
+      'TIMING_TARGETS (scenes to shorten; the application estimates speech at about 2.7 words per second):',
+      JSON.stringify(targets.map((t) => ({ id: t.sceneId, title: t.title, durationSec: t.durationSec, estimatedNeedSec: t.needSec, overSec: t.overSec, wordBudget: t.wordBudget, currentWords: t.words, lines: ep.lines.filter((l) => l.sceneId === t.sceneId).map((l) => ({ id: l.id, speaker: l.speaker, en: l.en, ko: l.ko })) })), null, 1),
+    ].join('\n');
+    const extraText = extra ? 'ADDITIONAL INSTRUCTION FOR THIS RUN (operator):\n' + String(extra).slice(0, 1000) : '';
+    const full = [pc.editable, extraText, data, pc.locked].filter(Boolean).join('\n\n');
+    return { prompt: full, meta: { mode: 'timing', presetId: pc.presetId, presetName: pc.presetName, presetVersion: pc.presetVersion, comedyLevel: pc.comedyLevel, promptHash: sha256(full).slice(0, 12) } };
+  }
+  function requireConcept(ep) {
+    if (!ep.concept || !ep.concept.conceptId) throw new StudioError('NO_CONCEPT', '이 에피소드는 스토리 컨셉과 연결되어 있지 않아 AI로 대사를 줄일 수 없습니다. 대사를 직접 줄이거나 장면 길이를 늘려 주세요.', { status: 409 });
+    return storylab.requireApproved(ep.concept.productId, ep.concept.conceptId);
+  }
+  /** Free: which scenes would be shortened, and what it would cost. */
+  function fitEstimate(epId, sceneIds, sel) {
+    const ep = store.episodes.get(epId);
+    const concept = requireConcept(ep);
+    const { targets, ending } = fitTargets(ep, sceneIds);
+    if (!targets.length) throw new StudioError('NOTHING_TO_FIT', ending.length ? '엔딩(PART B) 컷은 AI가 줄이지 않습니다. 컷 길이를 늘리거나 제품별 값을 짧게 고치세요.' : '시간이 넘치는 장면이 없습니다.', { status: 409 });
+    const q = buildTimingPrompt(ep, concept, targets, '', sel);
+    return Object.assign(router.estimate('scriptWriting', { inputChars: q.prompt.length, outputTokens: 1500, override: undefined }), { sceneIds: targets.map((t) => t.sceneId), skippedEnding: ending.map((t) => t.sceneId) });
+  }
+  /**
+   * Shortens the dialogue of the scenes whose estimated speech does not fit (paid, confirmed). Lines are removed or tightened;
+   * scene durations are NOT changed. A result that would not make a scene shorter is ignored. The ending template is never touched.
+   */
+  async function fitDialogue(epId, { sceneIds, confirm, overwrite = false, extra = '', sel, by = 'operator' } = {}) {
+    const ep0 = store.episodes.get(epId);
+    const concept = requireConcept(ep0);
+    const { targets, ending } = fitTargets(ep0, sceneIds);
+    if (!targets.length) throw new StudioError('NOTHING_TO_FIT', ending.length ? '엔딩(PART B) 컷은 AI가 줄이지 않습니다. 컷 길이를 늘리거나 제품별 값을 짧게 고치세요.' : '시간이 넘치는 장면이 없습니다.', { status: 409 });
+    const edited = targets.filter((t) => (ep0.scenes.find((x) => x.id === t.sceneId) || {}).manualEdit);
+    if (edited.length && !overwrite) throw new StudioError('MANUAL_EDITS', `직접 수정한 장면의 대사를 줄이면 그 수정이 바뀝니다: ${edited.map((t) => t.sceneId).join(', ')} (이전 버전은 보관됩니다).`, { recovery: '확인한 뒤 "덮어쓰기"로 다시 실행하세요.', status: 409 });
+    if (isScriptApproved(ep0) && !overwrite) throw new StudioError('SCRIPT_APPROVED', '승인된 대본입니다. 대사를 줄이면 승인이 취소됩니다 (이전 버전은 보관됩니다).', { recovery: '확인한 뒤 "덮어쓰기"로 다시 실행하세요.', status: 409 });
+    const q = buildTimingPrompt(ep0, concept, targets, extra, sel);
+    const res = await router.run('scriptWriting', { prompt: q.prompt, json: true, maxTokens: 3000, confirm, dedupeKey: epId + ':timing:' + q.meta.promptHash });
+    // validate the whole answer first; a bad answer changes nothing (the call is in the usage log)
+    const raw = res.json && Array.isArray(res.json.scenes) ? res.json.scenes : null;
+    if (!raw) throw new StudioError('SCRIPT_REJECTED', 'AI 응답에 scenes가 없습니다. 저장하지 않았습니다.', { status: 422 });
+    const forbidden = ep0.product.forbiddenClaims || [];
+    const plan = [];
+    const skipped = [];
+    targets.forEach((t) => {
+      const ans = raw.find((x) => x && x.id === t.sceneId);
+      if (!ans || !Array.isArray(ans.lines)) { skipped.push({ sceneId: t.sceneId, reason: 'AI 응답에 이 장면이 없습니다.' }); return; }
+      const orig = ep0.lines.filter((l) => l.sceneId === t.sceneId);
+      const byId = new Map(orig.map((l) => [l.id, l]));
+      const next = [];
+      for (const l of ans.lines) {
+        const o = byId.get(String(l && l.id));
+        if (!o) throw new StudioError('SCRIPT_REJECTED', `${t.sceneId}: 없는 대사 ID (${l && l.id})입니다. 대사를 새로 만들 수 없습니다. 저장하지 않았습니다.`, { status: 422 });
+        if (String(l.speaker) !== o.speaker) throw new StudioError('SCRIPT_REJECTED', `${t.sceneId}: 화자를 바꿀 수 없습니다 (${o.id}). 저장하지 않았습니다.`, { status: 422 });
+        const en = String(l.en || '').trim(); const ko = String(l.ko || '').trim();
+        if (!en || !ko || en === ko) throw new StudioError('SCRIPT_REJECTED', `${t.sceneId}: 영어 대사와 한국어 자막이 모두 있어야 하고 서로 달라야 합니다 (${o.id}). 저장하지 않았습니다.`, { status: 422 });
+        if (claimHits(en + '\n' + ko, forbidden).length || (o.speaker === 'diane' && /오빠/.test(en + ko))) throw new StudioError('SCRIPT_REJECTED', `${t.sceneId}: 금지된 표현이 있습니다 (${o.id}). 저장하지 않았습니다.`, { status: 422 });
+        next.push({ id: o.id, speaker: o.speaker, en, ko });
+      }
+      if (!next.length) { skipped.push({ sceneId: t.sceneId, reason: '모든 대사를 지울 수는 없습니다 (최소 한 줄 필요).' }); return; }
+      const after = speechNeed(next);
+      if (after >= t.needSec - 0.01) { skipped.push({ sceneId: t.sceneId, reason: '새 대사가 더 짧지 않아 적용하지 않았습니다.' }); return; }
+      plan.push({ sceneId: t.sceneId, beforeSec: t.needSec, afterSec: Math.round(after * 100) / 100, durationSec: t.durationSec, lines: next, removed: orig.length - next.length });
+    });
+    if (!plan.length) throw new StudioError('SCRIPT_REJECTED', '적용할 수 있는 더 짧은 대사가 없었습니다. ' + (skipped[0] ? skipped[0].reason : ''), { details: skipped, recovery: '다시 시도하거나 대사를 직접 줄이세요. 이전 대본은 그대로입니다.', status: 422 });
+    await store.episodes.update(epId, (ep) => {
+      if (ep.lines.length) ep.preAiScript = { at: nowIso(), lines: ep.lines.length, scenes: ep.scenes.length };
+      plan.forEach((p0) => {
+        const keep = new Map(p0.lines.map((l) => [l.id, l]));
+        ep.lines = ep.lines.filter((l) => l.sceneId !== p0.sceneId || keep.has(l.id));
+        ep.lines.forEach((l) => { const k = keep.get(l.id); if (l.sceneId === p0.sceneId && k) { l.en = k.en; l.ko = k.ko; } });
+      });
+      ep.scriptSource = Object.assign({}, ep.scriptSource || {}, { fittedAt: nowIso(), fitPromptHash: q.meta.promptHash });
+      ep.approvals.script = null; // shortened dialogue is a new draft: approve again
+      ep.approvals.storyboard = null;
+    }, { snapshot: true, by, note: `대사 시간 맞추기(AI) · ${plan.map((x) => x.sceneId).join(', ')} · ${res.mock ? '샘플' : res.provider + '/' + res.model}` });
+    store.episodes.audit(epId, 'script.dialogue_fitted', { scenes: plan.map((x) => x.sceneId), provider: res.provider, model: res.model, mock: !!res.mock, presetId: q.meta.presetId, presetVersion: q.meta.presetVersion });
+    const ep1 = store.episodes.get(epId);
+    const stillOver = dialogueTiming(ep1).filter((t) => t.lineCount && t.overSec > TIGHT_OVER).map((t) => ({ sceneId: t.sceneId, overSec: t.overSec }));
+    return { fitted: plan.map(({ lines, ...rest }) => rest), skipped, stillOver, validation: validateScript(ep1, lib()) };
+  }
+
   /** Is the script still in sync with its concept? Used by the UI ("script regeneration required"). */
   function conceptStatus(ep) {
     if (!ep.concept || !ep.concept.conceptId) return { linked: false, legacy: true, note: '스토리 랩 이전에 만든 에피소드(연결된 컨셉 없음)' };
@@ -313,7 +413,7 @@ function createScriptGen({ store, products, storylab, prompts, presets, endings,
     return fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => { try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (_) { return null; } }).filter(Boolean).sort((a, b) => String(b.at).localeCompare(String(a.at)));
   }
 
-  return { createEpisodeFromConcept, generate, regenerate, selectEnding, conceptStatus, buildPrompt, episodeIdFor, selectPreset, effectivePrompt, testPrompt, listTests };
+  return { createEpisodeFromConcept, generate, regenerate, selectEnding, fitEstimate, fitDialogue, conceptStatus, buildPrompt, episodeIdFor, selectPreset, effectivePrompt, testPrompt, listTests };
 }
 
 module.exports = { createScriptGen };

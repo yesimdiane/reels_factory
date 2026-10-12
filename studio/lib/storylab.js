@@ -6,6 +6,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { StudioError, nowIso, readJson, writeJsonAtomic, sha256 } = require('./util');
+const { claimHits } = require('./claims');
 
 const FIELDS = ['title', 'hook', 'situation', 'plot', 'productRole', 'characterUsage', 'visualComedy', 'payoff', 'viewerAppeal', 'ctaDirection'];
 // Added in the Product Studio update: stored concepts from before it may lack these, so they are required for NEW concepts only.
@@ -72,7 +73,7 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
     if (!(dur >= 10 && dur <= 90)) problems.push('예상 길이(10~90초) 오류');
     out.estimatedDurationSec = Math.round(dur);
     const text = FIELDS.map((k) => out[k]).join(' ');
-    (product.forbiddenClaims || []).forEach((w) => w && text.toLowerCase().includes(String(w).toLowerCase()) && problems.push(`확인되지 않은 제품 주장 "${w}"`));
+    claimHits(text, product.forbiddenClaims || []).forEach((h) => problems.push(`확인되지 않은 제품 주장 "${h.claim}"`));
     if (/오빠/.test(text)) problems.push('Diane이 Jack을 "오빠"라고 부르는 표현');
     return { out, problems };
   }

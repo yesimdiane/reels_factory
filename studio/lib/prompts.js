@@ -3,6 +3,7 @@
 // unless the operator asks to rebuild them.
 'use strict';
 const { SHEET_RULE, castDirective, identityLines } = require('./charrules');
+const { claimsIn } = require('./claims');
 
 function productBlock(ep) {
   const p = ep.product || {};
@@ -58,8 +59,7 @@ function buildNegativePrompt(ep, scene, lib) {
 
 /** Returns the unverified-claim words found in text (case-insensitive). */
 function lintPrompt(text, ep) {
-  const bad = (ep.product && ep.product.forbiddenClaims) || [];
-  return bad.filter((w) => String(text || '').toLowerCase().includes(String(w).toLowerCase()));
+  return claimsIn(text, (ep.product && ep.product.forbiddenClaims) || []);
 }
 
 module.exports = { buildScenePromptParts, buildVideoPrompt, buildNegativePrompt, lintPrompt, productBlock };

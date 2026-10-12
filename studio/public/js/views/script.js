@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, issueList, charAvatar, confirmPaid, sceneNav } from './common.js';
 import { presetPanel } from './script-prompt.js';
 import { formulaLayout } from './script-formula.js';
+import { timingCard } from './script-timing.js';
 
 // Mirror of the server's estimate (display only; the server validates).
 function speechSec(text) {
@@ -56,6 +57,7 @@ export function script() {
   wrap.append(pipelineBar(ep));
   wrap.append(conceptPanel(ep, d));
   if (ep.derived.concept.linked) wrap.append(presetPanel(ep));
+  wrap.append(timingCard(ep, { d, dirty, redrawAll: () => import('../state.js').then(({ hooks }) => hooks.rerender()) }));
   wrap.append(sceneNav(ep, 'script-scene-'));
   if (ep.derived.scriptChangedSinceApproval) wrap.append(h('div', { class: 'banner warn' }, h('div', null, h('b', null, '승인 후 대본이 수정되었습니다'), '유료 생성·음성·렌더가 잠겼습니다. 다시 확인하고 승인하세요.')));
 
@@ -76,7 +78,9 @@ export function script() {
     const refreshMeter = () => {
       const own = d.lines.filter((l) => l.sceneId === sc.id);
       const need = own.reduce((n, l) => n + speechSec(l.en), 0) + 0.18 * Math.max(0, own.length - 1) + (own.length ? 0.6 : 0);
-      meter.textContent = own.length ? `대사 약 ${need.toFixed(1)}초 / 장면 ${sc.durationSec}초` : `장면 ${sc.durationSec}초 · 대사 없음`;
+      const act0 = !d.dirty && ((ep.derived.timing.scenes.find((x) => x.sceneId === sc.id) || {}).actual || {});
+      meter.textContent = own.length ? `추정 대사 ${need.toFixed(1)}초 / 장면 ${sc.durationSec}초` + (act0 && act0.complete ? ` · 실측 ${act0.needSec.toFixed(1)}초` : '') : `장면 ${sc.durationSec}초 · 대사 없음`;
+      meter.title = '추정 = 단어 수로 계산한 값. 실측 = 음성을 만든 뒤 실제 오디오 길이.';
       meter.className = 'chip ' + (need > sc.durationSec + 0.05 ? 'attention' : '');
     };
     const drawLines = () => {

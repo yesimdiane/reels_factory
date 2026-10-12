@@ -25,7 +25,7 @@ const { createVoiceService } = require('./voice');
 const { createRenderService } = require('./render');
 const { createPromptService } = require('./promptgen');
 const { createPublishingService, checklist: publishChecklist, validate: validatePublishing } = require('./publishing');
-const { checkTitleKo, sceneTitle, validateScript, pipeline, isScriptApproved, isStoryboardApproved, scriptFingerprint, storyboardFingerprint, totalPlannedSec } = require('./episode');
+const { dialogueTiming, checkTitleKo, sceneTitle, validateScript, pipeline, isScriptApproved, isStoryboardApproved, scriptFingerprint, storyboardFingerprint, totalPlannedSec } = require('./episode');
 const { lintPrompt } = require('./prompts');
 const { lintCast, SHEET_RULE } = require('./charrules');
 const { clipSecFor, modelById, limitFor, spentUsd } = require('./budget');
@@ -165,6 +165,15 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         line: ep.lines.filter((l) => l.sceneId === s.id).map((l) => l.id),
       });
     });
+    // Dialogue timing: ESTIMATE (words → seconds) vs ACTUAL (recorded/synthesized audio, when every line of the scene has current audio).
+    const timing = dialogueTiming(ep).map((t) => {
+      const own = ep.lines.filter((l) => l.sceneId === t.sceneId);
+      const audio = own.map((l) => voice.lineAudio(ep, l));
+      const done = audio.filter((a) => a.valid);
+      const complete = own.length > 0 && done.length === own.length;
+      const actualNeed = complete ? Math.round((0.25 + done.reduce((n, a) => n + a.durationSec, 0) + 0.18 * (done.length - 1) + 0.35) * 100) / 100 : null;
+      return Object.assign({}, t, { actual: { complete, syncedLines: done.length, totalLines: own.length, needSec: actualNeed, overSec: actualNeed == null ? null : Math.round((actualNeed - t.durationSec) * 100) / 100, mock: done.some((a) => a.mock) } });
+    });
     const used = renderPlan.timeline;
     const voiceEst = voice.estimate(id);
     const view = Object.assign({}, ep, {
@@ -179,6 +188,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         storyboardChangedSinceApproval: !!(ep.approvals.storyboard && !isStoryboardApproved(ep)),
         validation,
         steps,
+        timing: { scenes: timing, overCount: timing.filter((t) => t.status !== 'ok' && t.lineCount).length, overflowCount: timing.filter((t) => t.status === 'overflow').length, totalOverSec: Math.round(timing.reduce((n, t) => n + (t.lineCount && t.overSec > 0 ? t.overSec : 0), 0) * 100) / 100 },
         totalPlannedSec: totalPlannedSec(ep),
         spentUsd: spentUsd(ep),
         mockSpendCount: ep.spend.filter((s) => s.mock).length,

@@ -4,6 +4,7 @@
 // operator confirmations, and the Studio never claims they are done unless the operator says so.
 'use strict';
 const { StudioError, nowIso, sha256, canonical } = require('./util');
+const { claimHits } = require('./claims');
 const { isScriptApproved } = require('./episode');
 
 const AFFILIATE_HOSTS = ['link.coupang.com', 'coupa.ng']; // same rule as the Apps Script (AFFILIATE_URL_HOSTS)
@@ -39,7 +40,7 @@ function validate(ep, pub) {
   const warnings = [];
   const claims = (ep.product && ep.product.forbiddenClaims) || [];
   const all = [pub.caption, pub.dmMessage, pub.hook, pub.productDescription, pub.cta].join('\n').toLowerCase();
-  claims.forEach((c) => all.includes(String(c).toLowerCase()) && errors.push({ code: 'PRODUCT_CLAIM', message: `확인되지 않은 제품 주장 "${c}"가 있습니다.` }));
+  claimHits(all, claims).forEach((h) => errors.push({ code: 'PRODUCT_CLAIM', message: `확인되지 않은 제품 주장 "${h.claim}"가 있습니다 (…${h.context}…).` }));
   if (!String(pub.caption || '').includes('[광고]')) errors.push({ code: 'DISCLOSURE', message: '캡션 첫 줄에 [광고] 표기가 필요합니다.' });
   if (!String(pub.caption || '').includes('쿠팡 파트너스')) errors.push({ code: 'DISCLOSURE', message: '캡션에 쿠팡 파트너스 활동 및 수수료 문구가 필요합니다.' });
   if (!pub.keyword) errors.push({ code: 'KEYWORD', message: '댓글 키워드가 없습니다.' });
