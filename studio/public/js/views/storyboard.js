@@ -1,6 +1,7 @@
 import { h, chip, icon, copyText, confirmDialog, toast } from '../ui.js';
 import { state, act, requireEpisode } from '../state.js';
 import { api } from '../api.js';
+import { imageDevCard } from './image-dev.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, lockedNotice, charAvatar, productRefStrip, makeStartImages, sceneNav } from './common.js';
 
 export function storyboard() {
@@ -9,10 +10,11 @@ export function storyboard() {
   const chars = state.summary.characters;
   const sbOk = ep.derived.storyboardApproved;
   const wrap = h('div', { class: 'stack', style: 'gap:20px' });
-  wrap.append(pageHead('Storyboard', '스토리보드', '장면별 시각 설명·캐릭터·시작 이미지·영상 프롬프트를 정리하고 승인합니다. 승인 전에는 어떤 유료 생성도 시작되지 않습니다.', episodePicker(),
+  wrap.append(pageHead('Storyboard · Image Development', '스토리보드 · 이미지 디벨롭', '장면별 시각 설명·캐릭터·시작 이미지·영상 프롬프트를 정리하고 승인합니다. 승인 전에는 어떤 유료 생성도 시작되지 않습니다.', episodePicker(),
     h('button', { class: 'btn ghost', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/storyboard/prompts`, { force: false }), { ok: '비어 있는 장면의 프롬프트를 만들었습니다 (수정한 프롬프트는 그대로 둠)' }) }, icon('refresh'), '템플릿으로 만들기 (무료)'),
     h('button', { class: 'btn', disabled: !ep.derived.scriptApproved, title: ep.derived.scriptApproved ? '' : '대본 승인 후 사용할 수 있습니다', onclick: () => aiPrompts(ep, null) }, icon('play'), 'AI로 프롬프트 만들기')));
   wrap.append(h('div', { class: 'row', style: 'gap:10px' }, h('button', { class: 'btn clay', disabled: !ep.derived.scriptApproved, title: ep.derived.scriptApproved ? '' : '대본 승인 후 사용할 수 있습니다', onclick: () => makeStartImages(ep, [], { after: () => act(async () => null) }) }, icon('plus'), '모든 장면 시작 이미지 만들기'), h('span', { class: 'small muted' }, '장면 설명 + 캐릭터/제품 참조로 AI가 첫 프레임을 만듭니다. 만든 뒤 하나씩 승인하세요.')));
+  wrap.append(imageDevCard(ep));
   { const strip = productRefStrip(ep); if (strip) wrap.append(strip); }
   wrap.append(sceneNav(ep, 'sb-scene-'));
   autoBuild(ep);

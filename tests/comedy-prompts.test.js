@@ -1,4 +1,5 @@
 'use strict';
+const { approveWithScenes } = require('./helpers/approve');
 // Korean scene titles (title_ko) and editable script prompt presets (AI 프롬프트 관리). All AI is faked; nothing is billed.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -41,7 +42,7 @@ test('title_ko: every generated scene needs a meaningful Korean title; bad or ge
 test('title_ko: editable on its own without touching approvals; validated; persisted; carried to the timeline', async () => {
   const { s, id } = await episode(ai());
   await s.scriptgen.generate(id, { confirm: CONFIRM });
-  await s.approveScript(id);
+  await approveWithScenes(s, id);
   assert.equal(s.episodeView(id).derived.scriptApproved, true);
   const hashBefore = JSON.stringify(s.store.episodes.get(id).approvals.script);
   await assert.rejects(s.setSceneTitle(id, 'S1', '장면 1'), (e) => e.code === 'SCENE_TITLE');
@@ -161,7 +162,7 @@ test('Test Prompt: needs cost confirmation, creates a separate draft and never t
   const a = ai();
   const { s, id } = await episode(a);
   await s.scriptgen.generate(id, { confirm: CONFIRM });
-  await s.approveScript(id);
+  await approveWithScenes(s, id);
   const snap = () => JSON.stringify({ lines: s.store.episodes.get(id).lines, scenes: s.store.episodes.get(id).scenes, ap: s.store.episodes.get(id).approvals, src: s.store.episodes.get(id).scriptSource, v: s.store.episodes.versions(id).length });
   const before = snap();
   const calls0 = scriptCalls(a).length;

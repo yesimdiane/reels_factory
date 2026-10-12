@@ -65,6 +65,8 @@ test('server: mutating requests need the custom header and a same-origin Origin;
     assert.equal(evil.status, 403);
     const host = await req(t.port, 'GET', '/api/state', { headers: { Host: 'evil.example' } });
     assert.equal(host.status, 403);
+    const scenes = await req(t.port, 'POST', '/api/episodes/EP01/scenes/approve-ready', { headers: { ...CSRF, Origin: 'http://127.0.0.1:' + t.port }, body: {} });
+    assert.equal(scenes.status, 200);
     const ok = await req(t.port, 'POST', '/api/episodes/EP01/script/approve', { headers: { ...CSRF, Origin: 'http://127.0.0.1:' + t.port }, body: {} });
     assert.equal(ok.status, 200);
     assert.equal(ok.json.derived.scriptApproved, true);

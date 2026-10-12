@@ -1,4 +1,5 @@
 'use strict';
+const { approveWithScenes } = require('./helpers/approve');
 // Regression tests: context-aware claim matching (CTA "드립니다" false positive) and realistic dialogue timing
 // (prompt rules before generation, validation, shorten-not-extend fix action, estimate vs actual voice duration). All AI is faked.
 const test = require('node:test');
@@ -105,7 +106,7 @@ test('timing validation: an overflowing scene blocks approval for fixed-formula 
   assert.equal(e.sceneId, 'S1');
   assert.match(e.message, /초 초과/);
   assert.match(e.message, /줄이거나 불필요한 줄/);
-  await assert.rejects(s.approveScript(id), (x) => x.code === 'INVALID_SCRIPT');
+  await assert.rejects(approveWithScenes(s, id), (x) => x.code === 'INVALID_SCRIPT');
   assert.equal(s.episodeView(id).derived.timing.scenes.find((t) => t.sceneId === 'S1').status, 'overflow');
   assert.equal(s.episodeView(id).derived.timing.overflowCount, 1);
   // legacy (pre-formula) episode: same overflow is only a warning
@@ -173,7 +174,7 @@ test('fix action: shortens the overflowing Part A scenes (no scene extension, st
 
 test('fix action: an approved script or hand edits are never changed without an explicit overwrite; the ending is never shortened by AI', async () => {
   const { s, id } = await episode();
-  await s.approveScript(id);
+  await approveWithScenes(s, id);
   await makeLong(s, id, ['S1']); // editing un-approves; re-fix to approve again below
   const sc = s.store.episodes.get(id).scenes.find((x) => x.id === 'S1');
   assert.equal(sc.manualEdit, true);
@@ -182,7 +183,7 @@ test('fix action: an approved script or hand edits are never changed without an 
   assert.deepEqual(ok.fitted.map((x) => x.sceneId), ['S1']);
   // approved script: protected
   const second = await episode();
-  await second.s.approveScript(second.id);
+  await approveWithScenes(second.s, second.id);
   assert.equal(second.s.episodeView(second.id).derived.scriptApproved, true);
   await assert.rejects(second.s.scriptgen.fitDialogue(second.id, { confirm: CONFIRM }), (e) => e.code === 'NOTHING_TO_FIT');
   // an overflowing ENDING shot is never rewritten by the AI
@@ -211,7 +212,7 @@ test('fix action: an AI answer that adds lines, changes a speaker or uses a forb
 // ---------- 5. estimate vs actual voice duration ----------
 test('UI data: estimated dialogue time is kept apart from the actual synthesized voice duration', async () => {
   const { s, id } = await episode();
-  await s.approveScript(id);
+  await approveWithScenes(s, id);
   let timing = s.episodeView(id).derived.timing.scenes;
   assert.ok(timing.every((t) => t.needSec > 0 && t.actual.needSec === null && t.actual.complete === false), 'before synthesis there is only an estimate');
   await s.voice.synthesize(id, {}); // mock mode: free

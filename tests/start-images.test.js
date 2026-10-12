@@ -1,4 +1,5 @@
 'use strict';
+const { approveWithScenes } = require('./helpers/approve');
 // AI start images per scene: gated by script approval, explicit cost confirmation, real character references;
 // results are unapproved frames; nothing approved is overwritten; a mid-way failure keeps what was made. AI is faked.
 const test = require('node:test');
@@ -55,19 +56,19 @@ test('start images: blocked until the script is approved, then needs confirmatio
   realRefs(s);
   imageRoute(s);
   await assert.rejects(s.startImages.generate(id, [], { confirm: CONFIRM }), (e) => e.code === 'SCRIPT_NOT_APPROVED');
-  await s.approveScript(id);
+  await approveWithScenes(s, id);
   await assert.rejects(s.startImages.generate(id, [], {}), (e) => e.code === 'CONFIRM_REQUIRED');
   assert.equal(a.imageCalls().length, 0);
   // placeholder / unapproved refs are not accepted as identity references
   const { s: s2, a: a2, id: id2 } = await setup();
   imageRoute(s2);
-  await s2.approveScript(id2);
+  await approveWithScenes(s2, id2);
   await assert.rejects(s2.startImages.generate(id2, [], { confirm: CONFIRM }), (e) => e.code === 'NO_CHARACTER_REF');
   assert.equal(a2.imageCalls().length, 0);
   // no image provider configured → blocked, no placeholder frame is created
   const { s: s3, id: id3 } = await setup();
   realRefs(s3);
-  await s3.approveScript(id3);
+  await approveWithScenes(s3, id3);
   await assert.rejects(s3.startImages.generate(id3, [], { confirm: CONFIRM }), (e) => e.code === 'NOT_CONFIGURED');
   assert.ok(s3.store.episodes.get(id3).scenes.every((sc) => !sc.startImage || sc.startImage.type !== 'upload'));
 });
@@ -76,7 +77,7 @@ test('start images: one call per scene, unapproved AI frames, cast + product rul
   const { s, a, id } = await setup();
   realRefs(s);
   imageRoute(s);
-  await s.approveScript(id);
+  await approveWithScenes(s, id);
   const ids = s.store.episodes.get(id).scenes.map((x) => x.id);
   assert.deepEqual(ids, ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'E1', 'E2', 'E3']);
   const est = s.startImages.estimate(id, []);
@@ -114,7 +115,7 @@ test('start images: a failure part-way keeps the frames already made and reports
   const { s, a, id } = await setup({ failOnImageCall: 2 });
   realRefs(s);
   imageRoute(s);
-  await s.approveScript(id);
+  await approveWithScenes(s, id);
   const r = await s.startImages.generate(id, [], { confirm: CONFIRM });
   assert.deepEqual(r.generated.map((g) => g.sceneId), ['S1']);
   assert.equal(r.failed.sceneId, 'S2');

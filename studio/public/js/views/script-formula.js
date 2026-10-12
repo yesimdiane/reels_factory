@@ -4,6 +4,7 @@ import { h, chip, icon, toast, confirmDialog } from '../ui.js';
 import { state, act } from '../state.js';
 import { api } from '../api.js';
 import { confirmPaid } from './common.js';
+import { attach } from './script-validate.js';
 
 const ACTIONS = {
   story: ['코미디 스토리 다시 만들기', 'PART A 전체(여섯 단계)를 새로 씁니다. PART B 엔딩은 건드리지 않습니다.'],
@@ -31,12 +32,13 @@ export async function runFormulaAction(ep, action, { extra = '' } = {}) {
   // act() swallows the error into a toast; re-check the state to see whether a protected overwrite is needed
 }
 
-export function formulaLayout({ ep, d, blocks, dirty, redrawAll, v }) {
+export function formulaLayout({ ep, d, blocks, dirty, redrawAll, v, index }) {
   const F = ep.formula;
   const fx = ep.formula.ending;
   const root = h('div', { class: 'stack', style: 'gap:22px' });
   const locked = !!fx.structureLocked;
   const hasA = ep.scenes.some((s) => s.part === 'A');
+  const withKey = (el, rf) => (rf ? attach(index, el, rf) : el);
   const blockOf = (id) => (blocks.find((b) => b.sc.id === id) || {}).block;
 
   const run = async (action) => {
@@ -59,7 +61,7 @@ export function formulaLayout({ ep, d, blocks, dirty, redrawAll, v }) {
   };
   const actionBtn = (action, cls = 'btn sm ghost') => h('button', { class: cls, title: ACTIONS[action][1], disabled: !ep.derived.concept.approved || (action !== 'story' && action !== 'ending' && !hasA), onclick: () => run(action) }, ACTIONS[action][0]);
 
-  const field = (label, value, on, { rows = 2, kind = '', lang } = {}) => h('div', { class: 'field' }, h('label', null, label), rows === 1 ? h('input', { type: 'text', value, lang, maxLength: 24, oninput: (e) => { on(e.target.value); dirty(); } }) : h('textarea', { rows, lang, oninput: (e) => { on(e.target.value); dirty(); } }, value));
+  const field = (label, value, on, { rows = 2, kind = '', lang, rf } = {}) => withKey(h('div', { class: 'field' }, h('label', null, label), rows === 1 ? h('input', { type: 'text', value, lang, maxLength: 24, oninput: (e) => { on(e.target.value); dirty(); } }) : h('textarea', { rows, lang, oninput: (e) => { on(e.target.value); dirty(); } }, value)), rf);
 
   // ---- PART A ----
   root.append(h('div', { class: 'row between', style: 'align-items:flex-end;flex-wrap:wrap;gap:8px' },
@@ -67,13 +69,13 @@ export function formulaLayout({ ep, d, blocks, dirty, redrawAll, v }) {
     h('div', { class: 'row' }, EPISODE(), actionBtn('story', 'btn sm'))));
   F.partA.forEach((b, i) => {
     const bd = d.comedy_story[b.key];
-    const card = h('div', { class: 'card stack', style: 'gap:12px;border-left:4px solid var(--clay, #b4683a)' });
+    const card = h('div', { class: 'card stack', style: 'gap:12px;border-left:4px solid var(--clay, #b4683a)', 'data-rf': `B:${b.key}:card` });
     card.append(h('div', { class: 'row between', style: 'flex-wrap:wrap;gap:8px' },
       h('div', { class: 'row' }, h('span', { class: 'eyebrow' }, `${i + 1}/6`), h('h3', { style: 'margin:0' }, `${b.label} · ${b.labelEn}`), EPISODE()),
       h('div', { class: 'row' }, chip(`${b.durationSec || 0}초`, ''), chip('장면 ' + (b.sceneIds.length ? b.sceneIds.join(', ') : '없음'), b.sceneIds.length ? '' : 'err'), BEAT_ACTION[b.key] ? actionBtn(BEAT_ACTION[b.key]) : null)));
     card.append(h('div', { class: 'small muted' }, b.role));
     card.append(h('div', { class: 'grid two' },
-      field('단계 제목 (한국어)', bd.title_ko, (x) => (bd.title_ko = x), { rows: 1, lang: 'ko' }),
+      field('단계 제목 (한국어)', bd.title_ko, (x) => (bd.title_ko = x), { rows: 1, lang: 'ko', rf: `B:${b.key}:title_ko` }),
       h('div', { class: 'field' }, h('label', null, '한국어 자막 요약 (대사에서 자동)'), h('div', { class: 'small', style: 'min-height:38px' }, b.subtitle_ko || '—'))));
     card.append(h('div', { class: 'grid two' }, field('이야기 설명 (English) — 직접 쓰면 AI가 그대로 살립니다', bd.story_en, (x) => (bd.story_en = x), { rows: 2, lang: 'en' }), field('비주얼 방향', bd.visual, (x) => (bd.visual = x), { rows: 2 })));
     b.sceneIds.forEach((id) => { const bl = blockOf(id); if (bl) card.append(bl); });
@@ -89,12 +91,12 @@ export function formulaLayout({ ep, d, blocks, dirty, redrawAll, v }) {
   root.append(endingControls());
   F.partB.forEach((b, i) => {
     const bd = d.product_ending[b.key];
-    const card = h('div', { class: 'card stack', style: 'gap:12px;border-left:4px solid var(--sage-deep, #5f7a5a)' });
+    const card = h('div', { class: 'card stack', style: 'gap:12px;border-left:4px solid var(--sage-deep, #5f7a5a)', 'data-rf': `B:${b.key}:card` });
     card.append(h('div', { class: 'row between', style: 'flex-wrap:wrap;gap:8px' },
       h('div', { class: 'row' }, h('span', { class: 'eyebrow' }, `엔딩 컷 ${i + 1}/3`), h('h3', { style: 'margin:0' }, `${b.label} · ${b.labelEn}`), SERIES()),
       h('div', { class: 'row' }, chip(`${b.durationSec || 0}초`, ''), chip('장면 ' + b.sceneIds.join(', '), ''))));
     card.append(h('div', { class: 'small muted' }, '템플릿 제공: 컷 순서·구성·캐릭터 구도 · 에피소드별: 제품 이름·시연 동작·제품별 대사·연출'));
-    card.append(h('div', { class: 'grid two' }, field('컷 제목 (한국어)', bd.title_ko, (x) => (bd.title_ko = x), { rows: 1, lang: 'ko' }), h('div', { class: 'field' }, h('label', null, '한국어 자막 요약'), h('div', { class: 'small', style: 'min-height:38px' }, b.subtitle_ko || '—'))));
+    card.append(h('div', { class: 'grid two' }, field('컷 제목 (한국어)', bd.title_ko, (x) => (bd.title_ko = x), { rows: 1, lang: 'ko', rf: `B:${b.key}:title_ko` }), h('div', { class: 'field' }, h('label', null, '한국어 자막 요약'), h('div', { class: 'small', style: 'min-height:38px' }, b.subtitle_ko || '—'))));
     card.append(h('div', { class: 'grid two' }, field('컷 설명 (English)', bd.story_en, (x) => (bd.story_en = x), { rows: 2, lang: 'en' }), field('비주얼 방향', bd.visual, (x) => (bd.visual = x), { rows: 2 })));
     b.sceneIds.forEach((id) => { const bl = blockOf(id); if (bl) card.append(bl); });
     root.append(card);

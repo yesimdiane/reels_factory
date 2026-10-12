@@ -1,4 +1,5 @@
 'use strict';
+const { approveWithScenes } = require('./helpers/approve');
 // Fixed episode formula: Part A (six beats) + Part B (exactly three product-ending shots from a reusable template).
 // All AI is faked; the umbrella-holder episode uses the exact narrative of the series brief. Nothing is billed.
 const test = require('node:test');
@@ -339,7 +340,7 @@ test('paid-generation gates are unchanged: every AI action needs confirmation; t
   assert.equal(a.calls.length, calls0, 'no AI call without explicit confirmation');
   await assert.rejects(s.scriptgen.regenerate(id, 'bogus', { confirm: CONFIRM }), (e) => e.code === 'BAD_ACTION');
   await s.scriptgen.generate(id, { confirm: CONFIRM });
-  await s.approveScript(id);
+  await approveWithScenes(s, id);
   // an approved script is not replaced without an explicit overwrite
   await assert.rejects(s.scriptgen.regenerate(id, 'twist', { confirm: CONFIRM }), (e) => e.code === 'SCRIPT_APPROVED');
   assert.equal(s.episodeView(id).derived.scriptApproved, true);
@@ -352,7 +353,7 @@ test('paid-generation gates are unchanged: every AI action needs confirmation; t
 test('storyboard / video / render stay compatible: flat scenes with titles, timeline and prompts work for the new structure', async () => {
   const { s, id } = await episode();
   await s.scriptgen.generate(id, { confirm: CONFIRM });
-  await s.approveScript(id);
+  await approveWithScenes(s, id);
   const v = s.episodeView(id);
   assert.equal(v.scenes.length, 9);
   assert.ok(v.scenes.every((x) => x.title_ko && x.part && x.beatKey));

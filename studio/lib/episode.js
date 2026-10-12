@@ -119,12 +119,12 @@ function validateScript(ep, lib) {
   const scenes = ep.scenes || [];
   const sceneIds = new Set();
   scenes.forEach((s) => {
-    if (sceneIds.has(s.id)) E('SCENE_DUP', `장면 ID가 중복됩니다: ${s.id}`, { sceneId: s.id });
+    if (sceneIds.has(s.id)) E('SCENE_DUP', `장면 ID가 중복됩니다: ${s.id}`, { sceneId: s.id, field: 'id' });
     sceneIds.add(s.id);
     const tk = checkTitleKo(s.title_ko);
-    if (titlesStrict(ep)) { tk.errors.forEach((m) => E('SCENE_TITLE', `${s.id}: ${m}`, { sceneId: s.id })); tk.warnings.forEach((m) => W('SCENE_TITLE_LEN', `${s.id}: ${m}`, { sceneId: s.id })); }
+    if (titlesStrict(ep)) { tk.errors.forEach((m) => E('SCENE_TITLE', `${s.id}: ${m}`, { sceneId: s.id, field: 'title_ko' })); tk.warnings.forEach((m) => W('SCENE_TITLE_LEN', `${s.id}: ${m}`, { sceneId: s.id })); }
     else if (!s.title_ko) W('SCENE_TITLE_MISSING', `${s.id}: 한국어 장면 제목(title_ko)이 없습니다 (이전에 만든 에피소드). 제목을 입력해 두면 모든 화면에서 쓰입니다.`, { sceneId: s.id });
-    if (!(s.durationSec >= 1 && s.durationSec <= 15)) E('SCENE_DURATION', `${s.id}: 장면 길이는 1~15초여야 합니다.`, { sceneId: s.id });
+    if (!(s.durationSec >= 1 && s.durationSec <= 15)) E('SCENE_DURATION', `${s.id}: 장면 길이는 1~15초여야 합니다.`, { sceneId: s.id, field: 'durationSec' });
   });
   if (!scenes.length) E('NO_SCENES', '장면이 없습니다.');
   if (!(ep.lines || []).length) E('NO_LINES', '대사가 없습니다.');
@@ -133,20 +133,20 @@ function validateScript(ep, lib) {
   const perScene = {};
   (ep.lines || []).forEach((l, i) => {
     const tag = `대사 ${i + 1}`;
-    if (lineIds.has(l.id)) E('LINE_DUP', `${tag}: 대사 ID가 중복됩니다 (${l.id}).`, { lineId: l.id });
+    if (lineIds.has(l.id)) E('LINE_DUP', `${tag}: 대사 ID가 중복됩니다 (${l.id}).`, { lineId: l.id, sceneId: l.sceneId, field: 'en' });
     lineIds.add(l.id);
-    if (!sceneIds.has(l.sceneId)) E('LINE_SCENE', `${tag}: 존재하지 않는 장면입니다 (${l.sceneId}).`, { lineId: l.id });
+    if (!sceneIds.has(l.sceneId)) E('LINE_SCENE', `${tag}: 존재하지 않는 장면입니다 (${l.sceneId}).`, { lineId: l.id, sceneId: l.sceneId, field: 'en' });
     const c = chars[l.speaker];
-    if (!c) E('LINE_SPEAKER', `${tag}: 알 수 없는 화자입니다 (${l.speaker}).`, { lineId: l.id });
-    if (!String(l.en || '').trim()) E('LINE_EN', `${tag}: 영어 대사가 비어 있습니다.`, { lineId: l.id });
-    if (!String(l.ko || '').trim()) E('LINE_KO', `${tag}: 한국어 자막이 비어 있습니다 (영어 대사와 자막은 따로 저장됩니다).`, { lineId: l.id });
-    else if (String(l.ko).trim() === String(l.en).trim()) W('LINE_KO_SAME', `${tag}: 한국어 자막이 영어 대사와 같습니다.`, { lineId: l.id });
+    if (!c) E('LINE_SPEAKER', `${tag}: 알 수 없는 화자입니다 (${l.speaker}).`, { lineId: l.id, sceneId: l.sceneId, field: 'speaker' });
+    if (!String(l.en || '').trim()) E('LINE_EN', `${tag}: 영어 대사가 비어 있습니다.`, { lineId: l.id, sceneId: l.sceneId, field: 'en' });
+    if (!String(l.ko || '').trim()) E('LINE_KO', `${tag}: 한국어 자막이 비어 있습니다 (영어 대사와 자막은 따로 저장됩니다).`, { lineId: l.id, sceneId: l.sceneId, field: 'ko' });
+    else if (String(l.ko).trim() === String(l.en).trim()) W('LINE_KO_SAME', `${tag}: 한국어 자막이 영어 대사와 같습니다.`, { lineId: l.id, sceneId: l.sceneId, field: 'ko' });
     if (c) {
       (c.forbiddenWords || []).forEach((w) => {
-        if (mentions(l.en, w) || mentions(l.ko, w)) E('FORBIDDEN_WORD', `${tag}: ${c.name}는 "${w}"라고 말하지 않습니다 (캐릭터 규칙).`, { lineId: l.id });
+        if (mentions(l.en, w) || mentions(l.ko, w)) E('FORBIDDEN_WORD', `${tag}: ${c.name}는 "${w}"라고 말하지 않습니다 (캐릭터 규칙).`, { lineId: l.id, sceneId: l.sceneId, field: mentions(l.en, w) ? 'en' : 'ko' });
       });
     }
-    claimHits(l.en + '\n' + l.ko, forbiddenClaims).forEach((h) => E('PRODUCT_CLAIM', `${tag}: 확인되지 않은 제품 주장 "${h.claim}"가 있습니다 (…${h.context}…).`, { lineId: l.id }));
+    [['en', l.en], ['ko', l.ko]].forEach(([field, text]) => claimHits(text, forbiddenClaims).forEach((h) => E('PRODUCT_CLAIM', `${tag}: 확인되지 않은 제품 주장 "${h.claim}"가 있습니다 (…${h.context}…).`, { lineId: l.id, sceneId: l.sceneId, field })));
     (perScene[l.sceneId] = perScene[l.sceneId] || []).push(l);
   });
   // Dialogue must fit its scene. Preferred fix: shorten / drop lines (not extend the scene).
@@ -154,17 +154,17 @@ function validateScript(ep, lib) {
   dialogueTiming(ep).forEach((t) => {
     if (t.status === 'ok' || !t.lineCount) return;
     const msg = `${t.sceneId}: 대사가 약 ${t.needSec}초(추정) 필요한데 장면은 ${t.durationSec}초입니다 (${t.overSec}초 초과). 대사를 줄이거나 불필요한 줄을 빼 주세요 — 장면을 늘리는 것은 마지막 수단입니다.`;
-    if (t.status === 'overflow' && formulaEp) E('SCENE_OVERFLOW', msg, { sceneId: t.sceneId, overSec: t.overSec });
-    else W('SCENE_TIGHT', msg, { sceneId: t.sceneId, overSec: t.overSec });
+    if (t.status === 'overflow' && formulaEp) E('SCENE_OVERFLOW', msg, { sceneId: t.sceneId, overSec: t.overSec, field: 'timing', lineId: t.lineIds[t.lineIds.length - 1] });
+    else W('SCENE_TIGHT', msg, { sceneId: t.sceneId, overSec: t.overSec, field: 'timing', lineId: t.lineIds[t.lineIds.length - 1] });
   });
   const cta = ep.cta || {};
   const kw = String(cta.keyword || '').trim();
-  if (!kw) E('KEYWORD', 'ManyChat 댓글 키워드가 없습니다.');
-  else if (/^PRD-?\d+/i.test(kw)) E('KEYWORD_INTERNAL', `내부 상품 ID("${kw}")를 공개 댓글 키워드로 쓸 수 없습니다.`);
-  if (!(cta.lines || []).length) E('CTA', 'CTA 문구가 없습니다.');
-  else if (kw && !(cta.lines || []).some((l) => mentions(l, kw))) E('CTA_KEYWORD', `CTA 문구에 댓글 키워드 "${kw}"가 들어 있어야 합니다.`);
-  (cta.lines || []).forEach((l) => claimHits(l, forbiddenClaims).forEach((h) => E('PRODUCT_CLAIM', `CTA: 확인되지 않은 제품 주장 "${h.claim}"가 있습니다 (…${h.context}…).`)));
-  if (ep.publishing && ep.publishing.keyword && ep.publishing.keyword !== kw) E('KEYWORD_MISMATCH', 'CTA 키워드와 게시 키워드가 다릅니다.');
+  if (!kw) E('KEYWORD', 'ManyChat 댓글 키워드가 없습니다.', { field: 'cta.keyword' });
+  else if (/^PRD-?\d+/i.test(kw)) E('KEYWORD_INTERNAL', `내부 상품 ID("${kw}")를 공개 댓글 키워드로 쓸 수 없습니다.`, { field: 'cta.keyword' });
+  if (!(cta.lines || []).length) E('CTA', 'CTA 문구가 없습니다.', { field: 'cta.lines' });
+  else if (kw && !(cta.lines || []).some((l) => mentions(l, kw))) E('CTA_KEYWORD', `CTA 문구에 댓글 키워드 "${kw}"가 들어 있어야 합니다.`, { field: 'cta.lines' });
+  (cta.lines || []).forEach((l) => claimHits(l, forbiddenClaims).forEach((h) => E('PRODUCT_CLAIM', `CTA: 확인되지 않은 제품 주장 "${h.claim}"가 있습니다 (…${h.context}…).`, { field: 'cta.lines' })));
+  if (ep.publishing && ep.publishing.keyword && ep.publishing.keyword !== kw) E('KEYWORD_MISMATCH', 'CTA 키워드와 게시 키워드가 다릅니다.', { field: 'cta.keyword' });
   const total = totalPlannedSec(ep);
   if (total > 90) E('TOO_LONG', `총 길이 ${total.toFixed(1)}초가 인스타그램 릴스 한도(90초)를 넘습니다.`);
   else if (total > 60) W('LONG', `총 길이 ${total.toFixed(1)}초 — 릴스는 보통 60초 이하가 좋습니다.`);

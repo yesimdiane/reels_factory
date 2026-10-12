@@ -1,5 +1,6 @@
 // Storyboard prompt generation: template + Gemini (mocked client), character-sheet rules, cast counts, validation.
 'use strict';
+const { approveWithScenes } = require('./helpers/approve');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -39,7 +40,7 @@ test('cast directive: exactly one / exactly two / none', () => {
 test('approving the script builds prompts for every scene — the Storyboard is never empty', async () => {
   const { s } = make();
   assert.ok(s.episodeView('EP01').scenes.every((x) => !x.prompt), 'seed has no prompts yet');
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   const ep = s.episodeView('EP01');
   assert.ok(ep.scenes.every((x) => x.prompt && x.prompt.video.length > 200 && x.prompt.negative), 'all scenes have prompts');
   const s1 = ep.scenes[0].prompt.video;
@@ -56,7 +57,7 @@ test('approving the script builds prompts for every scene — the Storyboard is 
 
 test('the mandatory character-sheet rule is appended by code whenever a sheet is used (and only then)', async () => {
   const { s } = make();
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   assert.ok(!s.episodeView('EP01').scenes[0].prompt.video.includes(SHEET_RULE), 'no approved sheet → no sheet rule');
   addSheets(s);
   await s.rebuildPrompts('EP01', undefined, { force: true });
@@ -69,7 +70,7 @@ test('the mandatory character-sheet rule is appended by code whenever a sheet is
 test('Gemini: needs explicit confirmation and sends the real image bytes of ONLY the selected characters\' approved sheets', async () => {
   const seen = [];
   const { s } = make({ gemini: fakeClient((req) => ({ scenes: [goodScene('S1')] }), seen) });
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   addSheets(s);
   await assert.rejects(s.rebuildPrompts('EP01', ['S1'], { mode: 'gemini', force: true }), (e) => e.code === 'CONFIRM_REQUIRED');
   assert.equal(seen.length, 0, 'no call without confirmation');
@@ -94,13 +95,13 @@ test('Gemini: needs explicit confirmation and sends the real image bytes of ONLY
 test('Gemini: both characters → both sheets once each; scene with nobody → no images and no characters', async () => {
   const seen = [];
   const { s } = make({ gemini: fakeClient((req) => ({ scenes: [goodScene('S7', { actions: 'Diane points at the holder; Jack looks on.' })] }), seen) });
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   addSheets(s);
   await s.rebuildPrompts('EP01', ['S7'], { mode: 'gemini', confirmAi: true, force: true });
   assert.equal(seen[0].images.length, 2);
   // a scene with no characters selected
   await s.saveScript('EP01', { scenes: s.episodeView('EP01').scenes.map((x) => ({ id: x.id, characters: x.id === 'S3' ? [] : x.characters })) });
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   const p = s.episodeView('EP01').scenes.find((x) => x.id === 'S3').prompt;
   assert.ok(!p.stale, 'untouched template prompt is rebuilt automatically when the cast changes');
   assert.match(p.video, /Do NOT introduce Diane or Jack/);
@@ -118,7 +119,7 @@ test('Gemini output that breaks the rules is rejected and nothing is saved', asy
   ];
   for (const b of bad) {
     const { s } = make({ gemini: fakeClient({ scenes: [b] }) });
-    await s.approveScript('EP01');
+    await approveWithScenes(s, 'EP01');
     addSheets(s);
     await s.rebuildPrompts('EP01', undefined, { force: true });
     const before = s.episodeView('EP01').scenes[0].prompt.video;
@@ -130,7 +131,7 @@ test('Gemini output that breaks the rules is rejected and nothing is saved', asy
 test('Gemini: refuses to guess characters without an approved reference; failures keep old prompts', async () => {
   let called = 0;
   const { s } = make({ gemini: () => ({ model: 'm', async generateJson() { called++; throw new Error('HTTP 500 boom'); } }) });
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   await assert.rejects(s.rebuildPrompts('EP01', ['S1'], { mode: 'gemini', confirmAi: true, force: true }), (e) => e.code === 'NO_APPROVED_REFERENCE');
   assert.equal(called, 0);
   addSheets(s);
@@ -141,7 +142,7 @@ test('Gemini: refuses to guess characters without an approved reference; failure
 
 test('no Gemini key and no factory: AI mode is unavailable but templates keep working', async () => {
   const { s } = make();
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   assert.equal(s.providerStatus().gemini.configured, false);
   addSheets(s);
   await assert.rejects(s.rebuildPrompts('EP01', ['S1'], { mode: 'gemini', confirmAi: true, force: true }), (e) => /GEMINI_API_KEY/.test(e.message) || e.code === 'GEMINI_FAILED');
@@ -149,7 +150,7 @@ test('no Gemini key and no factory: AI mode is unavailable but templates keep wo
 
 test('edited prompts are preserved unless forced; history is kept', async () => {
   const { s } = make({ gemini: fakeClient({ scenes: [goodScene('S1')] }) });
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   addSheets(s);
   await s.savePrompt('EP01', 'S1', { video: 'My own S1 prompt. Jack runs.', negative: 'nothing' });
   assert.equal(s.episodeView('EP01').scenes[0].prompt.edited, true);
@@ -162,7 +163,7 @@ test('edited prompts are preserved unless forced; history is kept', async () => 
 
 test('saving an edited prompt keeps the sheet rule, rejects duplicate characters, flags unselected ones', async () => {
   const { s } = make();
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   addSheets(s);
   await s.rebuildPrompts('EP01', undefined, { force: true });
   await s.savePrompt('EP01', 'S1', { video: 'Jack walks by the rack, slowly.', negative: 'x' });
@@ -179,7 +180,7 @@ test('lintCast ignores the negations in the rule text itself', () => {
 
 test('a multi-illustration sheet can never be the i2v start frame; "single illustration" or an uploaded frame can', async () => {
   const { s } = make();
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   addSheets(s);
   await s.approveStoryboard('EP01');
   let est = s.gen.estimate('EP01', { sceneIds: ['S1'] });
@@ -192,7 +193,7 @@ test('a multi-illustration sheet can never be the i2v start frame; "single illus
 
 test('changing a scene\'s cast rebuilds untouched template prompts and flags edited/AI ones as stale', async () => {
   const { s } = make();
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   await s.savePrompt('EP01', 'S2', { video: 'My S2. Jack stares at the rain.', negative: '' });
   const scenes = s.episodeView('EP01').scenes.map((x) => ({ id: x.id, characters: x.id === 'S2' || x.id === 'S3' ? ['jack', 'diane'] : x.characters }));
   await s.saveScript('EP01', { scenes });

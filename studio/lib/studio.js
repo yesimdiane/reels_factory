@@ -18,6 +18,7 @@ const { createEndingTemplates } = require('./endingtemplates');
 const F = require('./formula');
 const SF = require('./scriptformula');
 const { createStartImages } = require('./startimages');
+const { createProjects } = require('./projects');
 const { createIntegrations } = require('./integrations');
 const { createVideoProvider } = require('./providers');
 const { createGenerationService } = require('./generation');
@@ -74,6 +75,10 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const renderer = createRenderService({ store, cfg, voice, log });
   const publishing = createPublishingService({ store });
   store.episodes.seedDemo();
+  // Projects / scene approvals / Image Development hand-off (no AI or video provider is wired in: nothing here can spend money).
+  const projects = createProjects({ store, lib: () => store.characters.load(), endings, products, log });
+  store.episodes.hooks.before = projects.hooks.before;
+  store.episodes.hooks.after = projects.hooks.after;
 
   const lib = () => store.characters.load();
 
@@ -147,6 +152,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
           .map((im) => ({ id: im.id, url: im.url, kind: im.kind, kindLabel: im.kindLabel, label: im.label, status: im.status }));
       } catch (e) { if (!['NOT_FOUND', 'BAD_ID'].includes(e.code)) throw e; }
     }
+    const readiness = projects.readiness(ep);
+    const sceneLinks = projects.sceneLinks(ep);
     const sceneViews = ep.scenes.map((s) => {
       const img = gen.startImage(ep, s);
       const clips = ep.clips[s.id] || { versions: [], approvedVersion: null };
@@ -163,6 +170,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         startImageInfo: img.error ? { error: img.error } : { label: img.label, generated: !!img.generated, approved: img.approved, placeholder: img.placeholder, url: img.characterId ? `/media/ref/${img.characterId}/${img.refId}` : `/media/startframe/${id}/${s.id}` },
         clips: { approvedVersion: clips.approvedVersion, versions: clips.versions.map((v) => Object.assign({}, v, { url: `/media/clip/${id}/${s.id}/${v.v}` })) },
         line: ep.lines.filter((l) => l.sceneId === s.id).map((l) => l.id),
+        approval: readiness.scenes.find((x) => x.sceneId === s.id),
+        link: sceneLinks[s.id] || null,
       });
     });
     // Dialogue timing: ESTIMATE (words → seconds) vs ACTUAL (recorded/synthesized audio, when every line of the scene has current audio).
@@ -187,6 +196,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         storyboardApproved: isStoryboardApproved(ep),
         storyboardChangedSinceApproval: !!(ep.approvals.storyboard && !isStoryboardApproved(ep)),
         validation,
+        project: { id: ep.projectId || '', name: (projects.ensureProject(ep) || {}).name || '' },
+        sceneApproval: { progress: readiness.progress, approvedCount: readiness.approvedCount, sceneCount: readiness.sceneCount, allScenesApproved: readiness.allScenesApproved, blockers: readiness.blockers, canApproveProject: readiness.canApprove, readyScenes: readiness.readyScenes },
+        handoff: Object.assign(projects.handoffState(ep), { ready: isScriptApproved(ep) && readiness.allScenesApproved }),
         steps,
         timing: { scenes: timing, overCount: timing.filter((t) => t.status !== 'ok' && t.lineCount).length, overflowCount: timing.filter((t) => t.status === 'overflow').length, totalOverSec: Math.round(timing.reduce((n, t) => n + (t.lineCount && t.overSec > 0 ? t.overSec : 0), 0) * 100) / 100 },
         totalPlannedSec: totalPlannedSec(ep),
@@ -271,6 +283,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return made;
   }
   migrateLegacy();
+  projects.migrateAll(); // old episodes: scenes of an already approved script stay approved; every episode joins a project (idempotent)
 
   function firstClipThumb(e) {
     for (const s of e.scenes) {
@@ -419,6 +432,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       if (cs.linked && !cs.ok) throw new StudioError('CONCEPT_NOT_APPROVED', cs.note || '스토리 컨셉 승인이 필요합니다.', { recovery: cs.regenerationRequired ? 'Script Studio에서 "AI로 대본 다시 만들기"를 실행하세요.' : 'Story Lab에서 컨셉을 승인하세요.', status: 409 });
       const v = validateScript(ep, lib());
       if (!v.ok) throw new StudioError('INVALID_SCRIPT', v.errors[0].message, { details: v.errors, recovery: '오류를 고친 뒤 다시 승인하세요.', status: 409 });
+      projects.assertProjectReady(ep); // every scene must be approved first (never approved silently)
       ep.approvals.script = { hash: scriptFingerprint(ep), version: ep.version || 0, by, at: nowIso() };
     });
     store.episodes.audit(id, 'script.approved', { by });
@@ -707,7 +721,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   }
 
   return {
-    cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy,
+    cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects,
     summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,

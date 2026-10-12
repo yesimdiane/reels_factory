@@ -59,7 +59,7 @@ function validateFormula(ep) {
   BEATS.forEach((b) => {
     if (!scenes.some((s) => s.beatKey === b.key)) E('BEAT_MISSING', `PART A: "${b.ko}" 단계 장면이 없습니다 (여섯 단계가 모두 필요합니다).`, { beatKey: b.key });
     const t = checkTitleKo((ep.comedy_story[b.key] || {}).title_ko);
-    t.errors.forEach((m) => E('BEAT_TITLE', `PART A "${b.ko}" 제목: ${m}`, { beatKey: b.key }));
+    t.errors.forEach((m) => E('BEAT_TITLE', `PART A "${b.ko}" 제목: ${m}`, { beatKey: b.key, field: 'beat.title_ko', part: 'A' }));
   });
   const ending = scenes.filter((s) => s.part === 'B');
   if (ending.length !== 3) E('ENDING_COUNT', `PART B 제품 엔딩은 정확히 3컷이어야 합니다 (현재 ${ending.length}컷).`);
@@ -68,11 +68,11 @@ function validateFormula(ep) {
   if (aOrder.some((v, i) => i && v < aOrder[i - 1])) E('BEAT_ORDER', 'PART A 장면은 도입 → 위기 1 → 위기 2 → 절정 → 결말 → 제품 연결 순서여야 합니다.');
   const firstB = scenes.findIndex((s) => s.part === 'B');
   if (firstB >= 0 && scenes.slice(firstB).some((s) => s.part !== 'B')) E('PART_ORDER', 'PART A 장면은 모두 PART B(제품 엔딩)보다 앞에 있어야 합니다.');
-  scenes.forEach((s) => { if (!partOf(s.beatKey) || partOf(s.beatKey) !== s.part) E('SCENE_BEAT', `${s.id}: 장면이 어떤 단계(beat)에도 속하지 않습니다.`, { sceneId: s.id }); });
+  scenes.forEach((s) => { if (!partOf(s.beatKey) || partOf(s.beatKey) !== s.part) E('SCENE_BEAT', `${s.id}: 장면이 어떤 단계(beat)에도 속하지 않습니다.`, { sceneId: s.id, field: 'beatKey' }); });
   const demo = ending.find((s) => s.beatKey === 'product_demonstration');
-  if (demo && !demo.showsProduct) E('ENDING_DEMO_PRODUCT', '제품 시연 컷에는 제품이 보여야 합니다 ("이 장면에 제품이 보임" 체크).');
+  if (demo && !demo.showsProduct) E('ENDING_DEMO_PRODUCT', '제품 시연 컷에는 제품이 보여야 합니다 ("이 장면에 제품이 보임" 체크).', { sceneId: demo.id, field: 'showsProduct' });
   const ep0 = (ep.product_ending || {});
-  ENDING_KEYS.forEach((k) => { if (ep0[k] && !String(ep0[k].title_ko || '').trim()) E('BEAT_TITLE', `PART B "${beatMeta(k).ko}" 제목이 비어 있습니다.`, { beatKey: k }); });
+  ENDING_KEYS.forEach((k) => { if (ep0[k] && !String(ep0[k].title_ko || '').trim()) E('BEAT_TITLE', `PART B "${beatMeta(k).ko}" 제목이 비어 있습니다.`, { beatKey: k, field: 'beat.title_ko', part: 'B' }); });
   return errors;
 }
 
