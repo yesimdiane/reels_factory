@@ -1,5 +1,6 @@
-import { h, chip, stateLabel, icon, modal, fmtUsd } from '../ui.js';
+import { h, chip, stateLabel, icon, modal, fmtUsd, toast } from '../ui.js';
 import { state, go, selectEpisode } from '../state.js';
+import { api } from '../api.js';
 
 export const VIEW_FOR_STEP = { product: 'products', concept: 'storylab', script: 'script', approval: 'script', storyboard: 'storyboard', estimate: 'animation', animation: 'animation', clips: 'animation', voice: 'voice', render: 'render', review: 'review', publish: 'publishing' };
 const NEXT_LABEL = {
@@ -102,4 +103,30 @@ export function productRefStrip(ep) {
     h('div', { class: 'row between' }, h('b', null, '승인된 제품 참조 이미지'), h('a', { class: 'small', href: '#/products/' + ep.productId }, 'Product Studio에서 보기')),
     h('div', { class: 'row', style: 'gap:10px;flex-wrap:wrap' }, imgs.map((im) => h('figure', { style: 'margin:0;width:96px' }, h('img', { src: im.url, alt: im.label || '제품 참조', style: 'width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid var(--line)' }), h('figcaption', { class: 'small muted' }, im.kindLabel || im.kind)))),
     h('div', { class: 'small muted' }, '장면 프롬프트와 시작 이미지를 정할 때 제품의 모양·색·기능은 이 승인된 이미지를 기준으로 하세요.'));
+}
+
+/**
+ * "시작 이미지 만들기": AI start frames for the given scenes (all scenes when sceneIds is empty).
+ * Shows the cost, needs explicit confirmation, saves UNAPPROVED frames that the operator approves one by one.
+ */
+export async function makeStartImages(ep, sceneIds = [], { force = false, after } = {}) {
+  const route = ((state.summary.ai || {}).routing || []).find((r) => r.task === 'imageGeneration') || { provider: 'mock' };
+  if (!ep.derived.scriptApproved) return toast('대본을 먼저 승인하세요. (유료 이미지 생성은 대본 승인 후에만 가능합니다)', { error: true });
+  if (route.provider !== 'gemini') return toast('이미지 생성 제공자가 연결되지 않았습니다. Settings → AI 연동에서 Gemini 키와 이미지 생성 모델을 "제품 이미지 생성" 작업에 지정하세요.', { error: true });
+  let est;
+  try { est = await api.post(`/api/episodes/${ep.id}/start-images/estimate`, { sceneIds, force }); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
+  if (!est.count) return toast(est.skipped && est.skipped.length ? '새로 만들 장면이 없습니다: ' + est.skipped.map((x) => x.sceneId + ' (' + x.reason + ')').join(' / ') : '만들 장면이 없습니다.');
+  const c = await confirmPaid({ title: `장면 ${est.count}개 시작 이미지 만들기 (유료일 수 있음)`, est, confirmLabel: '생성',
+    body: h('div', { class: 'small stack', style: 'gap:6px' },
+      h('div', null, '장면: ' + est.scenes.map((s) => s.sceneId).join(', ')),
+      est.skipped.length ? h('div', { class: 'muted' }, '건너뜀: ' + est.skipped.map((x) => x.sceneId).join(', ') + ' (이미 승인되었거나 AI 프레임이 있음)') : null,
+      h('div', { class: 'muted' }, '만들어진 이미지는 "미승인" 상태로 저장됩니다. 스토리보드에서 하나씩 확인하고 승인해야 영상 생성에 쓰입니다.')) });
+  if (!c) return;
+  try {
+    const v = await api.post(`/api/episodes/${ep.id}/start-images/generate`, { sceneIds, force, confirm: c });
+    const r = v.startImageResult || { generated: [], skipped: [], failed: null };
+    if (r.failed) toast(`${r.generated.length}개 만들었고 ${r.failed.sceneId}에서 멈췄습니다: ${r.failed.message}`, { error: true, recovery: r.failed.recovery });
+    else toast(`시작 이미지 ${r.generated.length}개를 만들었습니다. 스토리보드에서 확인 후 승인하세요.`);
+  } catch (e) { toast(e.message, { error: true, recovery: e.recovery }); }
+  if (after) await after();
 }

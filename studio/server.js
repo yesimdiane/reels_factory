@@ -217,6 +217,8 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('PUT', '/api/episodes/:id/scenes/:sid/prompt', async ({ p, body }) => S.savePrompt(p.id, p.sid, body));
   route('PUT', '/api/episodes/:id/scenes/:sid/start-image', async ({ p, body }) => S.setStartImage(p.id, p.sid, body));
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame', async ({ p, raw, headers }) => S.uploadStartFrame(p.id, p.sid, raw, decodeURIComponent(headers['x-filename'] || 'frame.png')), { upload: true });
+  route('POST', '/api/episodes/:id/start-images/estimate', async ({ p, body }) => S.startImages.estimate(p.id, body.sceneIds, { force: body.force === true }));
+  route('POST', '/api/episodes/:id/start-images/generate', async ({ p, body }) => { const r = await S.startImages.generate(p.id, body.sceneIds, { confirm: body.confirm, force: body.force === true }); const v = ep(p.id); v.startImageResult = r; return v; });
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame/approve', async ({ p, body }) => S.approveStartFrame(p.id, p.sid, body.approved !== false));
   route('POST', '/api/episodes/:id/storyboard/approve', async ({ p }) => S.approveStoryboard(p.id));
   route('PUT', '/api/episodes/:id/spend-limit', async ({ p, body }) => S.setSpendLimit(p.id, body.usd));
