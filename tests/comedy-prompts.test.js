@@ -3,12 +3,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createStudio } = require('../studio/lib/studio');
-const { make, fakeAi, goodConcepts, goodScript, readyProduct, routePaid } = require('./helpers/v23');
+const { make, fakeAi, goodConcepts, goodScript, scriptResponse, isScriptPrompt, umbrellaStory, readyProduct, routePaid } = require('./helpers/v23');
 
 const CONFIRM = { paid: true, unknownCost: true };
 
 /** Fake AI whose script output can be swapped per test. */
-function ai(scriptFn = () => goodScript()) {
+function ai(scriptFn = (req) => scriptResponse(req)) {
   return fakeAi({ '*': (req) => ({ text: '', json: /CONCEPT_TITLE/.test(req.prompt) ? scriptFn(req) : goodConcepts(3), usage: { inputTokens: 1000, outputTokens: 500 } }) });
 }
 async function episode(a) {
@@ -24,17 +24,17 @@ const scriptCalls = (a) => a.calls.filter((c) => /CONCEPT_TITLE/.test(c.prompt |
 
 test('title_ko: every generated scene needs a meaningful Korean title; bad or generic titles are rejected and nothing is saved', async () => {
   for (const bad of ['장면 1', 'Scene 2', '제품 소개', 'Umbrella holder', '']) {
-    const sc = () => { const g = goodScript(); g.scenes[1].title_ko = bad; return g; };
+    const sc = () => { const g = umbrellaStory(); g.comedy_story.resolution.scenes[0].title_ko = bad; return g; };
     const { s, id } = await episode(ai(sc));
-    await assert.rejects(s.scriptgen.generate(id, { confirm: CONFIRM }), (e) => e.code === 'SCRIPT_REJECTED' && /S2/.test(e.message), JSON.stringify(bad));
-    assert.equal(s.store.episodes.get(id).lines.length, 0, 'nothing is saved');
+    await assert.rejects(s.scriptgen.generate(id, { confirm: CONFIRM }), (e) => e.code === 'SCRIPT_REJECTED' && /결말/.test(e.message), JSON.stringify(bad));
+    assert.equal(s.store.episodes.get(id).scenes.filter((x) => x.part === 'A').length, 0, 'nothing is saved');
   }
   const { s, id } = await episode(ai());
   await s.scriptgen.generate(id, { confirm: CONFIRM });
   const v = s.episodeView(id);
-  assert.deepEqual(v.scenes.map((x) => x.title_ko), ['물바다가 된 현관', '아내의 신문물 자랑']);
+  assert.deepEqual(v.scenes.map((x) => x.title_ko), ['영국인의 자신감', '괴물 장마 개시', '서울이 잠긴 날', '출근길의 보트', '물에 빠진 생쥐', '현관 출입 금지', '쇼핑 본능 발동', '신문물 자랑', '영국인의 마지막 고집']);
   assert.ok(v.scenes.every((x) => x.title === x.title_ko), 'legacy title mirrors title_ko');
-  assert.equal(v.derived.validation.ok, true);
+  assert.equal(v.derived.validation.ok, true, JSON.stringify(v.derived.validation.errors));
   assert.equal(s.store.episodes.get(id).scriptSource.titleKo, true);
 });
 
@@ -53,7 +53,7 @@ test('title_ko: editable on its own without touching approvals; validated; persi
   assert.equal(JSON.stringify(s.store.episodes.get(id).approvals.script), hashBefore);
   assert.equal(v.timeline.scenes[0].title, '영국인의 자신감');
   // survives a script save that does not send title_ko (other fields edited)
-  await s.saveScript(id, { scenes: [{ id: 'S1', visual: 'changed visual' }, { id: 'S2' }], note: 't' });
+  await s.saveScript(id, { scenes: s.store.episodes.get(id).scenes.map((x) => ({ id: x.id, visual: x.id === 'S1' ? 'changed visual' : undefined })), note: 't' });
   assert.equal(s.store.episodes.get(id).scenes[0].title_ko, '영국인의 자신감');
 });
 
@@ -181,7 +181,7 @@ test('Test Prompt: needs cost confirmation, creates a separate draft and never t
   const m2 = await episode(bad);
   const t2 = await m2.s.scriptgen.testPrompt(m2.id, { confirm: CONFIRM });
   assert.equal(t2.error.code, 'SCRIPT_REJECTED');
-  assert.equal(m2.s.store.episodes.get(m2.id).lines.length, 0);
+  assert.equal(m2.s.store.episodes.get(m2.id).scenes.filter((x) => x.part === 'A').length, 0);
 });
 
 test('legacy: a customised Prompt-Manager script prompt is preserved as its own preset when presets are first created', async () => {

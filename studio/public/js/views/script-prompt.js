@@ -129,7 +129,7 @@ export function presetPanel(ep) {
       h('div', { class: 'banner' }, h('div', null, '이 초안은 테스트 기록으로만 저장되었습니다. 현재 대본·승인·버전은 바뀌지 않았습니다.')),
       t.error ? h('div', { class: 'banner err' }, h('div', null, h('b', null, t.error.message), (t.error.details || []).slice(0, 5).map((d) => h('div', { class: 'small' }, d)))) : [
         h('b', null, t.draft.title),
-        h('div', { class: 'stack', style: 'gap:4px' }, t.draft.scenes.map((s) => h('div', { class: 'small' }, h('b', null, s.id + ' · ' + s.title_ko), ' — ' + (s.visual || '').slice(0, 90)))),
+        h('div', { class: 'stack', style: 'gap:4px' }, t.draft.scenes.map((s) => h('div', { class: 'small' }, h('b', null, (s.part ? 'PART ' + s.part + ' · ' : '') + s.id + ' · ' + s.title_ko), ' — ' + (s.visual || '').slice(0, 90)))),
         h('div', { class: 'small' }, t.draft.lines.slice(0, 6).map((l) => h('div', null, `${l.speaker}: ${l.en} / ${l.ko}`))),
         t.validation && !t.validation.ok ? h('div', { class: 'small', style: 'color:var(--clay)' }, '검증 문제: ' + t.validation.errors.slice(0, 3).map((e) => e.message).join(' · ')) : h('div', { class: 'small' }, '검증 통과')],
       h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: close }, '닫기'))), { wide: true });

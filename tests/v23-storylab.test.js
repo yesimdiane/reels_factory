@@ -1,10 +1,10 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { make, fakeAi, goodConcepts, goodScript, readyProduct, routePaid } = require('./helpers/v23');
+const { make, fakeAi, goodConcepts, goodScript, scriptResponse, isScriptPrompt, readyProduct, routePaid } = require('./helpers/v23');
 
 const CONFIRM = { paid: true, unknownCost: true };
-const paidAi = (conceptFn) => fakeAi({ '*': (req) => ({ text: '', json: /CONCEPT_TITLE/.test(req.prompt) ? goodScript() : conceptFn(req), usage: { inputTokens: 1000, outputTokens: 500 } }) });
+const paidAi = (conceptFn) => fakeAi({ '*': (req) => ({ text: '', json: isScriptPrompt(req) ? scriptResponse(req) : conceptFn(req), usage: { inputTokens: 1000, outputTokens: 500 } }) });
 
 test('Story Lab: refuses unless product is ready (verified facts + approved reference set)', async () => {
   const { s } = make();
@@ -91,7 +91,8 @@ test('approval gate: only an approved concept (at its current revision) can crea
   assert.equal(ep.scriptSource.conceptId, c.id);
   assert.equal(ep.scriptSource.conceptRevision, 1);
   assert.equal(ep.scriptSource.promptVersion, 1);
-  assert.equal(ep.scenes[0].action, 'Jack sighs');
+  assert.equal(ep.scenes[0].action, 'Jack waves the umbrella away with a smug grin.');
+  assert.equal(ep.scenes[0].part, 'A');
   assert.match(ai.calls.at(-1).prompt, /CONCEPT_TITLE/);
   assert.match(ai.calls.at(-1).prompt, /자석으로 부착 가능/);
   assert.ok(s.store.episodes.versions(epId).some((v) => /AI 대본/.test(v.note)), 'version history records the generation');

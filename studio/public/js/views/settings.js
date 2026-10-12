@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { pageHead, charAvatar } from './common.js';
 import { aiIntegrations, promptManager, usagePanel } from './ai-settings.js';
 import { presetManager } from './script-prompt.js';
+import { endingManager } from './ending-settings.js';
 
 function kv(k, v) { return h('div', { class: 'row between', style: 'padding:6px 0;border-bottom:1px solid var(--line)' }, h('span', { class: 'muted' }, k), h('span', null, v)); }
 
@@ -71,7 +72,7 @@ function parts() {
   return { general: wrap, characters: chars };
 }
 
-const TABS = [['general', '일반 · 비용'], ['ai', 'AI 연동'], ['prompts', '프롬프트 매니저'], ['scriptprompts', 'AI 프롬프트 관리'], ['usage', '사용량 · 한도'], ['characters', '캐릭터']];
+const TABS = [['general', '일반 · 비용'], ['ai', 'AI 연동'], ['prompts', '프롬프트 매니저'], ['scriptprompts', 'AI 프롬프트 관리'], ['endings', '엔딩 템플릿'], ['usage', '사용량 · 한도'], ['characters', '캐릭터']];
 
 export function settings() {
   const wrap = h('div', { class: 'stack', style: 'gap:20px' });
@@ -81,6 +82,7 @@ export function settings() {
   if (tab === 'ai') wrap.append(aiIntegrations());
   else if (tab === 'prompts') wrap.append(promptManager());
   else if (tab === 'scriptprompts') wrap.append(presetManager());
+  else if (tab === 'endings') wrap.append(endingManager());
   else if (tab === 'usage') wrap.append(usagePanel());
   else { const p = parts(); wrap.append(tab === 'characters' ? p.characters : p.general); }
   return wrap;

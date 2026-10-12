@@ -30,6 +30,20 @@ const goodScript = () => ({
   cta: { lines: ['댓글에 ‘우산’ 남겨주세요'], keyword: '우산', durationSec: 3.5 },
 });
 
+const umbrellaStory = () => JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'fixtures', 'umbrella-story.json'), 'utf8'));
+/** A replacement for one beat (to prove a single-beat action changes only that beat). */
+const goodBeat = (key, tag = 'NEW') => { const b = umbrellaStory().comedy_story[key]; return Object.assign({}, b, { title_ko: b.title_ko + tag, story_en: b.story_en + ' (' + tag + ')', scenes: b.scenes.map((s, i) => Object.assign({}, s, { title_ko: s.title_ko + tag })) }); };
+/** What a fake script AI answers, by mode (story / single beat / ending variables / legacy flat script). */
+function scriptResponse(req, { story = umbrellaStory, beat } = {}) {
+  const p = req.prompt || '';
+  const t = /TARGET_BEAT:\s*(\w+)/.exec(p);
+  if (t) return { beat: beat ? beat(t[1]) : goodBeat(t[1]) };
+  if (/"comedy_story": \{"setup"/.test(p)) return story();
+  if (/\{"ending_vars"/.test(p)) return { ending_vars: umbrellaStory().ending_vars };
+  return goodScript();
+}
+const isScriptPrompt = (req) => /CONCEPT_TITLE/.test(req.prompt || '');
+
 /** Fake AI text provider factory. `handlers[name]` may be a function (call) => result; calls are recorded. */
 function fakeAi(handlers = {}) {
   const calls = [];
@@ -73,4 +87,4 @@ function routePaid(s, provider = 'gemini', tasks = ['storyConcepts', 'scriptWrit
   tasks.forEach((t) => s.integrations.setRouting(t, { provider, model: 'model-a' }));
 }
 
-module.exports = { make, fakeAi, goodConcepts, goodScript, png, readyProduct, routePaid };
+module.exports = { umbrellaStory, goodBeat, scriptResponse, isScriptPrompt, make, fakeAi, goodConcepts, goodScript, png, readyProduct, routePaid };

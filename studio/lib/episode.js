@@ -21,7 +21,7 @@ const STEP_LABELS = {
 
 // ---- Korean scene titles (title_ko) ----
 const HANGUL = /[가-힣]/;
-const GENERIC_TITLES = new Set(['장면', '씬', '컷', '샷', '제품소개', '제품', '소개', '오프닝', '엔딩', '인트로', '아웃트로', '시작', '끝', '마무리', '결말', '도입', '전개', '결론', '클로징', 'cta', '첫장면', '마지막장면', '다음장면']);
+const GENERIC_TITLES = new Set(['장면', '씬', '컷', '샷', '제품소개', '제품', '소개', '오프닝', '엔딩', '인트로', '아웃트로', '시작', '끝', '마무리', '결말', '도입', '전개', '결론', '클로징', 'cta', '첫장면', '마지막장면', '다음장면', '위기', '절정', '제품연결', '이야기', '엔딩이야기']);
 /** Problems with a Korean scene title. errors block (new scripts); warnings are advice (3–12 characters preferred). */
 function checkTitleKo(raw) {
   const t = String(raw == null ? '' : raw).trim();
@@ -142,6 +142,9 @@ function validateScript(ep, lib) {
   const total = totalPlannedSec(ep);
   if (total > 90) E('TOO_LONG', `총 길이 ${total.toFixed(1)}초가 인스타그램 릴스 한도(90초)를 넘습니다.`);
   else if (total > 60) W('LONG', `총 길이 ${total.toFixed(1)}초 — 릴스는 보통 60초 이하가 좋습니다.`);
+  // Episodes that follow the fixed formula (Part A: six beats, Part B: exactly three product-ending shots) are checked structurally too.
+  const formula = require('./formula');
+  if (formula.isStructured(ep)) formula.validateFormula(ep).forEach((e) => errors.push(e));
   return { ok: errors.length === 0, errors, warnings, totalSec: total };
 }
 
