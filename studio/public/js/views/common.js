@@ -132,10 +132,16 @@ export async function makeStartImages(ep, sceneIds = [], { force = false, after 
 }
 
 /** Scene navigation: one chip per scene, "S1 · 영국인의 자신감", jumping to that scene's card (id = prefix + sceneId). */
-export function sceneNav(ep, prefix) {
+export function sceneNav(ep, prefix, { badges = false, onJump = null } = {}) {
   if (!(ep.scenes || []).length) return null;
   return h('nav', { 'aria-label': '장면 이동', class: 'row', style: 'gap:6px;flex-wrap:wrap' }, ep.scenes.map((sc) => {
     const t = sc.title_ko || sc.title || '';
-    return h('button', { class: 'btn sm ghost', title: t, onclick: () => { const el = document.getElementById(prefix + sc.id); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } } }, sc.id + ' · ' + (t.length > 14 ? t.slice(0, 13) + '…' : t) + (sc.titleKoMissing ? ' ⚠' : ''));
+    const ap = badges ? sc.approval : null;
+    const badge = !ap ? null : ap.approved ? h('span', { class: 'tab-badge ok', title: `승인됨 (r${ap.revision})` }, '✓')
+      : ap.errorCount ? h('span', { class: 'tab-badge err', title: `고쳐야 할 항목 ${ap.errorCount}개` }, String(ap.errorCount))
+      : ap.editedAfterApproval ? h('span', { class: 'tab-badge stale', title: '승인 후 수정됨 — 다시 승인 필요' }, '↻')
+      : ap.status === 'ready' ? h('span', { class: 'tab-badge ready', title: '승인 가능' }, '○')
+      : h('span', { class: 'tab-badge draft', title: ap.label }, '·');
+    return h('button', { class: 'btn sm ghost scene-tab' + (ap && ap.approved ? ' approved' : '') + (ap && ap.errorCount ? ' has-err' : ''), 'data-scene-tab': sc.id, title: t + (ap ? ' · ' + ap.label : ''), onclick: () => { const el = document.getElementById(prefix + sc.id); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } if (onJump) onJump(sc); } }, sc.id + ' · ' + (t.length > 14 ? t.slice(0, 13) + '…' : t) + (sc.titleKoMissing ? ' ⚠' : ''), badge);
   }));
 }

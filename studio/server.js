@@ -232,6 +232,20 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   // ---- script ----
   route('PUT', '/api/episodes/:id/script', async ({ p, body }) => S.saveScript(p.id, body, 'operator', body.note));
   route('POST', '/api/episodes/:id/script/approve', async ({ p }) => S.approveScript(p.id));
+  // ---- projects, scene approval, Image Development hand-off (none of these can spend money) ----
+  route('GET', '/api/projects', async () => ({ projects: S.projects.listProjects() }));
+  route('POST', '/api/episodes/:id/scenes/:sid/approve', async ({ p }) => { await S.projects.approveScene(p.id, p.sid); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/revoke', async ({ p }) => { await S.projects.revokeScene(p.id, p.sid); return ep(p.id); });
+  route('GET', '/api/episodes/:id/scenes/:sid/history', async ({ p }) => S.projects.sceneHistory(p.id, p.sid));
+  route('POST', '/api/episodes/:id/scenes/approve-ready', async ({ p }) => { const r = await S.projects.approveReady(p.id); const v = ep(p.id); v.approveResult = r; return v; });
+  route('POST', '/api/episodes/:id/script/handoff', async ({ p }) => { const r = await S.projects.handoff(p.id); const v = ep(p.id); v.handoffResult = r; return v; });
+  route('GET', '/api/episodes/:id/image-dev', async ({ p }) => ({ imageDev: S.store.episodes.get(p.id).imageDev || null, snapshot: S.store.episodes.get(p.id).imageDev ? S.projects.readSnapshot(p.id) : null }));
+  route('POST', '/api/episodes/:id/duplicate', async ({ p, body }) => { const nid = await S.projects.duplicateEpisode(p.id, { newId: body.newId, title: body.title }); const v = ep(nid); v.duplicatedId = nid; return v; });
+  route('POST', '/api/episodes/:id/scenes/:sid/copy', async ({ p, body }) => S.projects.copyScene(p.id, p.sid, body.toEpisodeId, { beatKey: body.beatKey }));
+  route('GET', '/api/scene-templates', async () => ({ templates: S.projects.templates.list() }));
+  route('POST', '/api/episodes/:id/scenes/:sid/template', async ({ p, body }) => S.projects.saveTemplate(p.id, p.sid, { name: body.name, templateId: body.templateId }));
+  route('POST', '/api/scene-templates/:tid/apply', async ({ p, body }) => S.projects.applyTemplate(p.tid, body.episodeId, { linked: body.linked === true, beatKey: body.beatKey }));
+  route('POST', '/api/episodes/:id/scenes/:sid/template-sync', async ({ p }) => { await S.projects.syncLinkedScene(p.id, p.sid); return ep(p.id); });
   route('POST', '/api/episodes/:id/script/revoke', async ({ p }) => S.revokeScript(p.id));
   route('POST', '/api/episodes/:id/versions/:n/restore', async ({ p }) => S.restoreVersion(p.id, Number(p.n)));
   route('GET', '/api/episodes/:id/versions/:n', async ({ p }) => S.store.episodes.version(p.id, Number(p.n)));

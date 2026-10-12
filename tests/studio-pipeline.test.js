@@ -1,5 +1,6 @@
 // Studio V2: gates, cost controls, caching, review/checksum, voice rules, render and publishing — all in MOCK mode.
 'use strict';
+const { approveWithScenes } = require('./helpers/approve');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -18,7 +19,7 @@ function make({ env, provider } = {}) {
   return { cfg, prov, s: createStudio({ cfg, provider: prov }) };
 }
 async function readyForGeneration(s) {
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   await s.rebuildPrompts('EP01');
   await s.loadDemoReferences();
   await s.approveStoryboard('EP01');
@@ -51,7 +52,7 @@ test('seed: Episode 01 matches the brief and characters follow the rules', () =>
 
 test('script validation: Diane never says 오빠; unverified product claims are rejected; edits revoke approval', async () => {
   const { s } = make();
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   assert.equal(s.episodeView('EP01').derived.scriptApproved, true);
   const lines = s.episodeView('EP01').lines.map((l) => ({ ...l }));
   lines[0].ko = '오빠 이것 봐!';
@@ -60,7 +61,7 @@ test('script validation: Diane never says 오빠; unverified product claims are 
   assert.equal(v.derived.scriptApproved, false);
   assert.equal(v.derived.scriptChangedSinceApproval, true);
   assert.ok(v.derived.validation.errors.some((e) => e.code === 'FORBIDDEN_WORD'));
-  await assert.rejects(s.approveScript('EP01'), (e) => e.code === 'INVALID_SCRIPT');
+  await assert.rejects(approveWithScenes(s, 'EP01'), (e) => e.code === 'INVALID_SCRIPT');
   lines[0].ko = '자기야 이것 봐!';
   lines[1].en = 'This one is waterproof and super strong!';
   await s.saveScript('EP01', { lines });
@@ -188,7 +189,7 @@ test('generation → review → cache reuse; failed jobs are never auto-retried'
 
 test('voice: identity ID is not a voice ID; live mode needs a verified Voice ID and exact char confirmation', async () => {
   const { s } = make({ env: { RF_STUDIO_VOICE_MODE: 'live', HEYGEN_API_KEY: 'hg-test' } });
-  await s.approveScript('EP01');
+  await approveWithScenes(s, 'EP01');
   const est = s.voice.estimate('EP01');
   assert.equal(est.mode, 'live');
   assert.equal(est.canRun, false);

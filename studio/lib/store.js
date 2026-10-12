@@ -146,6 +146,8 @@ function createStore({ dir, seedDir = SEED_DIR }) {
   }
 
   const episodes = {
+    /** Optional observers of every episode write (before/after the mutation); the Studio uses them to track scene-approval changes. */
+    hooks: { before: null, after: null },
     exists: (id) => fs.existsSync(epFile(id)),
     list() {
       const root = p('episodes');
@@ -183,7 +185,9 @@ function createStore({ dir, seedDir = SEED_DIR }) {
       const prev = queues.get(id) || Promise.resolve();
       const run = prev.then(() => {
         const ep = episodes.get(id);
+        const pre = episodes.hooks.before ? episodes.hooks.before(ep) : undefined;
         const out = fn(ep);
+        if (episodes.hooks.after) episodes.hooks.after(ep, pre);
         ep.updatedAt = nowIso();
         if (opts.snapshot) {
           ep.version = (ep.version || 0) + 1;

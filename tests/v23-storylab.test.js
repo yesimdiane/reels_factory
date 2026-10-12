@@ -1,4 +1,5 @@
 'use strict';
+const { approveWithScenes } = require('./helpers/approve');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { make, fakeAi, goodConcepts, goodScript, scriptResponse, isScriptPrompt, readyProduct, routePaid } = require('./helpers/v23');
@@ -110,7 +111,7 @@ test('changing an approved concept requires re-approval and flags the script for
   await s.storylab.approve(pid, c.id);
   const epId = await s.createEpisodeFromConcept({ productId: pid, conceptId: c.id });
   await s.scriptgen.generate(epId, { confirm: CONFIRM });
-  await s.approveScript(epId);
+  await approveWithScenes(s, epId);
   assert.equal(s.episodeView(epId).derived.scriptApproved, true);
   await s.storylab.edit(pid, c.id, { payoff: '완전히 다른 결말' });
   const lab = s.storylab.list(pid).concepts.find((x) => x.id === c.id);
@@ -120,14 +121,14 @@ test('changing an approved concept requires re-approval and flags the script for
   const cs = s.episodeView(epId).derived.concept;
   assert.equal(cs.regenerationRequired, true);
   assert.equal(cs.ok, false);
-  await assert.rejects(s.approveScript(epId), (e) => e.code === 'CONCEPT_NOT_APPROVED');
+  await assert.rejects(approveWithScenes(s, epId), (e) => e.code === 'CONCEPT_NOT_APPROVED');
   await assert.rejects(s.scriptgen.generate(epId, { confirm: CONFIRM, overwrite: true }), (e) => e.code === 'CONCEPT_NOT_APPROVED');
   await s.storylab.approve(pid, c.id);
   assert.equal(s.episodeView(epId).derived.concept.regenerationRequired, true, 'still stale until the script is regenerated');
-  await assert.rejects(s.approveScript(epId), (e) => e.code === 'CONCEPT_NOT_APPROVED');
+  await assert.rejects(approveWithScenes(s, epId), (e) => e.code === 'CONCEPT_NOT_APPROVED');
   await s.scriptgen.generate(epId, { confirm: CONFIRM, overwrite: true });
   assert.equal(s.episodeView(epId).derived.concept.ok, true);
-  await s.approveScript(epId);
+  await approveWithScenes(s, epId);
 });
 
 test('reject/reopen/regenerate keep history; approved concepts cannot be regenerated or rejected silently', async () => {
@@ -171,6 +172,6 @@ test('legacy migration: EP01 gets a product record, keeps IDs/approvals, is idem
   const v = s.episodeView('EP01');
   assert.equal(v.derived.concept.legacy, true);
   assert.equal(v.derived.steps.find((x) => x.key === 'concept').state, 'done');
-  await s.approveScript('EP01'); // legacy approval path still works
+  await approveWithScenes(s, 'EP01'); // legacy approval path still works
   assert.equal(s.episodeView('EP01').derived.scriptApproved, true);
 });
