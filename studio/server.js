@@ -181,7 +181,19 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
 
   // ---- script generation from the approved concept ----
   route('POST', '/api/episodes/:id/script/generate', async ({ p, body }) => { const r = await S.scriptgen.generate(p.id, { confirm: body.confirm, overwrite: body.overwrite === true, extra: body.extra }); const v = ep(p.id); v.generated = r; return v; });
-  route('POST', '/api/episodes/:id/script/estimate', async ({ p, body }) => { const e = S.store.episodes.get(p.id); const c = S.storylab.requireApproved(e.concept && e.concept.productId, e.concept && e.concept.conceptId); const q = S.scriptgen.buildPrompt(e, c, body.extra); return S.router.estimate('scriptWriting', { inputChars: q.prompt.length, outputTokens: 6000, override: q.composed.providerOverride || undefined }); });
+  // ---- AI 프롬프트 관리: script prompt presets (editable creative text; safety constraints stay in code) ----
+  route('GET', '/api/script-presets', async () => S.presets.list());
+  route('PUT', '/api/script-presets/active', async ({ body }) => S.presets.setActive(body.presetId));
+  route('GET', '/api/script-presets/:id', async ({ p }) => S.presets.get(p.id));
+  route('GET', '/api/script-presets/:id/versions/:v', async ({ p }) => ({ sections: S.presets.versionSections(p.id, p.v) }));
+  route('PUT', '/api/script-presets/:id', async ({ p, body }) => S.presets.save(p.id, { sections: body.sections, name: body.name, note: body.note }));
+  route('POST', '/api/script-presets/:id/duplicate', async ({ p, body }) => S.presets.duplicate(p.id, { name: body.name }));
+  route('POST', '/api/script-presets/:id/restore', async ({ p, body }) => S.presets.restore(p.id, { version: body.version, toDefault: body.toDefault === true }));
+  route('PUT', '/api/episodes/:id/script/preset', async ({ p, body }) => { await S.scriptgen.selectPreset(p.id, body); return ep(p.id); });
+  route('POST', '/api/episodes/:id/script/prompt', async ({ p, body }) => S.scriptgen.effectivePrompt(p.id, body.preset, body.extra));
+  route('POST', '/api/episodes/:id/script/test', async ({ p, body }) => S.scriptgen.testPrompt(p.id, { sel: body.preset, confirm: body.confirm, extra: body.extra }));
+  route('GET', '/api/episodes/:id/script/tests', async ({ p }) => ({ tests: S.scriptgen.listTests(p.id) }));
+  route('POST', '/api/episodes/:id/script/estimate', async ({ p, body }) => { const e = S.store.episodes.get(p.id); const c = S.storylab.requireApproved(e.concept && e.concept.productId, e.concept && e.concept.conceptId); const q = S.scriptgen.buildPrompt(e, c, body.extra, body.preset); return S.router.estimate('scriptWriting', { inputChars: q.prompt.length, outputTokens: 6000, override: q.composed.providerOverride || undefined }); });
 
   // ---- state ----
   route('GET', '/api/sheets/status', async () => ({ enabled: !!(bridge && bridge.enabled), note: 'Studio is authoritative; Sheets receives a read-only mirror of Studio episodes.' }));
@@ -216,6 +228,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/storyboard/prompts', async ({ p, body }) => S.rebuildPrompts(p.id, body.sceneIds, { force: !!body.force, mode: body.mode === 'gemini' ? 'gemini' : 'template', confirmAi: body.confirmAi === true }));
   route('PUT', '/api/episodes/:id/scenes/:sid/prompt', async ({ p, body }) => S.savePrompt(p.id, p.sid, body));
   route('PUT', '/api/episodes/:id/scenes/:sid/start-image', async ({ p, body }) => S.setStartImage(p.id, p.sid, body));
+  route('PUT', '/api/episodes/:id/scenes/:sid/title', async ({ p, body }) => S.setSceneTitle(p.id, p.sid, body.title_ko));
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame', async ({ p, raw, headers }) => S.uploadStartFrame(p.id, p.sid, raw, decodeURIComponent(headers['x-filename'] || 'frame.png')), { upload: true });
   route('POST', '/api/episodes/:id/start-images/estimate', async ({ p, body }) => S.startImages.estimate(p.id, body.sceneIds, { force: body.force === true }));
   route('POST', '/api/episodes/:id/start-images/generate', async ({ p, body }) => { const r = await S.startImages.generate(p.id, body.sceneIds, { confirm: body.confirm, force: body.force === true }); const v = ep(p.id); v.startImageResult = r; return v; });

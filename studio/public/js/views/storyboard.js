@@ -1,7 +1,7 @@
 import { h, chip, icon, copyText, confirmDialog, toast } from '../ui.js';
 import { state, act, requireEpisode } from '../state.js';
 import { api } from '../api.js';
-import { pageHead, pipelineBar, noEpisode, episodePicker, lockedNotice, charAvatar, productRefStrip, makeStartImages } from './common.js';
+import { pageHead, pipelineBar, noEpisode, episodePicker, lockedNotice, charAvatar, productRefStrip, makeStartImages, sceneNav } from './common.js';
 
 export function storyboard() {
   const ep = requireEpisode();
@@ -14,6 +14,7 @@ export function storyboard() {
     h('button', { class: 'btn', disabled: !ep.derived.scriptApproved, title: ep.derived.scriptApproved ? '' : '대본 승인 후 사용할 수 있습니다', onclick: () => aiPrompts(ep, null) }, icon('play'), 'AI로 프롬프트 만들기')));
   wrap.append(h('div', { class: 'row', style: 'gap:10px' }, h('button', { class: 'btn clay', disabled: !ep.derived.scriptApproved, title: ep.derived.scriptApproved ? '' : '대본 승인 후 사용할 수 있습니다', onclick: () => makeStartImages(ep, [], { after: () => act(async () => null) }) }, icon('plus'), '모든 장면 시작 이미지 만들기'), h('span', { class: 'small muted' }, '장면 설명 + 캐릭터/제품 참조로 AI가 첫 프레임을 만듭니다. 만든 뒤 하나씩 승인하세요.')));
   { const strip = productRefStrip(ep); if (strip) wrap.append(strip); }
+  wrap.append(sceneNav(ep, 'sb-scene-'));
   autoBuild(ep);
   if (!ep.derived.scriptApproved) wrap.append(lockedNotice('대본이 승인되어야 스토리보드를 승인할 수 있습니다.', 'script', '대본으로 이동'));
   if (ep.derived.storyboardChangedSinceApproval) wrap.append(h('div', { class: 'banner warn' }, h('div', null, h('b', null, '승인 후 스토리보드가 수정되었습니다'), '다시 확인하고 승인하세요. 이전 승인으로는 유료 생성을 시작할 수 없습니다.')));
@@ -64,14 +65,16 @@ function sceneCard(ep, sc, i, chars) {
   const promptEl = h('textarea', { rows: 9, 'aria-label': '영상 프롬프트', oninput: (e) => (d.video = e.target.value) }, d.video);
   const negEl = h('textarea', { rows: 2, 'aria-label': '네거티브 프롬프트', oninput: (e) => (d.negative = e.target.value) }, d.negative);
   const cLines = ep.lines.filter((l) => l.sceneId === sc.id);
-  return h('section', { class: 'scene' + (sc.clips.approvedVersion ? ' done' : '') },
+  const titleIn = h('input', { type: 'text', value: sc.titleKoMissing ? '' : sc.title_ko, maxLength: 24, placeholder: sc.titleKoMissing ? '한국어 제목 입력 (현재: ' + (sc.title || '없음') + ')' : '한국어 장면 제목', 'aria-label': sc.id + ' 장면 제목 (한국어)', style: 'font-weight:700;font-size:18px;min-width:220px' });
+  const saveTitle = () => act(() => api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/title`, { title_ko: titleIn.value }), { ok: '장면 제목을 저장했습니다 (승인 상태는 그대로)' });
+  const sec = h('section', { class: 'scene' + (sc.clips.approvedVersion ? ' done' : '') },
     h('div', { class: 'thumb-col stack', style: 'gap:10px' }, thumb,
       img && !img.error && img.url.includes('/startframe/') && !img.approved ? h('button', { class: 'btn sm sage', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/scenes/${sc.id}/start-frame/approve`, { approved: true })) }, '이 프레임 승인') : null,
       h('button', { class: 'btn sm clay', disabled: !ep.derived.scriptApproved || (img && img.approved && img.url && img.url.includes('/startframe/')), title: ep.derived.scriptApproved ? '' : '대본 승인 후 사용할 수 있습니다', onclick: () => makeStartImages(ep, [sc.id], { force: true, after: () => act(async () => null) }) }, icon('plus'), img && img.generated ? '시작 이미지 다시 만들기' : '시작 이미지 만들기'),
       h('div', { class: 'row', style: 'gap:6px' }, h('button', { class: 'btn sm ghost', onclick: () => fileIn.click() }, icon('upload'), '프레임 올리기'), fileIn),
       refs.length ? h('select', { 'aria-label': '캐릭터 참조 이미지 선택', onchange: (e) => { if (!e.target.value) return; const [cid, rid] = e.target.value.split('|'); act(() => api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/start-image`, { characterId: cid, refId: rid })); } }, h('option', { value: '' }, '참조 이미지 선택…'), refs.map(({ c, r }) => h('option', { value: c.id + '|' + r.id }, c.name + ' · ' + r.label + (r.approved ? '' : ' (미승인)')))) : h('div', { class: 'small muted' }, '설정 → 캐릭터에서 참조 이미지를 올리세요.'), productPanel),
     h('div', { class: 'stack', style: 'gap:12px;min-width:0' },
-      h('div', { class: 'row between' }, h('div', null, h('div', { class: 'no' }, sc.id + ' · 비트 ' + sc.beat), h('h2', null, sc.title)), h('div', { class: 'row' }, chip(sc.durationSec + '초 → 클립 ' + sc.clipSec + '초'), sc.showsProduct ? chip('제품 등장', 'attention') : null, sc.prompt && sc.prompt.edited ? chip('프롬프트 수정됨') : null)),
+      h('div', { class: 'row between' }, h('div', null, h('div', { class: 'no' }, sc.id + ' · 비트 ' + sc.beat), h('div', { class: 'row', style: 'gap:6px;flex-wrap:nowrap' }, titleIn, h('button', { class: 'btn sm ghost', onclick: saveTitle }, '제목 저장'))), h('div', { class: 'row' }, chip(sc.durationSec + '초 → 클립 ' + sc.clipSec + '초'), sc.showsProduct ? chip('제품 등장', 'attention') : null, sc.prompt && sc.prompt.edited ? chip('프롬프트 수정됨') : null)),
       h('div', { class: 'row' }, h('span', { class: 'label' }, '등장 캐릭터'), chars.map((c) => h('label', { class: 'chip', style: 'cursor:pointer' }, h('input', { type: 'checkbox', checked: d.characters.includes(c.id), onchange: (e) => { d.characters = e.target.checked ? [...new Set([...d.characters, c.id])] : d.characters.filter((x) => x !== c.id); } }), c.name)), h('label', { class: 'chip', style: 'cursor:pointer' }, h('input', { type: 'checkbox', 'aria-label': '제품이 보임', checked: d.showsProduct, onchange: async (e) => {
         const input = e.target;
         const previous = sc.showsProduct;
@@ -104,6 +107,8 @@ function sceneCard(ep, sc, i, chars) {
         sc.castWarnings && sc.castWarnings.length ? h('div', { class: 'issue err' }, sc.castWarnings.map((w) => w.message).join(' ')) : null,
         sc.promptWarnings.length ? h('div', { class: 'issue err' }, '확인되지 않은 제품 주장: ' + sc.promptWarnings.join(', ')) : null),
       sc.prompt ? h('div', { class: 'field' }, h('label', null, 'Negative prompt'), negEl) : null));
+  sec.id = 'sb-scene-' + sc.id;
+  return sec;
 }
 
 async function reorder(ep, i, dir) {

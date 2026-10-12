@@ -19,6 +19,29 @@ const STEP_LABELS = {
   publish: ['게시', 'Publish'],
 };
 
+// ---- Korean scene titles (title_ko) ----
+const HANGUL = /[가-힣]/;
+const GENERIC_TITLES = new Set(['장면', '씬', '컷', '샷', '제품소개', '제품', '소개', '오프닝', '엔딩', '인트로', '아웃트로', '시작', '끝', '마무리', '결말', '도입', '전개', '결론', '클로징', 'cta', '첫장면', '마지막장면', '다음장면']);
+/** Problems with a Korean scene title. errors block (new scripts); warnings are advice (3–12 characters preferred). */
+function checkTitleKo(raw) {
+  const t = String(raw == null ? '' : raw).trim();
+  const errors = [];
+  const warnings = [];
+  if (!t) { errors.push('한국어 장면 제목이 없습니다.'); return { errors, warnings }; }
+  if (!HANGUL.test(t)) errors.push('장면 제목은 한국어여야 합니다.');
+  const flat = t.replace(/[\s\d.\-_:·]/g, '').toLowerCase();
+  if (/^(장면|씬|scene|shot|cut|s)\d*$/i.test(flat) || GENERIC_TITLES.has(flat)) errors.push(`"${t}"은(는) 너무 일반적인 제목입니다. 장면의 핵심 행동이나 웃음 포인트를 적어 주세요.`);
+  const len = [...t].length;
+  if (len > 24) errors.push('장면 제목이 너무 깁니다 (24자 이하).');
+  else if (len > 12) warnings.push('장면 제목은 3~12자가 보기 좋습니다.');
+  else if (len < 3) warnings.push('장면 제목은 3~12자가 보기 좋습니다.');
+  return { errors, warnings };
+}
+/** The title shown everywhere: title_ko, falling back to the legacy `title` of episodes made before title_ko existed. */
+const sceneTitle = (s) => String((s && (s.title_ko || s.title)) || '').trim();
+/** Strict (blocking) title checks apply to episodes that already use title_ko, i.e. every newly generated script. */
+const titlesStrict = (ep) => !!((ep.scenes || []).some((s) => s.title_ko) || (ep.scriptSource && ep.scriptSource.titleKo));
+
 /** What the script approval is bound to: dialogue, Korean subtitles, pacing and the CTA copy. */
 function scriptFingerprint(ep) {
   return sha256(
@@ -72,6 +95,9 @@ function validateScript(ep, lib) {
   scenes.forEach((s) => {
     if (sceneIds.has(s.id)) E('SCENE_DUP', `장면 ID가 중복됩니다: ${s.id}`, { sceneId: s.id });
     sceneIds.add(s.id);
+    const tk = checkTitleKo(s.title_ko);
+    if (titlesStrict(ep)) { tk.errors.forEach((m) => E('SCENE_TITLE', `${s.id}: ${m}`, { sceneId: s.id })); tk.warnings.forEach((m) => W('SCENE_TITLE_LEN', `${s.id}: ${m}`, { sceneId: s.id })); }
+    else if (!s.title_ko) W('SCENE_TITLE_MISSING', `${s.id}: 한국어 장면 제목(title_ko)이 없습니다 (이전에 만든 에피소드). 제목을 입력해 두면 모든 화면에서 쓰입니다.`, { sceneId: s.id });
     if (!(s.durationSec >= 1 && s.durationSec <= 15)) E('SCENE_DURATION', `${s.id}: 장면 길이는 1~15초여야 합니다.`, { sceneId: s.id });
   });
   if (!scenes.length) E('NO_SCENES', '장면이 없습니다.');
@@ -187,4 +213,4 @@ function pipeline(ep, lib, ctx = {}) {
   });
 }
 
-module.exports = { scriptFingerprint, storyboardFingerprint, isScriptApproved, isStoryboardApproved, validateScript, estimateSpeechSec, totalPlannedSec, pipeline, STEP_KEYS };
+module.exports = { checkTitleKo, sceneTitle, titlesStrict, scriptFingerprint, storyboardFingerprint, isScriptApproved, isStoryboardApproved, validateScript, estimateSpeechSec, totalPlannedSec, pipeline, STEP_KEYS };

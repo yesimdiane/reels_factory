@@ -3,6 +3,7 @@ import { state, act } from '../state.js';
 import { api } from '../api.js';
 import { pageHead, charAvatar } from './common.js';
 import { aiIntegrations, promptManager, usagePanel } from './ai-settings.js';
+import { presetManager } from './script-prompt.js';
 
 function kv(k, v) { return h('div', { class: 'row between', style: 'padding:6px 0;border-bottom:1px solid var(--line)' }, h('span', { class: 'muted' }, k), h('span', null, v)); }
 
@@ -70,7 +71,7 @@ function parts() {
   return { general: wrap, characters: chars };
 }
 
-const TABS = [['general', '일반 · 비용'], ['ai', 'AI 연동'], ['prompts', '프롬프트 매니저'], ['usage', '사용량 · 한도'], ['characters', '캐릭터']];
+const TABS = [['general', '일반 · 비용'], ['ai', 'AI 연동'], ['prompts', '프롬프트 매니저'], ['scriptprompts', 'AI 프롬프트 관리'], ['usage', '사용량 · 한도'], ['characters', '캐릭터']];
 
 export function settings() {
   const wrap = h('div', { class: 'stack', style: 'gap:20px' });
@@ -79,6 +80,7 @@ export function settings() {
   wrap.append(h('div', { class: 'seg', role: 'tablist', style: 'align-self:flex-start;flex-wrap:wrap' }, TABS.map(([k, l]) => h('button', { role: 'tab', 'aria-pressed': tab === k ? 'true' : 'false', onclick: () => { state.settingsTab = k; import('../state.js').then(({ hooks }) => hooks.rerender()); } }, l))));
   if (tab === 'ai') wrap.append(aiIntegrations());
   else if (tab === 'prompts') wrap.append(promptManager());
+  else if (tab === 'scriptprompts') wrap.append(presetManager());
   else if (tab === 'usage') wrap.append(usagePanel());
   else { const p = parts(); wrap.append(tab === 'characters' ? p.characters : p.general); }
   return wrap;

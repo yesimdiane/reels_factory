@@ -38,7 +38,7 @@ function buildTimeline(ep, audioSec) {
       lines.push({ id: l.id, sceneId: s.id, speaker: l.speaker, start: round(cursor), end: round(cursor + d), duration: d, en: l.en, ko: l.ko });
       cursor += d + GAP;
     });
-    scenes.push({ id: s.id, title: s.title, start: round(t), end: round(t + duration), duration: round(duration), plannedSec: planned, extended: duration > planned + 0.01 });
+    scenes.push({ id: s.id, title: s.title_ko || s.title, start: round(t), end: round(t + duration), duration: round(duration), plannedSec: planned, extended: duration > planned + 0.01 });
     t += duration;
   });
   const ctaSec = Number((ep.cta && ep.cta.durationSec) || 0);

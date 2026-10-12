@@ -130,3 +130,12 @@ export async function makeStartImages(ep, sceneIds = [], { force = false, after 
   } catch (e) { toast(e.message, { error: true, recovery: e.recovery }); }
   if (after) await after();
 }
+
+/** Scene navigation: one chip per scene, "S1 · 영국인의 자신감", jumping to that scene's card (id = prefix + sceneId). */
+export function sceneNav(ep, prefix) {
+  if (!(ep.scenes || []).length) return null;
+  return h('nav', { 'aria-label': '장면 이동', class: 'row', style: 'gap:6px;flex-wrap:wrap' }, ep.scenes.map((sc) => {
+    const t = sc.title_ko || sc.title || '';
+    return h('button', { class: 'btn sm ghost', title: t, onclick: () => { const el = document.getElementById(prefix + sc.id); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } } }, sc.id + ' · ' + (t.length > 14 ? t.slice(0, 13) + '…' : t) + (sc.titleKoMissing ? ' ⚠' : ''));
+  }));
+}

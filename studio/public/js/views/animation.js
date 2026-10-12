@@ -59,8 +59,8 @@ async function drawEstimate(ep, g, panel) {
       h('div', null,
         h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['', '장면', '클립 길이', '시작 이미지', '예상 비용'].map((x) => h('th', null, x)))),
           h('tbody', null, ep.scenes.map((sc) => { const it = items[sc.id]; const on = g.sceneIds.includes(sc.id); return h('tr', null,
-            h('td', null, h('input', { type: 'checkbox', checked: on, 'aria-label': sc.id + ' 선택', onchange: (e) => { g.sceneIds = e.target.checked ? [...g.sceneIds, sc.id] : g.sceneIds.filter((x) => x !== sc.id); rerender(); } })),
-            h('td', null, h('b', null, sc.id), ' ', sc.title),
+            h('td', null, h('input', { type: 'checkbox', checked: on, 'aria-label': sc.id + ' ' + (sc.title_ko || sc.title || '') + ' 선택', onchange: (e) => { g.sceneIds = e.target.checked ? [...g.sceneIds, sc.id] : g.sceneIds.filter((x) => x !== sc.id); rerender(); } })),
+            h('td', null, h('b', null, sc.id), ' ', sc.title_ko || sc.title),
             h('td', null, sc.clipSec + '초'),
             h('td', null, sc.startImageInfo.error ? chip('없음', 'err') : sc.startImageInfo.placeholder ? chip('데모 임시', 'mock') : sc.startImageInfo.approved ? chip('승인됨', 'done') : chip('미승인', 'attention')),
             h('td', null, !on || !it ? '—' : it.cached ? chip('캐시 재사용 $0', 'done') : it.usd == null ? chip('추정치 없음', 'attention') : fmtUsd(it.usd))); }))),
@@ -100,7 +100,7 @@ function clipCard(ep, sc, g) {
   const running = (ep.generation.jobs || []).find((j) => j.sceneId === sc.id && ['preparing', 'submitting', 'processing'].includes(j.status));
   const fileIn = h('input', { type: 'file', accept: 'video/mp4,video/quicktime', style: 'display:none', onchange: async (e) => { const f = e.target.files[0]; if (f) await act(() => api.upload(`/api/episodes/${ep.id}/clips/${sc.id}/upload`, f), { ok: '클립을 올렸습니다 — 검토 후 승인하세요' }); } });
   return h('div', { class: 'clip-card' + (cur && cur.status === 'approved' ? ' approved' : '') },
-    h('div', { class: 'row between' }, h('b', null, sc.id + ' · ' + sc.title.slice(0, 22)), cur ? chip(({ approved: '승인됨', pending_review: '검토 대기', rejected: '거절됨', superseded: '교체됨' })[cur.status] || cur.status, ({ approved: 'done', pending_review: 'attention', rejected: 'err' })[cur.status] || '') : chip(running ? '생성 중' : '클립 없음', running ? 'processing' : '')),
+    h('div', { class: 'row between' }, h('b', null, sc.id + ' · ' + (sc.title_ko || sc.title || '').slice(0, 22)), cur ? chip(({ approved: '승인됨', pending_review: '검토 대기', rejected: '거절됨', superseded: '교체됨' })[cur.status] || cur.status, ({ approved: 'done', pending_review: 'attention', rejected: 'err' })[cur.status] || '') : chip(running ? '생성 중' : '클립 없음', running ? 'processing' : '')),
     h('div', { class: 'phone sm' }, cur ? h('video', { src: cur.url, controls: true, playsinline: true, preload: 'metadata', muted: true }) : h('div', { class: 'ph' }, running ? '생성 중… (자동으로 새로고침됩니다)' : '아직 클립이 없습니다')),
     cur ? h('div', { class: 'small muted' }, `v${cur.v} · ${cur.durationSec}초 · ${cur.width}×${cur.height}` + (cur.mock ? ' · 목업' : cur.manual ? ' · 직접 업로드' : '') + (cur.reused ? ' · 캐시 재사용' : '')) : null,
     cur && cur.warnings && cur.warnings.length ? h('div', { class: 'small', style: 'color:var(--clay)' }, cur.warnings.join(' ')) : null,

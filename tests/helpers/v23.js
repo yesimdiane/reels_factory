@@ -23,8 +23,8 @@ const goodConcepts = (n = 3, tag = '') => ({
 const goodScript = () => ({
   title: '현관 대참사', beats: ['문제', '발견', '반전'],
   scenes: [
-    { id: 'S1', title: '문제', beat: 1, durationSec: 5, characters: ['jack'], showsProduct: false, visual: 'Jack drips rainwater in the entryway', action: 'Jack sighs', narration: '', placement: '' },
-    { id: 'S2', title: '발견', beat: 2, durationSec: 5, characters: ['diane', 'jack'], showsProduct: true, visual: 'Diane shows the product', action: 'Diane points', narration: '', placement: '문 안쪽에 부착' },
+    { id: 'S1', title_ko: '물바다가 된 현관', title: '물바다가 된 현관', beat: 1, durationSec: 5, characters: ['jack'], showsProduct: false, visual: 'Jack drips rainwater in the entryway', action: 'Jack sighs', narration: '', placement: '' },
+    { id: 'S2', title_ko: '아내의 신문물 자랑', title: '아내의 신문물 자랑', beat: 2, durationSec: 5, characters: ['diane', 'jack'], showsProduct: true, visual: 'Diane shows the product', action: 'Diane points', narration: '', placement: '문 안쪽에 부착' },
   ],
   lines: [{ id: 'L1', sceneId: 'S2', speaker: 'diane', en: 'Look what I found!', ko: '내가 뭘 찾았게!' }],
   cta: { lines: ['댓글에 ‘우산’ 남겨주세요'], keyword: '우산', durationSec: 3.5 },
