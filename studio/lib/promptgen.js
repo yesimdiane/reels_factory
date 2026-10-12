@@ -46,7 +46,7 @@ function geminiInstruction(ep, scenes, lib, clipSecOf) {
   const sceneBlocks = scenes.map((s) => {
     const lines = (ep.lines || []).filter((l) => l.sceneId === s.id);
     return [
-      `SCENE ${s.id} — ${s.title} (${s.durationSec}s planned, clip ${clipSecOf(s)}s)`,
+      `SCENE ${s.id} — ${s.title_ko || s.title} (${s.durationSec}s planned, clip ${clipSecOf(s)}s)`,
       `Scene description (approved): ${s.visual}`,
       `Characters selected in the editor: ${(s.characters || []).length ? s.characters.map((c) => (lib.characters.find((x) => x.id === c) || { name: c }).name).join(' + ') : 'NONE'}`,
       `Product visible: ${s.showsProduct ? 'YES' : 'NO'}`,

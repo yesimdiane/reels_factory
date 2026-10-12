@@ -43,7 +43,7 @@ export function voice() {
 export function timelineBar(tl) {
   const total = tl.total || 1;
   const parts = tl.scenes.map((s) => {
-    const el = h('div', { class: 'tl-scene' + (s.extended ? ' ext' : ''), style: `flex:${s.duration} 1 0`, title: `${s.id} ${s.start}–${s.end}초` }, h('span', null, s.id));
+    const el = h('div', { class: 'tl-scene' + (s.extended ? ' ext' : ''), style: `flex:${s.duration} 1 0`, title: `${s.id} ${s.title || ''} ${s.start}–${s.end}초` }, h('span', null, s.id + (s.title ? ' ' + s.title.slice(0, 6) : '')));
     tl.lines.filter((l) => l.sceneId === s.id).forEach((l) => el.append(h('i', { class: 'tl-line ' + l.speaker, style: `left:${((l.start - s.start) / s.duration) * 100}%;width:${(l.duration / s.duration) * 100}%`, title: l.speaker + ': ' + l.en })));
     return el;
   });

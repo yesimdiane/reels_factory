@@ -13,6 +13,7 @@ const { createAiRouter } = require('./ai/router');
 const { createProductService } = require('./products');
 const { createStoryLab } = require('./storylab');
 const { createScriptGen } = require('./scriptgen');
+const { createScriptPresets } = require('./scriptpresets');
 const { createStartImages } = require('./startimages');
 const { createIntegrations } = require('./integrations');
 const { createVideoProvider } = require('./providers');
@@ -21,7 +22,7 @@ const { createVoiceService } = require('./voice');
 const { createRenderService } = require('./render');
 const { createPromptService } = require('./promptgen');
 const { createPublishingService, checklist: publishChecklist, validate: validatePublishing } = require('./publishing');
-const { validateScript, pipeline, isScriptApproved, isStoryboardApproved, scriptFingerprint, storyboardFingerprint, totalPlannedSec } = require('./episode');
+const { checkTitleKo, sceneTitle, validateScript, pipeline, isScriptApproved, isStoryboardApproved, scriptFingerprint, storyboardFingerprint, totalPlannedSec } = require('./episode');
 const { lintPrompt } = require('./prompts');
 const { lintCast, SHEET_RULE } = require('./charrules');
 const { clipSecFor, modelById, limitFor, spentUsd } = require('./budget');
@@ -38,7 +39,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const router = createAiRouter({ store, vault: keys, usage, fetchFn, providerFactory: aiProviderFactory, log });
   const products = createProductService({ store, router, extractFn, downloadFn, log });
   const storylab = createStoryLab({ store, products, prompts, router, log });
-  const scriptgen = createScriptGen({ store, products, storylab, prompts, router, lib: () => store.characters.load() });
+  const presets = createScriptPresets({ store, prompts, seedDir: SEED_DIR });
+  const scriptgen = createScriptGen({ store, products, storylab, prompts, presets, router, lib: () => store.characters.load() });
   const startImages = createStartImages({ store, products, router, lib: () => store.characters.load(), log });
   const integrations = createIntegrations({ store, vault: keys, runtime, router, usage, cfg, fetchFn, muapiFactory, log });
 
@@ -131,6 +133,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       const clips = ep.clips[s.id] || { versions: [], approvedVersion: null };
       const model = modelById(store.models(), settings.defaultModelId);
       return Object.assign({}, s, {
+        title_ko: sceneTitle(s),
+        titleKoMissing: !s.title_ko,
         clipSec: clipSecFor(model, s.durationSec),
         prompt: ep.prompts[s.id] || null,
         promptWarnings: ep.prompts[s.id] ? lintPrompt(ep.prompts[s.id].video, ep) : [],
@@ -287,7 +291,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       const prev = old.find((o) => o.id === id) || {};
       return Object.assign({}, prev, {
         id,
-        title: String(s.title != null ? s.title : prev.title || '').slice(0, 120),
+        // title_ko is the Korean scene title (edited on its own); the legacy `title` mirrors it so every older reader shows the same text.
+        title_ko: String(s.title_ko != null ? s.title_ko : prev.title_ko || '').trim().slice(0, 60),
+        title: (s.title_ko != null ? String(s.title_ko).trim() : prev.title_ko) ? String(s.title_ko != null ? s.title_ko : prev.title_ko).trim().slice(0, 60) : String(s.title != null ? s.title : prev.title || '').slice(0, 120),
         beat: num(s.beat, prev.beat || i + 1),
         durationSec: num(s.durationSec, prev.durationSec || 4),
         characters: Array.isArray(s.characters) ? s.characters.map(String) : prev.characters || [],
@@ -423,6 +429,21 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       if (promptSvc.usesSheetFor(sc, lib()) && !text.includes(SHEET_RULE)) text = text.replace(/\s+$/, '') + '\n' + SHEET_RULE;
       ep.prompts[sceneId] = Object.assign({}, ep.prompts[sceneId], { video: text, negative: String(negative != null ? negative : (ep.prompts[sceneId] || {}).negative || ''), edited: true, editedAt: nowIso() });
     });
+    return episodeView(id);
+  }
+
+  /** Edits ONLY the Korean title of one scene. Titles are not part of the script/storyboard fingerprints, so approvals stay valid. */
+  async function setSceneTitle(id, sceneId, title) {
+    const t = String(title == null ? '' : title).trim();
+    const chk = checkTitleKo(t);
+    if (chk.errors.length) throw new StudioError('SCENE_TITLE', chk.errors[0], { details: chk.errors, recovery: '장면의 핵심 행동이나 웃음 포인트를 3~12자 한국어로 적어 주세요. (예: 영국인의 자신감)', status: 422 });
+    await store.episodes.update(id, (ep) => {
+      const sc = ep.scenes.find((x) => x.id === sceneId);
+      if (!sc) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다.', { status: 404 });
+      sc.title_ko = t;
+      sc.title = t;
+    });
+    store.episodes.audit(id, 'scene.title', { sceneId, title: t });
     return episodeView(id);
   }
 
@@ -607,9 +628,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   }
 
   return {
-    cfg, store, video, gen, startImages, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy,
+    cfg, store, video, gen, startImages, presets, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy,
     summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

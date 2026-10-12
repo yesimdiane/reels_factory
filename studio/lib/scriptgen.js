@@ -5,9 +5,12 @@
 //   * never overwrites an existing script without overwrite:true; never approves anything itself
 'use strict';
 const { StudioError, nowIso } = require('./util');
-const { validateScript } = require('./episode');
+const fs = require('node:fs');
+const path = require('node:path');
+const { validateScript, checkTitleKo } = require('./episode');
+const { sha256, uid } = require('./util');
 
-function createScriptGen({ store, products, storylab, prompts, router, lib }) {
+function createScriptGen({ store, products, storylab, prompts, presets, router, lib }) {
   function episodeIdFor(pid) {
     const used = store.episodes.list().map((e) => e.id).filter((i) => i.startsWith(pid + '-R')).map((i) => Number(i.slice(pid.length + 2))).filter(Number.isFinite);
     return `${pid}-R${String((used.length ? Math.max(...used) : 1) + 1).padStart(2, '0')}`;
@@ -40,9 +43,13 @@ function createScriptGen({ store, products, storylab, prompts, router, lib }) {
     return epId;
   }
 
-  function buildPrompt(ep, concept, extra) {
+  function buildPrompt(ep, concept, extra, selOverride) {
     const L = lib();
-    const composed = prompts.compose('script', { EXTRA: extra || '', COUNT: 1 });
+    // Creative text comes from the selected preset version; the constraints below it are enforced by code (presets.LOCKED).
+    const sel = Object.assign({}, ep.promptPreset || {}, selOverride || {});
+    const pc = presets.compose(sel, { EXTRA: '' });
+    let legacyOverride = null;
+    try { legacyOverride = prompts.compose('script', {}).providerOverride; } catch (_) { /* none */ }
     const chars = L.characters.map((c) => `- ${c.id}: ${c.name} — ${c.promptBlock}${c.forbiddenWords && c.forbiddenWords.length ? ' (never says: ' + c.forbiddenWords.join(', ') + ')' : ''}`);
     const data = [
       '--- INPUT DATA (authoritative) ---',
@@ -59,7 +66,10 @@ function createScriptGen({ store, products, storylab, prompts, router, lib }) {
       'CHARACTERS (speaker/characters ids must be one of these):',
       ...chars,
     ].join('\n');
-    return { composed, prompt: composed.text + '\n\n' + data };
+    const extraText = extra ? 'ADDITIONAL INSTRUCTION FOR THIS RUN (operator):\n' + String(extra).slice(0, 2000) : '';
+    const full = [pc.editable, extraText, data, pc.locked].filter(Boolean).join('\n\n');
+    const composed = { text: pc.editable, versions: { script: pc.presetVersion }, providerOverride: legacyOverride, preset: pc };
+    return { composed, prompt: full, parts: { editable: pc.editable + (extraText ? '\n\n' + extraText : ''), data, locked: pc.locked }, meta: { presetId: pc.presetId, presetName: pc.presetName, presetVersion: pc.presetVersion, comedyLevel: pc.comedyLevel, pinned: pc.pinned, promptHash: sha256(full).slice(0, 12) } };
   }
 
   function normalize(raw) {
@@ -67,10 +77,13 @@ function createScriptGen({ store, products, storylab, prompts, router, lib }) {
     const L = lib();
     const ids = new Set(L.characters.map((c) => c.id));
     const scenes = (Array.isArray(raw.scenes) ? raw.scenes : []).map((s, i) => ({
-      id: String(s.id || 'S' + (i + 1)), title: String(s.title || ''), beat: Number(s.beat) || i + 1, durationSec: Number(s.durationSec) || 4,
+      id: String(s.id || 'S' + (i + 1)), title_ko: String(s.title_ko || '').trim(), title: String(s.title_ko || '').trim(), beat: Number(s.beat) || i + 1, durationSec: Number(s.durationSec) || 4,
       characters: (Array.isArray(s.characters) ? s.characters : []).map(String).filter((c) => ids.has(c)), showsProduct: !!s.showsProduct,
       visual: String(s.visual || ''), action: String(s.action || ''), narration: String(s.narration || ''), placement: String(s.placement || ''),
     }));
+    const titleProblems = [];
+    scenes.forEach((sc) => checkTitleKo(sc.title_ko).errors.forEach((m) => titleProblems.push(`${sc.id}: ${m}`)));
+    if (titleProblems.length) throw new StudioError('SCRIPT_REJECTED', '한국어 장면 제목(title_ko) 규칙을 지키지 않은 응답이라 저장하지 않았습니다: ' + titleProblems[0], { details: titleProblems, recovery: '다시 생성하거나 프롬프트를 확인하세요. 제목은 장면의 핵심 행동·웃음 포인트를 나타내는 한국어여야 합니다.', status: 422 });
     const lines = (Array.isArray(raw.lines) ? raw.lines : []).map((l, i) => ({ id: String(l.id || 'L' + (i + 1)), sceneId: String(l.sceneId || ''), speaker: String(l.speaker || ''), en: String(l.en || '').trim(), ko: String(l.ko || '').trim() }));
     const cta = raw.cta && typeof raw.cta === 'object' ? { lines: (raw.cta.lines || []).map(String), keyword: String(raw.cta.keyword || '').trim(), durationSec: Number(raw.cta.durationSec) || 3.5 } : null;
     if (!scenes.length || !lines.length || !cta) throw new StudioError('SCRIPT_REJECTED', 'AI 응답에 장면, 대사 또는 CTA가 없습니다. 저장하지 않았습니다.', { recovery: '다시 생성하거나 프롬프트를 확인하세요.', status: 422 });
@@ -90,7 +103,7 @@ function createScriptGen({ store, products, storylab, prompts, router, lib }) {
     const ov = override || composed.providerOverride || undefined;
     const res = await router.run('scriptWriting', { prompt, json: true, maxTokens: 6000, confirm, override: ov, dedupeKey: epId });
     const s = normalize(res.json);
-    const source = { conceptId: concept.id, conceptRevision: concept.revision, productId: concept.productId, provider: res.provider, model: res.model, mock: !!res.mock, promptKey: 'script', promptVersion: composed.versions.script, promptVersions: composed.versions, generatedAt: nowIso(), by };
+    const source = { conceptId: concept.id, conceptRevision: concept.revision, productId: concept.productId, provider: res.provider, model: res.model, mock: !!res.mock, promptKey: 'script-preset', promptVersion: composed.versions.script, promptVersions: composed.versions, presetId: composed.preset.presetId, presetName: composed.preset.presetName, presetVersion: composed.preset.presetVersion, comedyLevel: composed.preset.comedyLevel, promptHash: sha256(prompt).slice(0, 12), titleKo: true, generatedAt: nowIso(), by };
     await store.episodes.update(epId, (ep) => {
       if (ep.lines.length) ep.preAiScript = { at: nowIso(), lines: ep.lines.length, scenes: ep.scenes.length };
       ep.title = s.title || ep.title;
@@ -124,7 +137,61 @@ function createScriptGen({ store, products, storylab, prompts, router, lib }) {
     };
   }
 
-  return { createEpisodeFromConcept, generate, conceptStatus, buildPrompt, episodeIdFor };
+
+  // ---- selection, effective prompt and Test Prompt ----
+  const testsDir = (epId) => store.episodes.file(epId, 'prompt-tests');
+
+  /** Which preset/version/comedy level the episode will use for its NEXT generation (never changes an existing script). */
+  async function selectPreset(epId, { presetId, version, comedyLevel } = {}) {
+    const cur = store.episodes.get(epId).promptPreset || {};
+    const next = { presetId: presetId || cur.presetId || presets.activeId(), version: version ? Number(version) : null, comedyLevel: [1, 2, 3].includes(Number(comedyLevel)) ? Number(comedyLevel) : cur.comedyLevel || 2 };
+    presets.resolve(next); // throws NOT_FOUND for an unknown preset/version
+    await store.episodes.update(epId, (ep) => { ep.promptPreset = next; });
+    store.episodes.audit(epId, 'script.preset_selected', next);
+    return next;
+  }
+
+  /** The full effective prompt exactly as it would be sent (editable text + input data + code-enforced constraints). */
+  function effectivePrompt(epId, sel, extra) {
+    const ep = store.episodes.get(epId);
+    if (!ep.concept || !ep.concept.conceptId) throw new StudioError('NO_CONCEPT', '이 에피소드는 스토리 컨셉과 연결되어 있지 않아 AI 프롬프트를 만들 수 없습니다.', { status: 409 });
+    const concept = storylab.requireApproved(ep.concept.productId, ep.concept.conceptId);
+    const q = buildPrompt(ep, concept, extra, sel);
+    return { parts: q.parts, full: q.prompt, meta: q.meta, chars: q.prompt.length };
+  }
+
+  /**
+   * "Test Prompt": the same paid call as a real generation, but the result is stored as a separate test draft and the
+   * episode (script, approvals, versions) is NOT touched. Needs the same explicit cost confirmation.
+   */
+  async function testPrompt(epId, { sel, confirm, extra = '', by = 'operator' } = {}) {
+    const ep0 = store.episodes.get(epId);
+    if (!ep0.concept || !ep0.concept.conceptId) throw new StudioError('NO_CONCEPT', '이 에피소드는 스토리 컨셉과 연결되어 있지 않습니다.', { status: 409 });
+    const concept = storylab.requireApproved(ep0.concept.productId, ep0.concept.conceptId);
+    const { composed, prompt, meta } = buildPrompt(ep0, concept, extra, sel);
+    const ov = composed.providerOverride || undefined;
+    const res = await router.run('scriptWriting', { prompt, json: true, maxTokens: 6000, confirm, override: ov, dedupeKey: epId + ':test:' + meta.promptHash });
+    const rec = { id: uid('ptest'), at: nowIso(), by, epId, meta, mock: !!res.mock, provider: res.provider, model: res.model, extra: String(extra).slice(0, 2000), estimate: res.estimate || null, draft: null, validation: null, error: null, rawJson: null };
+    try {
+      const s = normalize(res.json);
+      const probe = Object.assign({}, ep0, { title: s.title || ep0.title, beats: s.beats, scenes: s.scenes, lines: s.lines, cta: s.cta, publishing: Object.assign({}, ep0.publishing, { keyword: s.cta.keyword }), scriptSource: { titleKo: true } });
+      rec.draft = s;
+      rec.validation = validateScript(probe, lib());
+    } catch (e) {
+      rec.error = { code: e.code || 'ERROR', message: e.message, details: e.details || [] };
+      rec.rawJson = JSON.stringify(res.json || null).slice(0, 20000);
+    }
+    store.episodes.saveFile(epId, path.join('prompt-tests', rec.id + '.json'), Buffer.from(JSON.stringify(rec, null, 1)));
+    store.episodes.audit(epId, 'script.prompt_tested', { testId: rec.id, presetId: meta.presetId, presetVersion: meta.presetVersion, comedyLevel: meta.comedyLevel, ok: !rec.error });
+    return rec;
+  }
+  function listTests(epId) {
+    const dir = testsDir(epId);
+    if (!fs.existsSync(dir)) return [];
+    return fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => { try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (_) { return null; } }).filter(Boolean).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  }
+
+  return { createEpisodeFromConcept, generate, conceptStatus, buildPrompt, episodeIdFor, selectPreset, effectivePrompt, testPrompt, listTests };
 }
 
 module.exports = { createScriptGen };
