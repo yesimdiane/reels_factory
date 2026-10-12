@@ -2,6 +2,7 @@
 // No I/O here, so it is easy to test.
 'use strict';
 const { sha256, canonical } = require('./util');
+const { claimHits } = require('./claims');
 
 const STEP_KEYS = ['product', 'concept', 'script', 'approval', 'storyboard', 'estimate', 'animation', 'clips', 'voice', 'render', 'review', 'publish'];
 const STEP_LABELS = {
@@ -76,6 +77,31 @@ function estimateSpeechSec(text) {
   return Math.round((words / 2.7 + 0.25 + stretch + bangs) * 100) / 100;
 }
 
+// ---- dialogue timing (ESTIMATE; the real recorded duration comes from voice synthesis) ----
+const LINE_GAP = 0.18; // pause between two lines of one scene
+const SCENE_TAIL = 0.6; // breathing room after the last line
+const TIGHT_OVER = 0.05; // above this the scene is "tight" (warning)
+const OVERFLOW_OVER = 0.75; // above this the scene is an "overflow" (blocks approval for scripts that follow the fixed formula)
+
+/** Estimated seconds of speech a scene needs for these lines (same model the validator and the prompt use). */
+const speechNeed = (lines) => (lines.length ? lines.reduce((n, l) => n + estimateSpeechSec(l.en), 0) + LINE_GAP * (lines.length - 1) + SCENE_TAIL : 0);
+
+/** Maximum total English words that fit a scene of `durationSec` seconds with `nLines` lines (about 2.7 words/s). */
+const wordBudget = (durationSec, nLines) => Math.max(0, Math.floor((Number(durationSec) - SCENE_TAIL - LINE_GAP * Math.max(0, nLines - 1) - 0.25 * nLines) * 2.7));
+
+/**
+ * Per-scene dialogue timing (estimate). status: ok | tight (a little over) | overflow (clearly over).
+ * `overSec` > 0 means the dialogue needs more time than the scene has; the renderer would otherwise extend the scene.
+ */
+function dialogueTiming(ep) {
+  return (ep.scenes || []).map((sc) => {
+    const own = (ep.lines || []).filter((l) => l.sceneId === sc.id);
+    const need = speechNeed(own);
+    const over = Math.round((need - Number(sc.durationSec)) * 100) / 100;
+    return { sceneId: sc.id, title: sc.title_ko || sc.title || '', durationSec: Number(sc.durationSec), lineCount: own.length, lineIds: own.map((l) => l.id), words: own.reduce((n, l) => n + String(l.en || '').trim().split(/\s+/).filter(Boolean).length, 0), wordBudget: wordBudget(sc.durationSec, own.length), needSec: Math.round(need * 100) / 100, overSec: over, status: over > OVERFLOW_OVER ? 'overflow' : over > TIGHT_OVER ? 'tight' : 'ok' };
+  });
+}
+
 function mentions(text, needle) {
   return String(text || '').toLowerCase().includes(String(needle).toLowerCase());
 }
@@ -120,16 +146,16 @@ function validateScript(ep, lib) {
         if (mentions(l.en, w) || mentions(l.ko, w)) E('FORBIDDEN_WORD', `${tag}: ${c.name}는 "${w}"라고 말하지 않습니다 (캐릭터 규칙).`, { lineId: l.id });
       });
     }
-    forbiddenClaims.forEach((w) => {
-      if (mentions(l.en, w) || mentions(l.ko, w)) E('PRODUCT_CLAIM', `${tag}: 확인되지 않은 제품 주장 "${w}"가 있습니다.`, { lineId: l.id });
-    });
+    claimHits(l.en + '\n' + l.ko, forbiddenClaims).forEach((h) => E('PRODUCT_CLAIM', `${tag}: 확인되지 않은 제품 주장 "${h.claim}"가 있습니다 (…${h.context}…).`, { lineId: l.id }));
     (perScene[l.sceneId] = perScene[l.sceneId] || []).push(l);
   });
-  Object.entries(perScene).forEach(([sid, ls]) => {
-    const scene = scenes.find((s) => s.id === sid);
-    if (!scene) return;
-    const need = ls.reduce((n, l) => n + estimateSpeechSec(l.en), 0) + 0.18 * (ls.length - 1) + 0.6;
-    if (need > scene.durationSec + 0.05) W('SCENE_TIGHT', `${sid}: 대사가 약 ${need.toFixed(1)}초 필요한데 장면은 ${scene.durationSec}초입니다 — 렌더 때 장면이 자동으로 늘어납니다.`, { sceneId: sid });
+  // Dialogue must fit its scene. Preferred fix: shorten / drop lines (not extend the scene).
+  const formulaEp = require('./formula').isStructured(ep);
+  dialogueTiming(ep).forEach((t) => {
+    if (t.status === 'ok' || !t.lineCount) return;
+    const msg = `${t.sceneId}: 대사가 약 ${t.needSec}초(추정) 필요한데 장면은 ${t.durationSec}초입니다 (${t.overSec}초 초과). 대사를 줄이거나 불필요한 줄을 빼 주세요 — 장면을 늘리는 것은 마지막 수단입니다.`;
+    if (t.status === 'overflow' && formulaEp) E('SCENE_OVERFLOW', msg, { sceneId: t.sceneId, overSec: t.overSec });
+    else W('SCENE_TIGHT', msg, { sceneId: t.sceneId, overSec: t.overSec });
   });
   const cta = ep.cta || {};
   const kw = String(cta.keyword || '').trim();
@@ -137,7 +163,7 @@ function validateScript(ep, lib) {
   else if (/^PRD-?\d+/i.test(kw)) E('KEYWORD_INTERNAL', `내부 상품 ID("${kw}")를 공개 댓글 키워드로 쓸 수 없습니다.`);
   if (!(cta.lines || []).length) E('CTA', 'CTA 문구가 없습니다.');
   else if (kw && !(cta.lines || []).some((l) => mentions(l, kw))) E('CTA_KEYWORD', `CTA 문구에 댓글 키워드 "${kw}"가 들어 있어야 합니다.`);
-  (cta.lines || []).forEach((l) => forbiddenClaims.forEach((w) => mentions(l, w) && E('PRODUCT_CLAIM', `CTA: 확인되지 않은 제품 주장 "${w}"가 있습니다.`)));
+  (cta.lines || []).forEach((l) => claimHits(l, forbiddenClaims).forEach((h) => E('PRODUCT_CLAIM', `CTA: 확인되지 않은 제품 주장 "${h.claim}"가 있습니다 (…${h.context}…).`)));
   if (ep.publishing && ep.publishing.keyword && ep.publishing.keyword !== kw) E('KEYWORD_MISMATCH', 'CTA 키워드와 게시 키워드가 다릅니다.');
   const total = totalPlannedSec(ep);
   if (total > 90) E('TOO_LONG', `총 길이 ${total.toFixed(1)}초가 인스타그램 릴스 한도(90초)를 넘습니다.`);
@@ -216,4 +242,4 @@ function pipeline(ep, lib, ctx = {}) {
   });
 }
 
-module.exports = { checkTitleKo, sceneTitle, titlesStrict, scriptFingerprint, storyboardFingerprint, isScriptApproved, isStoryboardApproved, validateScript, estimateSpeechSec, totalPlannedSec, pipeline, STEP_KEYS };
+module.exports = { dialogueTiming, speechNeed, wordBudget, TIGHT_OVER, OVERFLOW_OVER, checkTitleKo, sceneTitle, titlesStrict, scriptFingerprint, storyboardFingerprint, isScriptApproved, isStoryboardApproved, validateScript, estimateSpeechSec, totalPlannedSec, pipeline, STEP_KEYS };

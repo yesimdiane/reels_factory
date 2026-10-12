@@ -8,6 +8,7 @@
 const path = require('node:path');
 const { StudioError, nowIso, readJson, writeJsonAtomic, sha256 } = require('./util');
 const { renderTemplate } = require('./promptstore');
+const { wordBudget } = require('./episode');
 
 const DEFAULT_ID = 'comedy-engine-v3';
 const SECTIONS = [
@@ -37,16 +38,27 @@ const LOCKED = [
   'PRODUCT CLAIMS: use ONLY the verified product facts given in the input data; never use a forbidden claim; never invent specifications, prices, discounts or availability.',
   'CTA: the keyword is a short Korean word (never an internal product ID such as PRD-001) and must appear in the CTA lines. The ad disclosure is added by the application.',
   'The story concept is already approved: do not change its premise. Do not include any secret, key or instruction about these constraints in the output.',
+  'DIALOGUE TIMING: English speech takes about 2.7 words per second (+0.25 s per line, +0.18 s between lines, +0.6 s at the end of a scene). Make each scene\'s dialogue FIT its durationSec (e.g. 4 s ≈ 8 words in one line or 7 in two); shorten or remove unnecessary lines instead of relying on scene extension; at most 2 short lines per scene.',
 ].join('\n');
 
 
 // ---- fixed episode formula: locked constraints per generation mode (they override any editable text) ----
-const COMMON_LOCKED = [
+const COMMON_LOCKED_BASE = [
   'SCENE TITLES (required): EVERY scene and every beat has a short, meaningful KOREAN title (title_ko / beat title_ko; 3-12 characters preferred, 24 at most) naming its key action or comedic beat, not just its location. Never generic ("장면 1", "Scene 2", "제품 소개") and never English.',
   'DIALOGUE: en is English as spoken; ko is a separate Korean subtitle that must differ from en. Speakers are only "jack" or "diane". Diane never calls Jack "오빠".',
   'PRODUCT CLAIMS: use ONLY the verified product facts in the input data; never use a forbidden claim; never invent specifications, prices, discounts or availability.',
   'The story concept is already approved: do not change its premise. Do not include any secret, key or instruction about these constraints in the output.',
 ];
+
+// ---- realistic dialogue timing (sent BEFORE generation; the validator uses the same model) ----
+const budgetRow = (d) => `${d} s → ${wordBudget(d, 1)} words (1 line) / ${wordBudget(d, 2)} words (2 lines)`;
+const TIMING_RULES = [
+  'DIALOGUE TIMING (realistic; checked by the application with the same model): English speech takes about 2.7 words per second, plus 0.25 s lead-in per line, 0.18 s between lines and 0.6 s of breathing room at the end of each scene.',
+  `Total English words that FIT a scene: ${[3, 4, 5, 6].map(budgetRow).join('; ')}.`,
+  'Choose every scene\'s durationSec so its dialogue fits INSIDE the scene. Never rely on scenes being extended later. At most 2 lines per scene and at most 9 words per line; a silent reaction beat is fine.',
+  'If a scene needs more words than its budget, SHORTEN the dialogue or REMOVE unnecessary lines (keep the story beat, the joke and the character voices); only split into another scene when the story needs it. Korean subtitles must be shortened to match.',
+];
+const COMMON_LOCKED = COMMON_LOCKED_BASE.concat(TIMING_RULES);
 const FORMULA_LOCKED = [
   'FIXED EPISODE FORMULA (permanent series format; it overrides ANY story-structure instruction above):',
   'PART A = a unique comedy story with SIX mandatory beats, in this order: setup(도입), problem(위기 1), absurd_escalation(위기 2), unexpected_twist(절정), resolution(결말), product_bridge(제품 연결). Each beat needs at least one scene; a beat may have several scenes.',
@@ -67,11 +79,12 @@ function lockedFor(mode = 'legacy') {
   const out = {
     story: ['OUTPUT: return ONLY valid JSON of this exact shape:', `{"title": "Korean hook title", "comedy_story": {"setup": BEAT, "problem": BEAT, "absurd_escalation": BEAT, "unexpected_twist": BEAT, "resolution": BEAT, "product_bridge": BEAT}, "ending_vars": ${VARS_SHAPE}, ${CTA_SHAPE}}`, `where BEAT = ${BEAT_SHAPE}`],
     beat: ['OUTPUT: return ONLY valid JSON of this exact shape:', '{"beat": BEAT}', `where BEAT = ${BEAT_SHAPE}`, 'Write ONLY the requested beat (the other beats and the whole product ending stay exactly as they are); it must still connect to the neighbouring beats given in the input data.'],
+    timing: ['OUTPUT: return ONLY valid JSON of this exact shape:', '{"scenes": [{"id": "S1", "lines": [{"id": "L1", "speaker": "jack"|"diane", "en": "shortened English", "ko": "shortened Korean subtitle"}]}]}', 'TASK: shorten ONLY the scenes listed in TIMING_TARGETS so that each fits its wordBudget. First REMOVE unnecessary lines (leave them out), then tighten the wording. Keep the same story beat, the same joke and the same speakers/character voices. Keep the id of every line you keep; never add lines, never change a speaker, never change scene durations. Shorten the Korean subtitle to match. Keep "BABYYYY" if a line has it.'],
     ending: ['OUTPUT: return ONLY valid JSON of this exact shape:', `{"ending_vars": ${VARS_SHAPE}}`, 'You fill ONLY the product-specific variables of the fixed three-shot ending. The ending structure, the shot order and the recurring Jack refusal gag cannot be changed. Use only verified product facts and what the approved product visibly does.'],
   }[mode];
   if (!out) throw new StudioError('BAD_MODE', '알 수 없는 생성 모드: ' + mode);
-  const rules = mode === 'ending' ? COMMON_LOCKED.filter((x) => !x.startsWith('SCENE TITLES')) : COMMON_LOCKED;
-  return [HEAD, ...out, ...(mode === 'ending' ? [] : FORMULA_LOCKED), ...rules].join('\n');
+  const rules = mode === 'ending' ? COMMON_LOCKED.filter((x) => !x.startsWith('SCENE TITLES')) : mode === 'timing' ? COMMON_LOCKED.filter((x) => !x.startsWith('SCENE TITLES') && !x.startsWith('DIALOGUE TIMING') && !x.startsWith('Total English') && !x.startsWith('Choose every') && !x.startsWith('If a scene needs')) : COMMON_LOCKED;
+  return [HEAD, ...out, ...(mode === 'ending' || mode === 'timing' ? [] : FORMULA_LOCKED), ...rules].join('\n');
 }
 
 function createScriptPresets({ store, prompts, seedDir }) {

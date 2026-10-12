@@ -21,13 +21,13 @@
      "lines": [
       {
        "speaker": "diane",
-       "en": "Baby, take the umbrella!",
-       "ko": "자기야, 우산 가져가!"
+       "en": "Baby, umbrella!",
+       "ko": "자기야, 우산!"
       },
       {
        "speaker": "jack",
-       "en": "I'm British. Rain is my natural habitat.",
-       "ko": "난 영국인이야. 비는 내 고향이지."
+       "en": "I'm British. Rain loves me.",
+       "ko": "난 영국인이야. 비가 날 좋아해."
       }
      ]
     }
@@ -52,8 +52,8 @@
      "lines": [
       {
        "speaker": "jack",
-       "en": "A bit of drizzle. Lovely.",
-       "ko": "보슬비네. 좋다."
+       "en": "Just a drizzle.",
+       "ko": "보슬비네."
       }
      ]
     }
@@ -104,7 +104,7 @@
      "lines": [
       {
        "speaker": "jack",
-       "en": "Is nobody else bothered?!",
+       "en": "Nobody's bothered?!",
        "ko": "아무도 신경 안 써?!"
       }
      ]
@@ -130,8 +130,8 @@
      "lines": [
       {
        "speaker": "jack",
-       "en": "I made it. Barely.",
-       "ko": "도착했어. 겨우."
+       "en": "I made it.",
+       "ko": "해냈어."
       }
      ]
     }
@@ -144,7 +144,7 @@
    "scenes": [
     {
      "title_ko": "현관 출입 금지",
-     "durationSec": 4,
+     "durationSec": 5,
      "characters": [
       "diane"
      ],
@@ -171,8 +171,8 @@
   "USE_PHRASE_KO": "우산을",
   "DEMO_ACTION": "Diane sticks the magnetic umbrella holder to the inside of the front door and hangs a wet umbrella on it.",
   "DEMO_ACTION_KO": "자석 우산꽂이를 현관문 안쪽에 붙이고 우산을 건다",
-  "DEMO_LINE_EN": "Look, it just sticks to the door!",
-  "DEMO_LINE_KO": "봐, 문에 딱 붙어!"
+  "DEMO_LINE_EN": "It just sticks to the door!",
+  "DEMO_LINE_KO": "문에 딱 붙어!"
  },
  "cta": {
   "lines": [

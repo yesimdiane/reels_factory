@@ -1,6 +1,7 @@
 import { h, chip, icon, confirmDialog, fmtSec, fmtUsd, toast } from '../ui.js';
 import { state, act, requireEpisode } from '../state.js';
 import { api } from '../api.js';
+import { timingTable } from './script-timing.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, issueList, charAvatar, lockedNotice, videoTabs } from './common.js';
 
 export function voice() {
@@ -34,6 +35,7 @@ export function voice() {
         h('td', null, e && e.durationSec ? fmtSec(e.durationSec) : '—'),
         h('td', null, e && e.cached ? h('audio', { controls: true, src: e.url, preload: 'none', style: 'height:34px;max-width:230px' }) : chip('없음', 'attention'))); })))));
 
+  { const tt = timingTable(ep); if (tt) wrap.append(tt); }
   const tl = ep.derived.render.plan.timeline;
   if (tl.lines.length) wrap.append(h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, '오디오 싱크'), h('span', { class: 'small muted' }, `총 ${tl.total}초 · 대사 사이에 인위적인 무음을 넣지 않고, 대사가 길면 장면이 자동으로 늘어납니다.`)), timelineBar(tl), tl.warnings.length ? h('div', { style: 'margin-top:10px' }, issueList(tl.warnings, 'warn')) : null,
     h('p', { class: 'small muted', style: 'margin:10px 0 0' }, ep.derived.voice.mode === 'live' ? '' : '립싱크는 제공하지 않습니다 — 선택한 영상 모델에서 지원이 확인되지 않았습니다. 대사는 장면 위에 얹히고 한국어 자막이 함께 표시됩니다.')));

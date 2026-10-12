@@ -75,7 +75,7 @@ test('umbrella episode: the generated script keeps every one of the six narrativ
   // the three ending shots follow the series template with this product's variables
   const lines = (sid) => ep.lines.filter((l) => l.sceneId === sid).map((l) => `${l.speaker}: ${l.en}`);
   assert.match(lines('E1')[0], /^diane: BABYYYY!!! This is the perfect excuse to order magnetic umbrella holder on Coupang!/);
-  assert.match(lines('E2')[0], /Look, it just sticks to the door!/);
+  assert.match(lines('E2')[0], /It just sticks to the door!/);
   assert.deepEqual(lines('E3'), ['diane: BABYYYY!!! LOOK WHAT I GOT!', 'jack: Good job, baby!', 'diane: So you\'ll use an umbrella now?', 'jack: Absolutely not.', 'diane: JACK!!!']);
   assert.equal(B(ep)[1].showsProduct, true);
   assert.match(B(ep)[1].visual, /magnetic umbrella holder/);
