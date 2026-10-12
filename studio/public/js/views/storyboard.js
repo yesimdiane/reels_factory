@@ -41,6 +41,21 @@ function sceneCard(ep, sc, i, chars) {
   if (d.video === d.baseVideo && d.baseVideo !== serverVideo) { d.video = serverVideo; d.baseVideo = serverVideo; }
   if (d.negative === d.baseNegative && d.baseNegative !== serverNeg) { d.negative = serverNeg; d.baseNegative = serverNeg; }
   const img = sc.startImageInfo;
+  const productPanel = h('div', { class: 'stack', style: 'gap:8px' });
+  const showProductImages = () => {
+    productPanel.replaceChildren();
+    if (!d.showsProduct) return;
+    const images = ep.productStudioImages || sc.productImages || ep.productRefImages || [];
+    productPanel.append(h('b', { class: 'small' }, '제품 스튜디오 이미지'));
+    if (images.length) productPanel.append(h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, images.map((im) =>
+      h('a', { href: im.url, target: '_blank', rel: 'noopener', title: im.label || '제품 이미지' },
+        h('img', { src: im.url, alt: im.label || '제품 이미지', style: 'width:80px;height:80px;object-fit:contain;border:1px solid var(--line);border-radius:8px' }),
+        h('div', { class: 'small muted' }, im.kindLabel || im.kind || '제품 참조'),
+        h('div', { class: 'small muted' }, im.status === 'approved' ? '승인됨' : im.status ? '미승인' : '참조 이미지')))));
+    else productPanel.append(h('div', { class: 'small muted' }, '제품 스튜디오에 이미지를 올리면 이 장면에 표시됩니다.'));
+    if (ep.productId) productPanel.append(h('a', { class: 'small', href: '#/products/' + ep.productId }, '제품 스튜디오에서 보기'));
+  };
+  showProductImages();
   const refs = [];
   sc.characters.forEach((cid) => { const c = chars.find((x) => x.id === cid); if (c) c.references.forEach((r) => refs.push({ c, r })); });
   const thumb = h('div', { class: 'thumb' }, img && !img.error ? h('img', { src: img.url, alt: '시작 이미지' }) : h('div', { style: 'height:100%;display:grid;place-items:center;text-align:center;padding:10px;font-size:12px;color:var(--muted)' }, '시작 이미지 없음'),
@@ -53,10 +68,23 @@ function sceneCard(ep, sc, i, chars) {
     h('div', { class: 'thumb-col stack', style: 'gap:10px' }, thumb,
       img && !img.error && img.url.includes('/startframe/') && !img.approved ? h('button', { class: 'btn sm sage', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/scenes/${sc.id}/start-frame/approve`, { approved: true })) }, '이 프레임 승인') : null,
       h('div', { class: 'row', style: 'gap:6px' }, h('button', { class: 'btn sm ghost', onclick: () => fileIn.click() }, icon('upload'), '프레임 올리기'), fileIn),
-      refs.length ? h('select', { 'aria-label': '캐릭터 참조 이미지 선택', onchange: (e) => { if (!e.target.value) return; const [cid, rid] = e.target.value.split('|'); act(() => api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/start-image`, { characterId: cid, refId: rid })); } }, h('option', { value: '' }, '참조 이미지 선택…'), refs.map(({ c, r }) => h('option', { value: c.id + '|' + r.id }, c.name + ' · ' + r.label + (r.approved ? '' : ' (미승인)')))) : h('div', { class: 'small muted' }, '설정 → 캐릭터에서 참조 이미지를 올리세요.')),
+      refs.length ? h('select', { 'aria-label': '캐릭터 참조 이미지 선택', onchange: (e) => { if (!e.target.value) return; const [cid, rid] = e.target.value.split('|'); act(() => api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/start-image`, { characterId: cid, refId: rid })); } }, h('option', { value: '' }, '참조 이미지 선택…'), refs.map(({ c, r }) => h('option', { value: c.id + '|' + r.id }, c.name + ' · ' + r.label + (r.approved ? '' : ' (미승인)')))) : h('div', { class: 'small muted' }, '설정 → 캐릭터에서 참조 이미지를 올리세요.'), productPanel),
     h('div', { class: 'stack', style: 'gap:12px;min-width:0' },
       h('div', { class: 'row between' }, h('div', null, h('div', { class: 'no' }, sc.id + ' · 비트 ' + sc.beat), h('h2', null, sc.title)), h('div', { class: 'row' }, chip(sc.durationSec + '초 → 클립 ' + sc.clipSec + '초'), sc.showsProduct ? chip('제품 등장', 'attention') : null, sc.prompt && sc.prompt.edited ? chip('프롬프트 수정됨') : null)),
-      h('div', { class: 'row' }, h('span', { class: 'label' }, '등장 캐릭터'), chars.map((c) => h('label', { class: 'chip', style: 'cursor:pointer' }, h('input', { type: 'checkbox', checked: d.characters.includes(c.id), onchange: (e) => { d.characters = e.target.checked ? [...new Set([...d.characters, c.id])] : d.characters.filter((x) => x !== c.id); } }), c.name)), h('label', { class: 'chip', style: 'cursor:pointer' }, h('input', { type: 'checkbox', checked: d.showsProduct, onchange: (e) => (d.showsProduct = e.target.checked) }), '제품이 보임')),
+      h('div', { class: 'row' }, h('span', { class: 'label' }, '등장 캐릭터'), chars.map((c) => h('label', { class: 'chip', style: 'cursor:pointer' }, h('input', { type: 'checkbox', checked: d.characters.includes(c.id), onchange: (e) => { d.characters = e.target.checked ? [...new Set([...d.characters, c.id])] : d.characters.filter((x) => x !== c.id); } }), c.name)), h('label', { class: 'chip', style: 'cursor:pointer' }, h('input', { type: 'checkbox', 'aria-label': '제품이 보임', checked: d.showsProduct, onchange: async (e) => {
+        const input = e.target;
+        const previous = sc.showsProduct;
+        d.showsProduct = input.checked;
+        input.disabled = true;
+        showProductImages();
+        const scenes = ep.scenes.map((s) => s.id === sc.id ? { id: s.id, showsProduct: d.showsProduct } : { id: s.id });
+        const result = await act(async () => {
+          try { return await api.put(`/api/episodes/${ep.id}/script`, { scenes, note: sc.id + ' 제품 표시 변경' }); }
+          catch (error) { d.showsProduct = previous; throw error; }
+        });
+        if (!result) { d.showsProduct = previous; input.checked = previous; showProductImages(); }
+        input.disabled = false;
+      } }), '제품이 보임')),
       h('div', { class: 'field' }, h('label', null, '시각 설명'), h('textarea', { rows: 3, oninput: (e) => (d.visual = e.target.value) }, d.visual)),
       cLines.length ? h('div', { class: 'small' }, h('span', { class: 'label' }, '연결된 대사 '), cLines.map((l) => h('span', { class: 'chip', style: 'margin:2px 4px 2px 0' }, (chars.find((c) => c.id === l.speaker) || {}).name + ': ' + l.en.slice(0, 30)))) : h('div', { class: 'small muted' }, '이 장면에는 대사가 없습니다 (액션 장면).'),
       h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', onclick: async () => {
@@ -126,3 +154,4 @@ async function aiPrompts(ep, sc) {
   const r = await act(() => api.post(`/api/episodes/${ep.id}/storyboard/prompts`, { sceneIds: sc ? [sc.id] : undefined, mode: 'gemini', confirmAi: true, force: overwrite }), { ok: 'AI 프롬프트를 만들었습니다' });
   return r;
 }
+
