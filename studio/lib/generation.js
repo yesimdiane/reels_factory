@@ -42,7 +42,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     if (si && si.type === 'upload') {
       const file = store.episodes.file(ep.id, 'startframes', si.file);
       if (!fs.existsSync(file)) return { error: '시작 이미지 파일이 없습니다.' };
-      return { file, sha256: si.sha256, approved: !!si.approved, placeholder: false, label: '업로드한 시작 프레임' };
+      return { file, sha256: si.sha256, approved: !!si.approved, placeholder: false, generated: !!si.generated, label: si.generated ? 'AI 생성 시작 프레임' : '업로드한 시작 프레임' };
     }
     const l = lib();
     let charId = si && si.characterId;

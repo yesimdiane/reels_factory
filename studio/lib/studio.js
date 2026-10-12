@@ -13,6 +13,7 @@ const { createAiRouter } = require('./ai/router');
 const { createProductService } = require('./products');
 const { createStoryLab } = require('./storylab');
 const { createScriptGen } = require('./scriptgen');
+const { createStartImages } = require('./startimages');
 const { createIntegrations } = require('./integrations');
 const { createVideoProvider } = require('./providers');
 const { createGenerationService } = require('./generation');
@@ -38,6 +39,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const products = createProductService({ store, router, extractFn, downloadFn, log });
   const storylab = createStoryLab({ store, products, prompts, router, log });
   const scriptgen = createScriptGen({ store, products, storylab, prompts, router, lib: () => store.characters.load() });
+  const startImages = createStartImages({ store, products, router, lib: () => store.characters.load(), log });
   const integrations = createIntegrations({ store, vault: keys, runtime, router, usage, cfg, fetchFn, muapiFactory, log });
 
   // Video provider resolved per call: switching mode/key in Settings applies immediately. Live needs request AND key; otherwise MOCK (shown in the UI).
@@ -135,7 +137,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         castWarnings: ep.prompts[s.id] ? lintCast(ep.prompts[s.id].video, s, L) : [],
         usesSheet: promptSvc.usesSheetFor(s, L),
         productImages: s.showsProduct ? productStudioImages : [],
-        startImageInfo: img.error ? { error: img.error } : { label: img.label, approved: img.approved, placeholder: img.placeholder, url: img.characterId ? `/media/ref/${img.characterId}/${img.refId}` : `/media/startframe/${id}/${s.id}` },
+        startImageInfo: img.error ? { error: img.error } : { label: img.label, generated: !!img.generated, approved: img.approved, placeholder: img.placeholder, url: img.characterId ? `/media/ref/${img.characterId}/${img.refId}` : `/media/startframe/${id}/${s.id}` },
         clips: { approvedVersion: clips.approvedVersion, versions: clips.versions.map((v) => Object.assign({}, v, { url: `/media/clip/${id}/${s.id}/${v.v}` })) },
         line: ep.lines.filter((l) => l.sceneId === s.id).map((l) => l.id),
       });
@@ -605,7 +607,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   }
 
   return {
-    cfg, store, video, gen, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy,
+    cfg, store, video, gen, startImages, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy,
     summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
