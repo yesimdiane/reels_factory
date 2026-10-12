@@ -14,6 +14,9 @@ const { createProductService } = require('./products');
 const { createStoryLab } = require('./storylab');
 const { createScriptGen } = require('./scriptgen');
 const { createScriptPresets } = require('./scriptpresets');
+const { createEndingTemplates } = require('./endingtemplates');
+const F = require('./formula');
+const SF = require('./scriptformula');
 const { createStartImages } = require('./startimages');
 const { createIntegrations } = require('./integrations');
 const { createVideoProvider } = require('./providers');
@@ -40,7 +43,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const products = createProductService({ store, router, extractFn, downloadFn, log });
   const storylab = createStoryLab({ store, products, prompts, router, log });
   const presets = createScriptPresets({ store, prompts, seedDir: SEED_DIR });
-  const scriptgen = createScriptGen({ store, products, storylab, prompts, presets, router, lib: () => store.characters.load() });
+  const endings = createEndingTemplates({ store, seedDir: SEED_DIR });
+  const scriptgen = createScriptGen({ store, products, storylab, prompts, presets, endings, router, lib: () => store.characters.load() });
   const startImages = createStartImages({ store, products, router, lib: () => store.characters.load(), log });
   const integrations = createIntegrations({ store, vault: keys, runtime, router, usage, cfg, fetchFn, muapiFactory, log });
 
@@ -103,6 +107,21 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   // ---------- derived view of one episode ----------
   function jobsRunning(ep) {
     return (ep.generation.jobs || []).some((j) => ACTIVE_JOB.has(j.status));
+  }
+
+  /** Structured view of the fixed formula for the Script Studio UI (Part A beats, Part B template slots, what is template vs episode-specific). */
+  function formulaView(ep) {
+    if (!F.isStructured(ep)) return { structured: false };
+    const shape = (key, group) => {
+      const b = ep[group][key] || {};
+      return Object.assign({ key, label: (F.beatMeta(key) || {}).ko, labelEn: (F.beatMeta(key) || {}).en, role: (F.beatMeta(key) || {}).role || '' }, b, { subtitle_ko: F.beatSubtitles(ep, key) });
+    };
+    return {
+      structured: true,
+      partA: F.BEAT_KEYS.map((k) => shape(k, 'comedy_story')),
+      partB: F.ENDING_KEYS.map((k) => shape(k, 'product_ending')),
+      ending: { templateId: (ep.ending || {}).templateId, templateName: (ep.ending || {}).templateName, templateVersion: (ep.ending || {}).templateVersion, pinnedVersion: (ep.ending || {}).version || null, structureLocked: !!(ep.ending || {}).structureLocked, vars: SF.endingVars(ep), manualVars: (ep.ending || {}).manualVars || [] },
+    };
   }
 
   function episodeView(id) {
@@ -178,6 +197,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         try { const pv = products.get(ep.productId); return refs.map((i) => pv.images.find((x) => x.id === i)).filter(Boolean).map((im) => ({ id: im.id, url: im.url, kind: im.kind, kindLabel: im.kindLabel, label: im.label })); } catch (_) { return []; }
       })(),
       productStudioImages,
+      formula: formulaView(ep),
       renders: ep.renders.map((r) => Object.assign({}, r, { url: `/media/render/${id}/${r.v}`, current: !!(ep.approvals.final && ep.approvals.final.v === r.v) })),
       sfx: ep.sfx,
       timeline: used,
@@ -294,6 +314,10 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         // title_ko is the Korean scene title (edited on its own); the legacy `title` mirrors it so every older reader shows the same text.
         title_ko: String(s.title_ko != null ? s.title_ko : prev.title_ko || '').trim().slice(0, 60),
         title: (s.title_ko != null ? String(s.title_ko).trim() : prev.title_ko) ? String(s.title_ko != null ? s.title_ko : prev.title_ko).trim().slice(0, 60) : String(s.title != null ? s.title : prev.title || '').slice(0, 120),
+        // fixed formula: which beat (and part) the scene belongs to; a Part B scene's slot can never be re-assigned from the client
+        part: prev.part === 'B' ? 'B' : (F.partOf(s.beatKey) || prev.part || ''),
+        beatKey: prev.part === 'B' ? prev.beatKey : (F.partOf(s.beatKey) === 'A' ? s.beatKey : prev.beatKey || ''),
+        manualEdit: !!prev.manualEdit,
         beat: num(s.beat, prev.beat || i + 1),
         durationSec: num(s.durationSec, prev.durationSec || 4),
         characters: Array.isArray(s.characters) ? s.characters.map(String) : prev.characters || [],
@@ -314,17 +338,35 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       let id = String(l.id || '').trim();
       if (!id || seen.has(id)) id = 'L' + ++n + (seen.has('L' + n) ? '_' : '');
       seen.add(id);
-      return { id, sceneId: String(l.sceneId || ''), speaker: String(l.speaker || ''), en: String(l.en || '').trim(), ko: String(l.ko || '').trim() };
+      return { id, sceneId: String(l.sceneId || ''), speaker: String(l.speaker || ''), en: String(l.en || '').trim(), ko: String(l.ko || '').trim(), edited: !!((ep.lines || []).find((o) => o.id === id) || {}).edited };
     });
   }
 
   async function saveScript(id, patch, by = 'operator', note = '') {
     const ep = await store.episodes.update(id, (ep) => {
+      const prevEp = F.isStructured(ep) ? JSON.parse(JSON.stringify(ep)) : null;
       if (patch.title !== undefined) ep.title = String(patch.title).slice(0, 200);
       if (patch.titleEn !== undefined) ep.titleEn = String(patch.titleEn).slice(0, 200);
       if (Array.isArray(patch.beats)) ep.beats = patch.beats.map(String);
-      if (Array.isArray(patch.scenes)) ep.scenes = sanitizeScenes(patch.scenes, ep.scenes);
+      if (Array.isArray(patch.scenes)) {
+        ep.scenes = sanitizeScenes(patch.scenes, ep.scenes);
+        if (prevEp) SF.enforceLock(prevEp, ep.scenes); // Part B structure stays locked while only its product-specific content changes
+      }
       if (Array.isArray(patch.lines)) ep.lines = sanitizeLines(patch.lines, ep);
+      if (prevEp) {
+        SF.markEdits(prevEp, ep); // hand edits are remembered so AI actions never silently overwrite them
+        SF.markBeatEdits(prevEp, ep, patch);
+        if (patch.ending && typeof patch.ending === 'object') {
+          const cur = SF.endingVars(ep);
+          const pv = patch.ending.vars || {};
+          const manual = new Set(ep.ending.manualVars || []);
+          let varsChanged = false;
+          Object.keys(pv).forEach((k) => { if (endings.VAR_KEYS.includes(k) && String(pv[k]).trim() !== String(cur[k] || '').trim()) { ep.ending.vars[k] = String(pv[k]).trim().slice(0, 300); manual.add(k); varsChanged = true; } });
+          ep.ending.manualVars = Array.from(manual);
+          if (varsChanged) SF.applyEnding(ep, endings, { respectEdits: true }); // only when a product-specific value really changed
+        }
+        F.syncBeats(ep);
+      }
       if (patch.cta) {
         ep.cta = Object.assign({}, ep.cta, {
           lines: Array.isArray(patch.cta.lines) ? patch.cta.lines.map(String) : ep.cta.lines,
@@ -445,6 +487,33 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     });
     store.episodes.audit(id, 'scene.title', { sceneId, title: t });
     return episodeView(id);
+  }
+
+  /**
+   * Reuse approved ending start frames from another episode (same series template slots). A frame that shows the product is only
+   * reused when it is the SAME product; frames are copied (the source episode is never changed) and keep their approval record.
+   */
+  async function reuseEndingAssets(id, fromId, by = 'operator') {
+    const ep = store.episodes.get(id);
+    const src = store.episodes.get(fromId);
+    if (!F.isStructured(ep) || !F.isStructured(src)) throw new StudioError('NOT_FORMULA', '두 에피소드 모두 고정 에피소드 포맷이어야 합니다.', { status: 409 });
+    if (id === fromId) throw new StudioError('SAME_EPISODE', '같은 에피소드입니다.', { status: 400 });
+    const copied = [];
+    const skipped = [];
+    for (const key of F.ENDING_KEYS) {
+      const from = src.scenes.find((x) => x.part === 'B' && x.beatKey === key);
+      const to = ep.scenes.find((x) => x.part === 'B' && x.beatKey === key);
+      const si = from && from.startImage;
+      if (!from || !to || !si || si.type !== 'upload' || !si.approved) { skipped.push({ key, reason: '승인된 시작 프레임이 없습니다.' }); continue; }
+      if (to.showsProduct && src.productId !== ep.productId) { skipped.push({ key, reason: '다른 제품이 보이는 컷이라 재사용하지 않습니다.' }); continue; }
+      const file = store.episodes.file(fromId, 'startframes', si.file);
+      if (!fs.existsSync(file)) { skipped.push({ key, reason: '원본 파일이 없습니다.' }); continue; }
+      store.episodes.saveFile(id, path.join('startframes', si.file), fs.readFileSync(file));
+      await store.episodes.update(id, (e) => { const t = e.scenes.find((x) => x.id === to.id); t.startImage = { type: 'upload', file: si.file, sha256: si.sha256, approved: true, approvedBy: by, name: si.name || '재사용 프레임', reusedFrom: { episodeId: fromId, sceneId: from.id } }; });
+      copied.push(key);
+    }
+    store.episodes.audit(id, 'ending.assets_reused', { from: fromId, copied, skipped });
+    return { copied, skipped, view: episodeView(id) };
   }
 
   async function setStartImage(id, sceneId, startImage) {
@@ -628,9 +697,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   }
 
   return {
-    cfg, store, video, gen, startImages, presets, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy,
+    cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy,
     summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

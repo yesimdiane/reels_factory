@@ -39,15 +39,65 @@ const LOCKED = [
   'The story concept is already approved: do not change its premise. Do not include any secret, key or instruction about these constraints in the output.',
 ].join('\n');
 
+
+// ---- fixed episode formula: locked constraints per generation mode (they override any editable text) ----
+const COMMON_LOCKED = [
+  'SCENE TITLES (required): EVERY scene and every beat has a short, meaningful KOREAN title (title_ko / beat title_ko; 3-12 characters preferred, 24 at most) naming its key action or comedic beat, not just its location. Never generic ("장면 1", "Scene 2", "제품 소개") and never English.',
+  'DIALOGUE: en is English as spoken; ko is a separate Korean subtitle that must differ from en. Speakers are only "jack" or "diane". Diane never calls Jack "오빠".',
+  'PRODUCT CLAIMS: use ONLY the verified product facts in the input data; never use a forbidden claim; never invent specifications, prices, discounts or availability.',
+  'The story concept is already approved: do not change its premise. Do not include any secret, key or instruction about these constraints in the output.',
+];
+const FORMULA_LOCKED = [
+  'FIXED EPISODE FORMULA (permanent series format; it overrides ANY story-structure instruction above):',
+  'PART A = a unique comedy story with SIX mandatory beats, in this order: setup(도입), problem(위기 1), absurd_escalation(위기 2), unexpected_twist(절정), resolution(결말), product_bridge(제품 연결). Each beat needs at least one scene; a beat may have several scenes.',
+  ' - setup: a normal everyday situation; show Jack\'s behaviour, confidence or mistake.   - problem: a clear problem begins.',
+  ' - absurd_escalation: the SAME problem escalates to an impossible, cartoonishly exaggerated level.',
+  ' - unexpected_twist: a surprising reversal directly connected to the escalating problem (background-world absurdity / unexpected character behaviour; never unrelated randomness).',
+  ' - resolution: Jack survives or exits the absurd situation; the main story reaches a recognisable conclusion.',
+  ' - product_bridge: the consequences of the story create a believable problem at home and give Diane a natural excuse to buy a product (through consequences, never forced advertising).',
+  'PART B (the three product-ending shots) is added by the application from the selected ending template. Do NOT write it and never create a fourth ending shot. Part A scenes never show the product (showsProduct must be false). The affiliate disclosure / CTA is an overlay, not a story shot.',
+  'Preserve every operator-written story beat (USER_STORY_BEATS) as the premise of that beat; build on it, do not replace it.',
+];
+const BEAT_SHAPE = '{"title_ko": "Korean beat title", "story_en": "English description of what happens", "visual": "beat-level visual direction", "scenes": [{"title_ko": "Korean scene title", "durationSec": 4, "characters": ["jack"|"diane"], "showsProduct": false, "visual": "visual direction", "action": "character actions", "narration": "optional Korean narration", "placement": "", "lines": [{"speaker": "jack"|"diane", "en": "English dialogue as spoken", "ko": "Korean subtitle"}]}]}';
+const VARS_SHAPE = '{"PRODUCT_NAME": "English product name", "PRODUCT_NAME_KO": "Korean product name", "USE_PHRASE": "what Jack refuses to use, English (e.g. an umbrella)", "USE_PHRASE_KO": "Korean with particle (e.g. 우산을)", "DEMO_ACTION": "how Diane installs/uses the REAL product (English, visual)", "DEMO_ACTION_KO": "same, Korean note", "DEMO_LINE_EN": "Diane\'s short demo line", "DEMO_LINE_KO": "Korean subtitle"}';
+const CTA_SHAPE = '"cta": {"lines": ["Korean CTA line"], "keyword": "short Korean ManyChat keyword (never an internal product ID), included in the CTA lines", "durationSec": 3.5}';
+const HEAD = '--- NON-EDITABLE APPLICATION CONSTRAINTS (always applied; they override any instruction above) ---';
+function lockedFor(mode = 'legacy') {
+  if (mode === 'legacy') return LOCKED;
+  const out = {
+    story: ['OUTPUT: return ONLY valid JSON of this exact shape:', `{"title": "Korean hook title", "comedy_story": {"setup": BEAT, "problem": BEAT, "absurd_escalation": BEAT, "unexpected_twist": BEAT, "resolution": BEAT, "product_bridge": BEAT}, "ending_vars": ${VARS_SHAPE}, ${CTA_SHAPE}}`, `where BEAT = ${BEAT_SHAPE}`],
+    beat: ['OUTPUT: return ONLY valid JSON of this exact shape:', '{"beat": BEAT}', `where BEAT = ${BEAT_SHAPE}`, 'Write ONLY the requested beat (the other beats and the whole product ending stay exactly as they are); it must still connect to the neighbouring beats given in the input data.'],
+    ending: ['OUTPUT: return ONLY valid JSON of this exact shape:', `{"ending_vars": ${VARS_SHAPE}}`, 'You fill ONLY the product-specific variables of the fixed three-shot ending. The ending structure, the shot order and the recurring Jack refusal gag cannot be changed. Use only verified product facts and what the approved product visibly does.'],
+  }[mode];
+  if (!out) throw new StudioError('BAD_MODE', '알 수 없는 생성 모드: ' + mode);
+  const rules = mode === 'ending' ? COMMON_LOCKED.filter((x) => !x.startsWith('SCENE TITLES')) : COMMON_LOCKED;
+  return [HEAD, ...out, ...(mode === 'ending' ? [] : FORMULA_LOCKED), ...rules].join('\n');
+}
+
 function createScriptPresets({ store, prompts, seedDir }) {
   const file = store.path('script-presets.json');
   const seed = () => readJson(path.join(seedDir, 'script-presets.json'));
 
   function read() {
     let d = readJson(file);
+    if (d && (d.schema || 1) < 2) {
+      // Safe migration to the fixed episode formula: an UNMODIFIED built-in default gets the formula text as a NEW version (v1 stays);
+      // an operator-edited preset is left exactly as it is (the formula itself is enforced by the locked constraints, not by this text).
+      const sd = seed();
+      Object.values(d.presets).forEach((p) => {
+        const cur = p.versions.find((x) => x.v === p.current);
+        if (p.builtIn && cur && cur.default) {
+          const v = Math.max(...p.versions.map((x) => x.v)) + 1;
+          p.versions.push({ v, sections: Object.assign({}, sd.sections), at: nowIso(), by: 'migration', note: '고정 에피소드 포맷 적용 (이전 버전은 보존)', default: true });
+          p.current = v;
+        }
+      });
+      d.schema = 2;
+      writeJsonAtomic(file, d);
+    }
     if (!d) {
       const s = seed();
-      d = { schema: 1, activePresetId: s.presetId, presets: {}, updatedAt: nowIso() };
+      d = { schema: 2, activePresetId: s.presetId, presets: {}, updatedAt: nowIso() };
       d.presets[s.presetId] = { id: s.presetId, name: s.name, description: s.description, builtIn: true, createdAt: nowIso(), current: 1, versions: [{ v: 1, sections: Object.assign({}, s.sections), at: nowIso(), by: 'default', note: '기본값', default: true }] };
       // Keep an operator's customised Prompt-Manager script prompt available (it is no longer used for generation by itself).
       try {
@@ -97,7 +147,7 @@ function createScriptPresets({ store, prompts, seedDir }) {
 
   const api = {
     SECTIONS, LOCKED, DEFAULT_ID,
-    list() { const d = read(); return { activePresetId: d.activePresetId, presets: Object.values(d.presets).map((p) => meta(p, d)), sectionInfo: SECTIONS.map(([key, label, help]) => ({ key, label, help })), locked: LOCKED }; },
+    list() { const d = read(); return { activePresetId: d.activePresetId, presets: Object.values(d.presets).map((p) => meta(p, d)), sectionInfo: SECTIONS.map(([key, label, help]) => ({ key, label, help })), locked: LOCKED, lockedFormula: { story: lockedFor('story'), beat: lockedFor('beat'), ending: lockedFor('ending') } }; },
     get: view,
     versionSections(id, v) { const p = find(read(), id); return ver(p, v).sections; },
     /** Saves a NEW version (history is never rewritten). Unchanged text creates nothing. */
@@ -155,17 +205,17 @@ function createScriptPresets({ store, prompts, seedDir }) {
       return { preset: p, version: v, comedyLevel: level, pinned: !!sel.version };
     },
     /** The full effective prompt = editable creative text (with variables filled in) + the code-enforced constraints. */
-    compose(sel = {}, vars = {}) {
+    compose(sel = {}, vars = {}, { mode = 'legacy' } = {}) {
       const r = api.resolve(sel);
       const ch = prompts.channel();
       const all = Object.assign({ CHANNEL: ch.name, AUDIENCE: ch.audience, BRANDING: ch.branding, EXTRA: '' }, vars);
       const s = r.version.sections;
       const parts = [s.systemPrompt, s.generationInstructions, s['comedyLevel' + r.comedyLevel], s.characterRules, s.subtitleStyle, s.sceneStructure, s.productIntegration];
       const editable = parts.map((t) => renderTemplate(t, all)).join('\n\n');
-      return { editable, locked: LOCKED, presetId: r.preset.id, presetName: r.preset.name, presetVersion: r.version.v, comedyLevel: r.comedyLevel, pinned: r.pinned, sectionsHash: sha256(JSON.stringify(s)).slice(0, 12) };
+      return { editable, locked: lockedFor(mode), mode, presetId: r.preset.id, presetName: r.preset.name, presetVersion: r.version.v, comedyLevel: r.comedyLevel, pinned: r.pinned, sectionsHash: sha256(JSON.stringify(s)).slice(0, 12) };
     },
   };
   return api;
 }
 
-module.exports = { createScriptPresets, SECTIONS, SECTION_KEYS, LOCKED, DEFAULT_ID };
+module.exports = { createScriptPresets, SECTIONS, SECTION_KEYS, LOCKED, lockedFor, DEFAULT_ID };

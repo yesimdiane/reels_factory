@@ -3,7 +3,7 @@
 // All AI is faked; no network and no paid call can happen here.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { make, fakeAi, goodConcepts, goodScript, png, readyProduct, routePaid } = require('./helpers/v23');
+const { make, fakeAi, goodConcepts, goodScript, scriptResponse, isScriptPrompt, png, readyProduct, routePaid } = require('./helpers/v23');
 
 const CONFIRM = { paid: true, unknownCost: true };
 
@@ -19,7 +19,7 @@ function aiWithImages(handlers = {}) {
   };
   return { factory, calls: base.calls };
 }
-const textAi = () => aiWithImages({ '*': (req) => ({ text: '', json: /CONCEPT_TITLE/.test(req.prompt) ? goodScript() : goodConcepts(3), usage: { inputTokens: 1000, outputTokens: 500 } }) });
+const textAi = () => aiWithImages({ '*': (req) => ({ text: '', json: isScriptPrompt(req) ? scriptResponse(req) : goodConcepts(3), usage: { inputTokens: 1000, outputTokens: 500 } }) });
 
 test('import: URL import that is blocked falls back to manual entry; price is operator-typed only and dated', async () => {
   const { s } = make({ extractFn: async () => ({ status: 'blocked', reason: 'robots', note: '차단됨 → 직접 입력' }) });

@@ -3,12 +3,12 @@
 // results are unapproved frames; nothing approved is overwritten; a mid-way failure keeps what was made. AI is faked.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { make, fakeAi, goodConcepts, goodScript, png, readyProduct, routePaid } = require('./helpers/v23');
+const { make, fakeAi, goodConcepts, goodScript, scriptResponse, isScriptPrompt, png, readyProduct, routePaid } = require('./helpers/v23');
 
 const CONFIRM = { paid: true, unknownCost: true };
 
 function ai({ failOnImageCall = 0 } = {}) {
-  const base = fakeAi({ '*': (req) => ({ text: '', json: /CONCEPT_TITLE/.test(req.prompt) ? goodScript() : goodConcepts(3), usage: { inputTokens: 1000, outputTokens: 500 } }) });
+  const base = fakeAi({ '*': (req) => ({ text: '', json: isScriptPrompt(req) ? scriptResponse(req) : goodConcepts(3), usage: { inputTokens: 1000, outputTokens: 500 } }) });
   let n = 200;
   let calls = 0;
   const factory = (name) => {
@@ -77,36 +77,37 @@ test('start images: one call per scene, unapproved AI frames, cast + product rul
   realRefs(s);
   imageRoute(s);
   await s.approveScript(id);
+  const ids = s.store.episodes.get(id).scenes.map((x) => x.id);
+  assert.deepEqual(ids, ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'E1', 'E2', 'E3']);
   const est = s.startImages.estimate(id, []);
-  assert.equal(est.count, 2);
+  assert.equal(est.count, 9);
   const r = await s.startImages.generate(id, [], { confirm: CONFIRM });
-  assert.deepEqual(r.generated.map((g) => g.sceneId), ['S1', 'S2']);
+  assert.deepEqual(r.generated.map((g) => g.sceneId), ids);
   assert.equal(r.failed, null);
   const calls = a.imageCalls();
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 9);
   assert.match(calls[0].prompt, /9:16/);
   assert.match(calls[0].prompt, /anime \/ Korean webtoon/);
-  assert.match(calls[0].prompt, /Exactly ONE person is a main character: .*Jack/s);
+  assert.match(calls[0].prompt, /Exactly TWO people/);
   assert.match(calls[0].prompt, /Do NOT show the product/);
-  assert.equal(calls[0].images.length, 1, 'S1: Jack reference only');
-  assert.match(calls[1].prompt, /EXACTLY like the approved product reference/);
-  assert.equal(calls[1].images.length, 2 + 1, 'S2: Diane + Jack + the approved product reference');
+  assert.equal(calls[0].images.length, 2, 'S1: Jack + Diane references only');
+  assert.match(calls[7].prompt, /EXACTLY like the approved product reference/);
+  assert.equal(calls[7].images.length, 1 + 1, 'E2: Diane reference + the approved product reference');
+  assert.equal(calls[8].images.length, 2 + 1, 'E3: Diane + Jack + the approved product reference');
   const ep = s.store.episodes.get(id);
   ep.scenes.forEach((sc) => { assert.equal(sc.startImage.generated, true); assert.equal(sc.startImage.approved, false); });
   assert.equal(s.episodeView(id).scenes[0].startImageInfo.generated, true);
-  assert.equal(s.episodeView(id).scenes[0].startImageInfo.approved, false);
-  // frames count as start images only after approval
   await s.approveStartFrame(id, 'S1', true);
   assert.equal(s.episodeView(id).scenes[0].startImageInfo.approved, true);
   // repeat press: nothing is billed again; the approved frame is never overwritten, even when forced
   const again = await s.startImages.generate(id, [], { confirm: CONFIRM });
   assert.equal(again.generated.length, 0);
-  assert.equal(a.imageCalls().length, 2);
+  assert.equal(a.imageCalls().length, 9);
   const forced = await s.startImages.generate(id, [], { confirm: CONFIRM, force: true });
-  assert.deepEqual(forced.generated.map((g) => g.sceneId), ['S2']);
+  assert.deepEqual(forced.generated.map((g) => g.sceneId), ids.slice(1));
   assert.ok(forced.skipped.some((x) => x.sceneId === 'S1'));
   assert.equal(s.store.episodes.get(id).scenes[0].startImage.approved, true);
-  assert.equal(a.imageCalls().length, 3);
+  assert.equal(a.imageCalls().length, 9 + 8);
 });
 
 test('start images: a failure part-way keeps the frames already made and reports the scene that stopped', async () => {
@@ -119,9 +120,9 @@ test('start images: a failure part-way keeps the frames already made and reports
   assert.equal(r.failed.sceneId, 'S2');
   assert.equal(s.store.episodes.get(id).scenes[0].startImage.generated, true);
   assert.ok(!s.store.episodes.get(id).scenes[1].startImage || s.store.episodes.get(id).scenes[1].startImage.type !== 'upload');
-  // retry only pays for the scene that is still missing
+  // retry only pays for the scenes that are still missing
   const before = a.imageCalls().length;
   const r2 = await s.startImages.generate(id, [], { confirm: CONFIRM });
-  assert.deepEqual(r2.generated.map((g) => g.sceneId), ['S2']);
-  assert.equal(a.imageCalls().length, before + 1);
+  assert.deepEqual(r2.generated.map((g) => g.sceneId), ['S2', 'S3', 'S4', 'S5', 'S6', 'E1', 'E2', 'E3']);
+  assert.equal(a.imageCalls().length, before + 8);
 });
