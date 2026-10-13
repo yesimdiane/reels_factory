@@ -46,6 +46,7 @@ export const EN = {
   '연결 테스트': 'Test connection', '키 저장': 'Save key', '키 삭제': 'Delete key', 'LIVE 켜기': 'Turn LIVE on', 'MOCK으로 되돌리기': 'Back to MOCK', '실제(LIVE) 모드 켜기…': 'Turn LIVE mode on…',
   '지출 한도': 'Spend limit', '채널 설정': 'Channel settings', '캐릭터 라이브러리': 'Character library', '제목 저장': 'Save title', '프롬프트 복사': 'Copy prompt',
   // misc
+  '스토리보드로 이동': 'Go to Storyboard', '스토리보드 열기': 'Open Storyboard',
   '제목 수정': 'Edit title', '에피소드 보류': 'Hold episode', '이어서 작업': 'Resume work',
   '스토리 승인': 'Approve story', '보류': 'Hold', '보류 해제': 'Resume', '삭제 취소 (복원)': 'Undo delete (restore)', '고급 설정': 'Advanced settings', '자세히 보기': 'Details', '수정본 재승인': 'Re-approve edited version',
   '한국어 번역': 'Korean translation', '스토리 승인 →': 'Approve story →', '수정': 'Edit', '전체 현황 보기': 'Show full status',

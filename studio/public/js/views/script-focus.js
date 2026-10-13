@@ -113,12 +113,6 @@ function section(ep, sid, key, title, { badge = null, errors = 0 } = {}, ...cont
   return det;
 }
 
-function previewFor(ep, sc) {
-  const ci = sc.cutInfo || {};
-  const url = ci.source && ci.source.kind === 'clip' ? `/media/cutframe/${ep.id}/${sc.id}?t=0.5` : (sc.startImageInfo && !sc.startImageInfo.error && sc.startImageInfo.url && !sc.startImageInfo.placeholder ? sc.startImageInfo.url : '');
-  return url ? h('img', { class: 'scene-preview', src: url, alt: `${sc.id} 미리보기`, loading: 'lazy' }) : h('div', { class: 'scene-preview empty' }, h('span', null, '미리보기 없음'), h('small', null, '이미지 디벨롭에서 만듭니다'));
-}
-
 /**
  * The focused scene. ctx = { index, chars, saveEpisode, addScene(beatKey), onChange }.
  * Returns { el, bar } — `bar` is the (mobile sticky) action bar.
@@ -147,7 +141,7 @@ export function sceneFocus(ep, d, ctx, sceneId, { inline = false } = {}) {
     approves.forEach((b) => { b.disabled = !!(ap && ap.approved && !mine); b.textContent = ap && ap.approved && !mine ? `승인됨 · r${ap.revision}` : '씬 승인'; });
     note.textContent = mine ? '저장하지 않은 변경이 있습니다' : ap && ap.approved ? '승인된 씬입니다 — 수정하면 새 초안이 됩니다' : ap && ap.editedAfterApproval ? `승인 후 수정됨 — r${ap.lastApprovedRev} 승인본은 보관됨` : '저장해도 승인되지 않습니다';
   };
-  const dirty = () => { d.dirtyScenes.add(sid); d.dirty = true; refreshBar(); };
+  const dirty = () => { d.dirtyScenes.add(sid); d.dirty = true; refreshBar(); if (typeof refreshDlg === 'function') refreshDlg(); };
   const bar = h('div', { class: 'scene-actions-bar' + (inline ? ' inline' : ''), role: 'toolbar', 'aria-label': '씬 작업' }, note, h('div', { class: 'bar-buttons' }, mkSave(), mkApprove()));
 
   // ---- dialogue ----
@@ -205,16 +199,12 @@ export function sceneFocus(ep, d, ctx, sceneId, { inline = false } = {}) {
   // ---- visual direction ----
   const field = (label, key, rows) => withTranslate(attach(index, h('div', { class: 'field' }, h('label', null, label), h('textarea', { rows, oninput: (e) => { sc[key] = e.target.value; dirty(); refreshDesc(); } }, sc[key] || '')), `S:${sid}:${key}`), ep, () => sc[key]);
   const visual = section(ep, sid, 'visual', '시각 연출 · 액션', { errors: errCount(['visual']) },
-    field('시각 연출 · 애니메이션 (필수, English)', 'visual', 5), field('캐릭터 행동 (선택, English)', 'action', 3), field('제품 배치 (선택)', 'placement', 2),
+    field('시각 연출 (필수, English)', 'visual', 5), field('제품 배치 (선택)', 'placement', 2),
     h('label', { class: 'row small', style: 'gap:6px' }, h('input', { type: 'checkbox', 'data-rf': `S:${sid}:showsProduct`, checked: !!sc.showsProduct, onchange: (e) => { sc.showsProduct = e.target.checked; dirty(); } }), '이 장면에 제품이 보임'));
 
-  // ---- prompts (read-only here; edited and approved in the Storyboard) ----
-  const p = srv.prompt;
-  const prompts = section(ep, sid, 'prompts', '이미지 · 애니메이션 프롬프트', { badge: p && p.video ? '있음' : '아직 없음' },
-    h('div', { class: 'small muted' }, '프롬프트는 스토리보드(이미지 디벨롭)에서 만들고 승인합니다. 여기서는 읽기 전용입니다.'),
-    p && p.video ? h('div', { class: 'stack', style: 'gap:6px' }, h('div', { class: 'eyebrow' }, '애니메이션(영상) 프롬프트'), h('pre', { class: 'prompt-view' }, p.video), p.negative ? h('div', { class: 'small muted' }, '제외: ' + short(p.negative, 160)) : null) : h('div', { class: 'muted small' }, '대본을 승인하면 스토리보드에서 무료 템플릿 프롬프트가 만들어집니다.'),
-    srv.startImageInfo && !srv.startImageInfo.error ? h('div', { class: 'small' }, `시작 이미지: ${srv.startImageInfo.label || ''}${srv.startImageInfo.approved ? ' · 승인됨' : ' · 승인 대기'}`) : h('div', { class: 'small muted' }, '시작 이미지: 아직 없음'),
-    h('a', { class: 'btn sm ghost', href: '#/storyboard/' + ep.id, onclick: (e) => { if (isDirty(d)) { e.preventDefault(); toast('저장하지 않은 변경이 있습니다. 먼저 씬을 저장하세요.', { error: true }); } } }, '스토리보드에서 열기'));
+  // ---- character acting: what the characters do and feel (the 0.5 s movement timeline is planned later, in the Storyboard) ----
+  const acting = section(ep, sid, 'acting', '캐릭터 연기', { errors: errCount(['action', 'emotion']) },
+    field('캐릭터 행동 (선택, English)', 'action', 3), field('캐릭터 감정 (선택, English)', 'emotion', 2));
 
   // ---- advanced ----
   const cutInfo = srv.cutInfo || { inserts: [] };
@@ -233,17 +223,20 @@ export function sceneFocus(ep, d, ctx, sceneId, { inline = false } = {}) {
   const desc = h('div', { class: 'scene-desc' });
   const refreshDesc = () => { desc.textContent = short(sc.visual) || '아직 설명이 없습니다. "시각 연출 · 액션"에 적어 주세요.'; };
   refreshDesc();
+  const dlgSummary = h('div', { class: 'small muted scene-dlg', 'data-dialogue-summary': '' });
+  const refreshDlg = () => { const ls = d.lines.filter((l) => l.sceneId === sid && (l.en || l.ko)); dlgSummary.textContent = ls.length ? `대사 ${ls.length}줄 · ${short(ls[0].ko || ls[0].en)}` : '대사 없음'; };
+  refreshDlg();
   const missing = ap && !ap.approved && ap.errors.length ? ap.errors : [];
   const el = h('div', { class: 'card scene-card', id: 'script-scene-' + sid, 'data-rf': `S:${sid}:block`, 'data-scene-card': sid },
     h('div', { class: 'scene-head' },
       h('div', { class: 'row', style: 'gap:8px;flex-wrap:nowrap;min-width:0' }, h('span', { class: 'scene-no eyebrow' }, sid), statusChip(ap)),
       h('button', { class: 'btn sm clay', type: 'button', 'data-add-scene': sid, title: '현재 씬 바로 뒤에 새 씬을 만듭니다 (기존 씬은 바뀌지 않습니다)', onclick: () => ctx.addScene(sid) }, icon('plus'), '씬 추가')),
     attach(index, h('div', { class: 'field', style: 'margin:0' }, h('input', { type: 'text', class: 'scene-title', value: sc.title_ko, placeholder: sc.legacyTitle ? '한국어 제목 입력 (현재: ' + sc.legacyTitle + ')' : '한국어 장면 제목 (예: 영국인의 자신감)', maxLength: 24, 'aria-label': '장면 제목 (한국어)', oninput: (e) => { sc.title_ko = e.target.value; dirty(); } })), `S:${sid}:title_ko`),
-    h('div', { class: 'scene-summary' }, previewFor(ep, srv), h('div', { class: 'scene-summary-text' }, desc,
+    h('div', { class: 'scene-summary' }, h('div', { class: 'scene-summary-text' }, desc, dlgSummary,
       h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, chip(`${sc.durationSec}초`, ''), ...(sc.characters || []).map((c) => chip((chars.find((x) => x.id === c) || { name: c }).name, '')), sc.showsProduct ? chip('제품 노출', 'attention') : null,
         ap && ap.approved ? chip(`승인됨 r${ap.revision}`, 'done') : ap && ap.editedAfterApproval ? chip('승인 후 수정됨', 'attention') : null))),
     missing.length ? h('div', { class: 'stack', style: 'gap:6px' }, h('div', { class: 'small', style: 'color:var(--rose);font-weight:600' }, `승인하려면 ${missing.length}개를 고쳐야 합니다`), missing.slice(0, 4).map((e) => h('button', { class: 'issue err issue-link', type: 'button', onclick: () => jumpTo(Object.assign({ sceneId: sid }, e, { key: undefined })) }, h('span', null, e.message)))) : null,
-    dialogue, visual, prompts, advanced);
+    dialogue, visual, acting, advanced);
   refreshBar();
   if (inline) el.append(bar); // wide screens: the action bar sits at the bottom of each scene card (sticky while the card is on screen)
   return { el, bar, dirty };
