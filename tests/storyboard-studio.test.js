@@ -36,11 +36,13 @@ test('movement beats: 0.5 s grid, inside the scene, emotion + at least one motio
   await bad([beat(0, 1, { body: '', gaze: '', expression: '' })], /하나는 필요/);
   await bad([beat(0, 1), beat(0.5, 1.5)], /겹칩니다/);
   await assert.rejects(m.s.sba.saveMotion(m.id, m.sid, { beats: 'nope' }), (e) => e.code === 'BAD_BEATS');
-  assert.equal(m.s.store.episodes.get(m.id).motion, undefined, 'nothing was saved');
+  const autoRev = JSON.stringify(m.s.store.episodes.get(m.id).motion[m.sid]);
+  assert.equal(m.s.store.episodes.get(m.id).motion[m.sid].source, 'auto', 'script approval created a scene-specific plan');
+  assert.equal(autoRev, JSON.stringify(m.s.store.episodes.get(m.id).motion[m.sid]), 'rejected saves changed nothing');
   assert.equal(m.s.store.episodes.get(m.id).scenes[0].durationSec, dur, 'the scene length never changed');
   // valid: different characters may overlap; a beat may span several steps; not every body part is required
   const saved = await m.s.sba.saveMotion(m.id, m.sid, { beats: [beat(0, 0.5), beat(0.5, 1.5, { character: 'Jack', body: '', gaze: 'looks at Diane', expression: '' }), beat(0.5, 1, { character: 'Diane', body: 'tilts her head toward Jack', emotion: 'skeptical' })] });
-  assert.equal(saved.rev, 1); assert.equal(saved.beats.length, 3); assert.deepEqual(saved.beats.map((b) => b.t0), [0, 0.5, 0.5]);
+  assert.equal(saved.rev, 2); assert.equal(saved.beats.length, 3); assert.deepEqual(saved.beats.map((b) => b.t0), [0, 0.5, 0.5]);
 });
 
 test('motion revisions are kept; saving the plan changes neither the approved script nor other scenes', async () => {
@@ -48,12 +50,12 @@ test('motion revisions are kept; saving the plan changes neither the approved sc
   const before = JSON.stringify(m.s.store.episodes.get(m.id).lines) + JSON.stringify(m.s.store.episodes.get(m.id).approvals);
   await m.s.sba.saveMotion(m.id, m.sid, { beats: [beat(0, 1)] });
   const r2 = await m.s.sba.saveMotion(m.id, m.sid, { beats: [beat(0, 1, { emotion: 'relieved' }), beat(1, 1.5, { emotion: 'happy' })] });
-  assert.equal(r2.rev, 2); assert.equal(r2.history.length, 1); assert.equal(r2.history[0].rev, 1); assert.equal(r2.history[0].beats[0].emotion, 'worried');
+  assert.equal(r2.rev, 3); assert.equal(r2.history.length, 2); assert.equal(r2.history[1].rev, 2); assert.equal(r2.history[1].beats[0].emotion, 'worried');
   const ep = m.s.store.episodes.get(m.id);
   assert.equal(JSON.stringify(ep.lines) + JSON.stringify(ep.approvals), before, 'dialogue and approvals untouched');
-  assert.equal(ep.motion[m.sid2], undefined, 'other scenes untouched');
+  assert.equal(ep.motion[m.sid2].rev, 1, 'other scenes untouched (still their automatic plan)');
   assert.equal(m.s.episodeView(m.id).derived.scriptApproved, true);
-  assert.equal(m.s.episodeView(m.id).scenes[0].motion.rev, 2);
+  assert.equal(m.s.episodeView(m.id).scenes[0].motion.rev, 3);
 });
 
 test('the free draft is deterministic, on the 0.5 s grid and makes no AI call', async () => {
@@ -71,6 +73,7 @@ test('the free draft is deterministic, on the 0.5 s grid and makes no AI call', 
 
 test('the movement plan is appended to the video prompt at generation time (and a changed plan changes the prompt text)', async () => {
   const m = await setup();
+  await m.s.store.episodes.update(m.id, (e) => { delete e.motion; });
   const ep0 = m.s.store.episodes.get(m.id);
   assert.equal(m.s.sba.composePrompt(ep0, m.sid, 'BASE'), 'BASE', 'no plan, no change');
   await m.s.sba.saveMotion(m.id, m.sid, { beats: [beat(0, 0.5), beat(0.5, 1.5, { character: 'Jack', emotion: 'annoyed', camera: 'slow push-in' })] });

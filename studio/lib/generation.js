@@ -460,7 +460,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     store.episodes.audit(epId, 'clip.' + decision, { sceneId, version, by });
   }
 
-  return { estimate, authorize, run, resume, dismissJob, addManualClip, review, startImage, provider, compatibility };
+  return { estimate, authorize, run, resume, dismissJob, addManualClip, review, startImage, provider, compatibility, blockers };
 }
 
 module.exports = { createGenerationService };

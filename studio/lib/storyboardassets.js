@@ -7,6 +7,7 @@
 'use strict';
 const path = require('node:path');
 const { StudioError, nowIso, sha256, safeName } = require('./util');
+const animdraft = require('./animdraft');
 
 const STEP = 0.5;
 const KINDS = ['close_up', 'reaction', 'insert', 'broll'];
@@ -24,9 +25,11 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
   };
 
   // ---------------- movement beats (0.5 s grid) ----------------
+  const castNames = (scene) => (scene.characters || []).map((id) => ({ id, name: ((lib().characters || []).find((c) => c.id === id) || { name: id }).name }));
   function cleanBeats(list, scene) {
     if (!Array.isArray(list)) throw new StudioError('BAD_BEATS', '비트 목록이 필요합니다.', { status: 422 });
     const dur = Number(scene.durationSec) || 0;
+    const cast = castNames(scene);
     const out = [];
     const problems = [];
     list.forEach((b, i) => {
@@ -36,47 +39,25 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
       if (!onGrid(t0) || !onGrid(t1)) problems.push({ index: i, field: 't0', message: `비트 ${n}: 시간은 0.5초 단위여야 합니다 (${t0}–${t1}).` });
       if (!(t1 > t0)) problems.push({ index: i, field: 't1', message: `비트 ${n}: 끝 시간은 시작보다 커야 합니다.` });
       if (t0 < 0 || t1 > dur + 1e-6) problems.push({ index: i, field: 't1', message: `비트 ${n}: 장면 길이(${dur}초)를 벗어납니다 (${t0}–${t1}). 장면은 자동으로 늘어나지 않습니다.` });
-      const beat = { t0: r1(t0), t1: r1(t1) };
-      FIELDS.forEach((k) => { beat[k] = String((b && b[k]) || '').trim().slice(0, 300); });
+      // character: by id (preferred) or by name; it must be in this scene's cast
+      const raw = String((b && (b.characterId || b.character)) || '').trim();
+      const hit = cast.find((c) => c.id === (b && b.characterId)) || cast.find((c) => c.id === raw.toLowerCase() || c.name.toLowerCase() === raw.toLowerCase());
+      if (!raw) problems.push({ index: i, field: 'character', message: `비트 ${n}: 캐릭터가 필요합니다.` });
+      else if (!hit) problems.push({ index: i, field: 'character', message: `비트 ${n}: 이 장면에 등장하지 않는 캐릭터입니다 (${raw}). 장면 캐릭터: ${cast.map((c) => c.name).join(', ') || '없음'}.` });
+      const beat = { sceneId: scene.id, characterId: hit ? hit.id : '', character: hit ? hit.name : raw, t0: r1(t0), t1: r1(t1) };
+      FIELDS.filter((k) => k !== 'character').forEach((k) => { beat[k] = String((b && b[k]) || '').trim().slice(0, 300); });
       if (!beat.emotion) problems.push({ index: i, field: 'emotion', message: `비트 ${n}: 감정을 적어 주세요.` });
       if (!beat.body && !beat.gaze && !beat.expression) problems.push({ index: i, field: 'body', message: `비트 ${n}: 몸 동작, 시선, 표정 중 하나는 필요합니다 (모든 부위를 채울 필요는 없습니다).` });
       out.push(beat);
     });
     const sorted = out.slice().sort((a, b) => a.t0 - b.t0);
-    for (let i = 1; i < sorted.length; i++) if (sorted[i].t0 < sorted[i - 1].t1 - 1e-6 && sorted[i].character === sorted[i - 1].character) problems.push({ index: i, field: 't0', message: `같은 캐릭터의 비트가 겹칩니다 (${fmt(sorted[i - 1].t0)}–${fmt(sorted[i - 1].t1)}s / ${fmt(sorted[i].t0)}–${fmt(sorted[i].t1)}s).` });
+    const lastEnd = {};
+    sorted.forEach((x, i) => { const k = x.characterId || x.character; if (lastEnd[k] !== undefined && x.t0 < lastEnd[k].t1 - 1e-6) problems.push({ index: i, field: 't0', message: `같은 캐릭터(${x.character})의 비트가 겹칩니다 (${fmt(lastEnd[k].t0)}–${fmt(lastEnd[k].t1)} / ${fmt(x.t0)}–${fmt(x.t1)}). 서로 다른 캐릭터의 비트는 겹쳐도 됩니다.` }); if (!lastEnd[k] || x.t1 > lastEnd[k].t1) lastEnd[k] = x; });
     return { beats: sorted, problems };
   }
 
-  /** Free, deterministic first draft from the approved scene (action, emotion, dialogue timing). The operator edits it afterwards. */
-  function draftBeats(ep, sc) {
-    const dur = Number(sc.durationSec) || 4;
-    const chars = (sc.characters && sc.characters.length ? sc.characters : ['jack']).slice();
-    const L = lib();
-    const nameOf = (id) => ((L.characters || []).find((c) => c.id === id) || { name: id }).name;
-    const t = (dialogueTiming(ep).find((x) => x.sceneId === sc.id) || {});
-    const lines = (ep.lines || []).filter((l) => l.sceneId === sc.id);
-    const emotion = String(sc.emotion || '').split(/[.;\n]/)[0].trim() || 'neutral';
-    const beats = [];
-    const total = Math.max(1, Math.round(dur / STEP));
-    const speakWindow = Math.min(total, Math.max(0, Math.round((t.needSec || 0) / STEP)));
-    let cursor = 0;
-    // opening hold (the character is established before anything moves)
-    beats.push({ t0: 0, t1: STEP, character: nameOf(chars[0]), emotion, body: 'holds the opening pose', gaze: 'looks at the camera', expression: 'settled', camera: 'static' });
-    cursor = 1;
-    lines.forEach((l, i) => {
-      const span = Math.max(2, Math.round(((estimateSpan(l) || 2) / STEP)));
-      const end = Math.min(total - 1, cursor + span);
-      if (end > cursor) {
-        beats.push({ t0: cursor * STEP, t1: end * STEP, character: nameOf(l.speaker), emotion, body: i % 2 ? 'small head tilt while speaking' : 'slight forward lean while speaking', gaze: 'looks at the listener', expression: 'mouth moves with the dialogue', camera: '' });
-        const other = chars.find((c) => c !== l.speaker);
-        if (other && end < total) beats.push({ t0: cursor * STEP, t1: end * STEP, character: nameOf(other), emotion: 'listening', body: 'stays still', gaze: 'looks at the speaker', expression: 'listening', camera: '' });
-        cursor = end;
-      }
-    });
-    void speakWindow;
-    if (cursor < total) beats.push({ t0: cursor * STEP, t1: total * STEP, character: nameOf(chars[chars.length - 1]), emotion, body: sc.action ? String(sc.action).slice(0, 120) : 'holds the pose', gaze: 'steady', expression: 'reaction', camera: 'slow push-in' });
-    return beats.map((b) => Object.assign({}, b, { t0: r1(b.t0), t1: r1(b.t1) }));
-  }
+  /** Free, deterministic, scene-specific draft (dialogue, visual direction, action, camera cues). See animdraft.js. */
+  function draftBeats(ep, sc) { return animdraft.draftBeats(ep, sc, lib().characters || []); }
   const estimateSpan = (line) => Math.max(1, String(line.en || '').trim().split(/\s+/).length / 2.7);
 
   /** Text appended to the video prompt: one line per beat, in time order. */

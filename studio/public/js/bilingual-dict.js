@@ -1,6 +1,7 @@
 // Korean button label → English subtitle. Pure data + lookup (no DOM) so tests can import it in Node.
 // Add new buttons here; `unknownLabels()` in bilingual.js lists anything shown without a subtitle.
 export const EN = {
+  '애니메이션 자동 생성': 'Generate animation', '무료로 만들기': 'Generate (free)',
   'AI 이미지 생성': 'Generate AI image', '프롬프트 저장': 'Save prompt', '초안으로 되돌리기': 'Reset to draft', '거절': 'Reject',
   '원본 보기': 'View full image', '참조 변경': 'Change reference', '캐릭터 참조 이미지': 'Character references', '기본 참조로 되돌리기': 'Reset to default reference',
   '연결 테스트': 'Test connection', '음성 목록 가져오기': 'Fetch voices', '연결 해제': 'Disconnect', '키 저장': 'Save key', '기본 목소리로 저장': 'Save as default voice', '미리듣기': 'Preview', '지정 해제': 'Clear voice', '제공자 연결': 'Connect provider', '목소리 변경': 'Change voice', '미리듣기 생성': 'Generate preview', '음성 연결': 'Voice connections',
