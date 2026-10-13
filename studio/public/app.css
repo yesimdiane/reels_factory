@@ -310,3 +310,5 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .project-panel { border: 1px solid var(--line-strong); }
 .project-panel .big-cta { font-size: 15px; padding: 12px 18px; }
 .scene-version { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--card); font-size: 13px; }
+.sticky-bar.save-bar { position: fixed; right: 24px; bottom: 18px; left: auto; width: auto; max-width: calc(100vw - 48px); margin: 0; padding: 8px 10px 8px 18px; z-index: 40; }
+@media (max-width: 900px) { .sticky-bar.save-bar { right: 12px; bottom: 74px; } }

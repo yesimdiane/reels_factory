@@ -39,10 +39,13 @@ export function script() {
   if (!ep) return noEpisode();
   const d = draftOf(ep);
   const chars = state.summary.characters;
-  const dirty = () => { d.dirty = true; saveBtn.disabled = false; saveBtn.textContent = '저장'; approveBtn.disabled = true; };
+  const dirty = () => { d.dirty = true; saveBtn.disabled = false; saveBtn.textContent = '저장'; approveBtn.disabled = true; stickySave.disabled = false; stickySave.textContent = '저장'; stickyNote.textContent = '저장하지 않은 변경이 있습니다'; };
   const v = ep.derived.validation;
   const index = errorIndex(ep);
   const saveBtn = h('button', { class: 'btn', disabled: !d.dirty, onclick: save }, d.dirty ? '저장' : '저장됨');
+  // The header scrolls away while editing long scripts: a second save button stays pinned at the bottom (also Ctrl/Cmd+S).
+  const stickyNote = h('span', { class: 'small', style: 'color:#cdbca3' }, d.dirty ? '저장하지 않은 변경이 있습니다' : '모든 변경이 저장되었습니다');
+  const stickySave = h('button', { class: 'btn sage', 'data-sticky-save': '1', disabled: !d.dirty, onclick: save }, d.dirty ? '저장' : '저장됨');
   const approveBtn = h('button', { class: 'btn sage', disabled: d.dirty || !v.ok || ep.derived.scriptApproved || !ep.derived.sceneApproval.canApproveProject, title: ep.derived.sceneApproval.canApproveProject ? '' : '모든 씬을 먼저 승인하세요 (' + ep.derived.sceneApproval.progress + ')', onclick: approve }, ep.derived.scriptApproved ? '대본 승인됨' : '대본 승인');
 
   async function save() {
@@ -154,6 +157,8 @@ export function script() {
   side.append(h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', null, '버전 기록')),
     ep.derived.versions.length ? h('div', { class: 'list' }, ep.derived.versions.slice().reverse().slice(0, 8).map((vv) => h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'v' + vv.version + (ep.approvals.script && ep.approvals.script.version === vv.version ? ' · 승인됨' : '')), h('div', { class: 'small muted' }, new Date(vv.at).toLocaleString('ko-KR') + (vv.note ? ' · ' + vv.note : ''))), vv.version === ep.version ? chip('현재', 'done') : h('button', { class: 'btn sm ghost', onclick: async () => { if (await confirmDialog({ title: `v${vv.version}로 되돌릴까요?`, body: '현재 내용은 새 버전으로 남습니다. 대본 승인은 무효가 될 수 있습니다.', tone: 'clay' })) act(() => api.post(`/api/episodes/${ep.id}/versions/${vv.version}/restore`), { ok: `v${vv.version}을 복원했습니다` }); } }, '복원')))) : h('div', { class: 'muted small' }, '저장하면 버전이 쌓입니다.')));
   wrap.append(h('div', { class: 'grid side' }, main, side));
+  wrap.append(h('div', { class: 'sticky-bar save-bar' }, h('div', null, h('b', null, '대본 편집'), h('div', null, stickyNote)), h('div', { class: 'row' }, stickySave)));
+  wrap.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (d.dirty) save(); } });
   return wrap;
 }
 
