@@ -15,6 +15,15 @@ const { sha256, uid } = require('./util');
 const T = require('./translate');
 
 function createScriptGen({ store, products, storylab, episodeIds, prompts, presets, endings, router, lib }) {
+  const storylineText = (c) => c.storyline || [c.hook, c.situation, c.plot, c.payoff].filter(Boolean).join(' ');
+  const storySnapshot = (c) => ({ conceptId: c.id, revision: c.revision, title: c.title, storyline: storylineText(c), ko: c.ko || {}, category: c.category || 'drama', maxDurationSec: c.maxDurationSec || null, approvedAt: c.approval && c.approval.at, by: c.approval && c.approval.by });
+  /** When the approved story moved on (edited + re-approved), the episode gets the new snapshot as a NEW linked revision; the old one stays in storyHistory. */
+  function syncStory(ep, concept) {
+    if (ep.story && ep.story.revision === concept.revision) return;
+    if (ep.story) ep.storyHistory = (ep.storyHistory || []).concat([ep.story]);
+    ep.story = storySnapshot(concept);
+    ep.maxDurationSec = concept.maxDurationSec || ep.maxDurationSec || null;
+  }
   function episodeIdFor(pid) {
     const used = store.episodes.list({ all: true }).map((e) => e.id).filter((i) => i.startsWith(pid + '-R')).map((i) => Number(i.slice(pid.length + 2))).filter(Number.isFinite);
     return `${pid}-R${String((used.length ? Math.max(...used) : 1) + 1).padStart(2, '0')}`;
@@ -37,7 +46,9 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
       scenes: [], lines: [], suggestions: [],
       cta: { lines: [], durationSec: 3.5, keyword: '' },
       publishing: { keyword: '', affiliateUrl: p.affiliateUrl || '', disclosure: '[광고] 이 게시물은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.' },
-      concept: { productId: pid, conceptId: cid, revision: concept.revision, title: concept.title, approvedAt: concept.approval.at, hook: concept.hook, ctaDirection: concept.ctaDirection, estimatedScenes: concept.estimatedScenes || null, category: concept.category || 'drama', categoryAssumed: !concept.category, versionOf: existing.length ? existing[0].id : null },
+      concept: { productId: pid, conceptId: cid, revision: concept.revision, title: concept.title, approvedAt: concept.approval.at, storyline: storylineText(concept), maxDurationSec: concept.maxDurationSec || null, hook: concept.hook, ctaDirection: concept.ctaDirection, estimatedScenes: concept.estimatedScenes || null, category: concept.category || 'drama', categoryAssumed: !concept.category, versionOf: existing.length ? existing[0].id : null },
+      // The approved story as an immutable snapshot (the editable draft lives in Story Lab; later revisions are appended to storyHistory, never overwritten).
+      story: storySnapshot(concept), storyHistory: [], maxDurationSec: concept.maxDurationSec || null,
       // Approved product reference images travel with the episode so Storyboard / Animation can show and use the same images.
       productRefs: { referenceSetId: b.reference.waived ? 'waived' : (p.referenceSet || {}).id || '', imageIds: b.reference.imageIds || [], waived: b.reference.waived || '' },
       characterRules: ['Diane never calls Jack "오빠".', 'Spoken dialogue in English; subtitles in Korean.', 'Diane may shout "BABYYYY!!!!!!" when excited (not in every scene).', 'Keep the approved 2D character references; exactly one Jack and one Diane.'],
@@ -101,10 +112,13 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
       '--- INPUT DATA (authoritative) ---',
       'CONCEPT_ID: ' + concept.id + ' (revision ' + concept.revision + ')',
       'CONCEPT_TITLE: ' + concept.title,
+      'STORY_CATEGORY: ' + (concept.category || 'drama'),
+      'APPROVED_STORYLINE: ' + storylineText(concept),
+      ...(concept.maxDurationSec ? ['MAX_DURATION_SEC: ' + concept.maxDurationSec] : []),
       ...['hook', 'situation', 'plot', 'productRole', 'characterUsage', 'visualComedy', 'payoff', 'viewerAppeal', 'ctaDirection'].filter((k) => concept[k]).map((k) => `CONCEPT_${k.toUpperCase()}: ${concept[k]}`),
       ...(concept.estimatedScenes ? ['ESTIMATED_SCENES: ' + concept.estimatedScenes] : []),
       'LANGUAGE: spoken dialogue in ENGLISH, subtitles in KOREAN. Diane never calls Jack "오빠".',
-      'ESTIMATED_DURATION_SEC: ' + concept.estimatedDurationSec,
+      ...(concept.estimatedDurationSec ? ['ESTIMATED_DURATION_SEC: ' + concept.estimatedDurationSec] : []),
       'PRODUCT_NAME: ' + ep.product.name,
       'VERIFIED_PRODUCT_FACTS (use ONLY these):',
       ...ep.product.verifiedFeatures.map((f) => '- ' + f),
@@ -162,6 +176,7 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
       ep.cta = Object.assign({}, ep.cta, s.cta);
       ep.publishing = Object.assign({}, ep.publishing, { keyword: s.cta.keyword });
       ep.concept = Object.assign({}, ep.concept, { revision: concept.revision, title: concept.title });
+      syncStory(ep, concept);
       ep.scriptSource = source;
       ep.approvals.script = null; // a regenerated script is a new draft: it must be approved again
       ep.approvals.storyboard = null;
@@ -216,6 +231,7 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
         ep.ending.aiVarsApplied = true;
       }
       ep.concept = Object.assign({}, ep.concept, { revision: concept.revision, title: concept.title });
+      syncStory(ep, concept);
       ep.scriptSource = source;
       ep.approvals.script = null; // any regenerated part is a new draft: approve again
       ep.approvals.storyboard = null;

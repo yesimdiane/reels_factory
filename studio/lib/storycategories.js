@@ -11,19 +11,19 @@ const CATEGORIES = {
     ko: '반전형 생활 개그', en: 'Drama',
     brief: '제품을 자연스럽게 녹인 생활 코미디. 황당함이 점점 커지다가 예상 밖의 반전으로 끝납니다.',
     goal: '구매 전환',
-    rule: 'DRAMA: a natural product promotion told as a comedic everyday story. Absurdity ESCALATES beat by beat and ends with an unexpected twist. The product solves the problem inside the story. Primary goal: purchase conversion.',
+    rule: 'DRAMA: design a CURIOSITY-DRIVEN comedic everyday story, not a summary. Consider a cold open or a brief flash-forward that shows the single most surprising moment, then rewind; plant an unanswered question that makes viewers keep watching; use escalation, misdirection, reversals and an unexpected payoff; hide information until it pays off. Connect the product naturally (it should feel like part of the story, never an advertisement). Primary goal: purchase conversion.',
   },
   viral: {
     ko: '바이럴형', en: 'Viral',
     brief: '조회·공유·채널 발견을 노린 황당하고 눈에 남는 숏폼. 예: Jack이 제품을 들고 춤춘다.',
     goal: '조회·공유·채널 발견',
-    rule: 'VIRAL: an absurd, visually memorable short-form concept designed for views, shares and channel discovery (example: Jack dancing while holding the product). Lead with ONE striking visual idea that works with the sound off and is easy to share. Keep the product visible but never claim anything the verified facts do not support.',
+    rule: 'VIRAL: design a short-form concept for views, shares and channel discovery. Prioritise a striking first-frame visual, absurdity, suspense, novelty, replayability and visual contrast (example: an object slowly approaching a balloon while the narration keeps going, creating visual tension). One strong visual idea that works with the sound off; an ending that makes people watch again. Keep the product visible but never claim anything the verified facts do not support.',
   },
   info: {
     ko: '신뢰·정보형', en: 'Informational',
     brief: '확인된 사실로 보여주는 유용한 추천·시연·비교·리스트. 예: "잘 산 쿠팡템 3가지".',
     goal: '팔로우·저장·공유',
-    rule: 'INFORMATIONAL: a useful product recommendation, verified demonstration, comparison or list (example: "잘 산 쿠팡템 3가지"). Primary goal: follows, saves and shares. State ONLY facts from VERIFIED_PRODUCT_FACTS; never invent facts, rankings or comparisons about this or any other product. If the format is a list or comparison, items other than this product must be left as neutral placeholders for the operator to fill in. Jack and Diane may still present it in character.',
+    rule: 'INFORMATIONAL: a useful product recommendation, verified demonstration, comparison or list (example: "잘 산 쿠팡템 3가지"). Show the useful or surprising RESULT early, then keep curiosity while delivering verified information; give viewers a genuine reason to save, share and follow. State ONLY facts from VERIFIED_PRODUCT_FACTS; never invent facts, statistics, rankings or comparisons about this or any other product. If the format is a list or comparison, items other than this product must be neutral placeholders for the operator to fill in. Jack and Diane may still present it in character.',
   },
 };
 const ORDER = ['drama', 'viral', 'info'];

@@ -86,12 +86,11 @@ function createMockText() {
           const b = list[used[cat]++ % list.length];
           const dur = Math.max(10, Math.min(38 + i * 2, maxSec));
           return {
-            category: cat, title: `[Sample] ${b[0]}`, hook: `${product}: ${b[1]}`, situation: b[2], productRole: `The product appears only within its verified features (${product}).`,
-            characterUsage: i % 2 ? 'Diane leads, Jack reacts' : 'Jack leads, Diane interjects', plot: `[Sample] ${b[2]} → banter between Jack and Diane → product reveal → closing beat (about ${dur}s)`,
-            visualComedy: '[Sample] Exaggerated close-up reactions and a quick cutaway', payoff: `[Sample] closing line for ${b[0]}`, viewerAppeal: 'A relatable home moment', ctaDirection: 'Point viewers to the comment keyword for the link',
-            estimatedDurationSec: dur, estimatedScenes: 6 + (i % 3),
-            title_ko: `[샘플] ${b[3]}`, hook_ko: `${product}: ${b[4]}`, situation_ko: b[4], productRole_ko: `${product}를 확인된 기능 범위에서만 보여줍니다.`, characterUsage_ko: i % 2 ? 'Diane 중심, Jack 반응' : 'Jack 중심, Diane 개입',
-            plot_ko: `[샘플] ${b[4]} → Jack과 Diane의 티키타카 → 제품 등장 → 마무리 (약 ${dur}초)`, visualComedy_ko: '[샘플] 과장된 표정 클로즈업과 리액션 컷', payoff_ko: `[샘플] ${b[3]} 마무리 대사`, viewerAppeal_ko: '공감 가는 집안 상황', ctaDirection_ko: '댓글 키워드로 링크 안내',
+            category: cat, title: `[Sample] ${b[0]}`,
+            storyline: `[Sample] ${b[1]} ${b[2]}. The product appears only within its verified features (${product}), and the closing beat pays off the question the opening raised (about ${dur}s).`,
+            estimatedDurationSec: dur,
+            title_ko: `[샘플] ${b[3]}`,
+            storyline_ko: `[샘플] ${b[4]}. ${product}는 확인된 기능 범위에서만 등장하고, 마지막에 처음의 궁금증이 풀립니다 (약 ${dur}초).`,
           };
         });
         return { text: '', json: { concepts }, usage: { inputTokens: null, outputTokens: null } };

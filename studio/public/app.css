@@ -479,3 +479,15 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .wf-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; }
 .wf-actions .btn { justify-content: center; min-height: 46px; }
 @media (max-width: 640px) { .wf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Story Lab: collapsed story cards (one open at a time) */
+.story-list { display: grid; gap: 8px; }
+.story-card { padding: 12px 14px; }
+.story-card.approved { border-color: var(--sage-deep); box-shadow: 0 0 0 2px var(--sage-wash); }
+.story-head { appearance: none; width: 100%; background: transparent; border: 0; padding: 4px 0; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; font: inherit; color: var(--espresso); cursor: pointer; touch-action: manipulation; }
+.story-title { font-weight: 700; font-size: 15.5px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.story-text { font-size: 16px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.story-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.story-actions .btn { justify-content: center; min-height: 46px; }
+.story-actions .btn.sage, .story-actions .btn[data-act="resume"], .story-actions .btn[data-act="restore"] { grid-column: 1 / -1; }
+@media (max-width: 640px) { .story-head { flex-wrap: wrap; } .story-head .row { width: 100%; } }

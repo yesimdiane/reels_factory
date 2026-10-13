@@ -37,6 +37,20 @@ function createPromptStore({ store, seedDir }) {
       d.updatedAt = nowIso();
       writeJsonAtomic(file, d);
     }
+    // An UNEDITED default whose text is older than the shipped default is upgraded as a NEW version (history kept; edited prompts are never touched).
+    let upgraded = false;
+    KEYS.forEach((k) => {
+      const e = d.prompts[k];
+      const cur = e && e.versions.find((x) => x.v === e.current);
+      const sd = seed().prompts[k];
+      if (cur && cur.default && sd && cur.text !== sd.text) {
+        const v = Math.max(...e.versions.map((x) => x.v)) + 1;
+        e.versions.push({ v, text: sd.text, at: nowIso(), by: 'default', note: '기본값 업데이트', default: true });
+        e.current = v;
+        upgraded = true;
+      }
+    });
+    if (upgraded) { d.updatedAt = nowIso(); writeJsonAtomic(file, d); }
     return d;
   };
   const meta = (k) => seed().prompts[k];

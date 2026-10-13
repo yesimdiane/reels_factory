@@ -108,7 +108,7 @@ function currentPanel(s, ep) {
     const catName = ((lab.categories || []).find((o) => o.key === c.category) || {}).ko || '';
     let ko = false;
     const body = h('div', { class: 'wf-story', 'data-story-text': '' });
-    const draw = () => body.replaceChildren(h('div', { class: ko ? 'ko-text' : '' }, ko ? (c.ko && c.ko.plot) || (c.ko && c.ko.hook) || '번역이 아직 없습니다 (이전에 만든 컨셉)' : (c.plot || c.hook || '')));
+    const draw = () => body.replaceChildren(h('div', { class: ko ? 'ko-text' : '' }, ko ? (c.ko && c.ko.storyline) || '번역이 아직 없습니다 (이전에 만든 스토리)' : (c.storyline || '')));
     draw();
     const tbtn = h('button', { class: 'btn sm ghost', type: 'button', 'data-ko-toggle': '', onclick: () => { ko = !ko; tbtn.firstChild.nodeValue = ko ? 'English' : '한국어 번역'; draw(); } }, icon('refresh'), '한국어 번역');
     return h('section', { class: 'card stack', 'data-current': 'story', style: 'gap:12px' },

@@ -56,7 +56,7 @@ test('one category: default 1 concept; N concepts all carry that category and a 
   assert.equal(planOf(ai.calls[1].prompt), 'info, info, info, info, info');
   assert.deepEqual(lab.concepts.map((c) => c.category), ['viral', 'info', 'info', 'info', 'info', 'info']);
   const c = lab.concepts[1];
-  assert.ok(c.ko.title && c.ko.hook && c.ko.plot && c.koComplete, 'translations arrive in the same generation request');
+  assert.ok(c.ko.title && c.ko.storyline && c.koComplete, 'translations arrive in the same generation request');
   assert.equal(ai.calls.length, 2, 'no separate translation calls');
   assert.match(ai.calls[0].prompt, /VIRAL:/);
   assert.match(ai.calls[0].prompt, /ENGLISH/);

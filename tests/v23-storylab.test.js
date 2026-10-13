@@ -56,9 +56,9 @@ test('Story Lab: invalid AI output is rejected and nothing is saved (too few / d
   for (const bad of [
     () => goodConcepts(2),
     () => { const c = goodConcepts(3); c.concepts[1] = Object.assign({}, c.concepts[0], { title: 'other' }); return c; },
-    () => { const c = goodConcepts(3); c.concepts[0].payoff = '방수가 100% 됩니다'; return c; },
-    () => { const c = goodConcepts(3); c.concepts[0].hook = 'Diane이 오빠~ 하고 부른다'; return c; },
-    () => { const c = goodConcepts(3); delete c.concepts[2].payoff; return c; },
+    () => { const c = goodConcepts(3); c.concepts[0].storyline += ' 방수가 100% 됩니다'; return c; },
+    () => { const c = goodConcepts(3); c.concepts[0].storyline += ' Diane이 오빠~ 하고 부른다'; return c; },
+    () => { const c = goodConcepts(3); delete c.concepts[2].storyline; return c; },
   ]) {
     const ai = paidAi(bad);
     const { s } = make({ ai });
@@ -113,7 +113,7 @@ test('changing an approved concept requires re-approval and flags the script for
   await s.scriptgen.generate(epId, { confirm: CONFIRM });
   await approveWithScenes(s, epId);
   assert.equal(s.episodeView(epId).derived.scriptApproved, true);
-  await s.storylab.edit(pid, c.id, { payoff: '완전히 다른 결말' });
+  await s.storylab.edit(pid, c.id, { storyline: '완전히 다른 결말로 끝나는 새로운 이야기입니다. 처음의 궁금증은 마지막에 풀립니다.' });
   const lab = s.storylab.list(pid).concepts.find((x) => x.id === c.id);
   assert.equal(lab.needsReapproval, true);
   assert.equal(lab.approved, false);
