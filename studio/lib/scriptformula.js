@@ -45,7 +45,7 @@ function orderScenes(ep) {
  * A shot the operator edited by hand (manualEdit) is kept exactly as it is, unless respectEdits is false.
  */
 function applyEnding(ep, endings, { respectEdits = true } = {}) {
-  const sel = ep.ending || (ep.ending = { templateId: endings.activeId(), version: null, vars: {}, manualVars: [] });
+  const sel = ep.ending || (ep.ending = { templateId: templateId || endings.activeId(), version: null, vars: {}, manualVars: [] });
   const inst = endings.instantiate({ templateId: sel.templateId, version: sel.version }, endingVars(ep));
   sel.structureLocked = inst.structureLocked;
   sel.templateName = inst.templateName;
@@ -71,7 +71,7 @@ function applyEnding(ep, endings, { respectEdits = true } = {}) {
 }
 
 /** Creates the empty formula skeleton + the default-template Part B of a NEW episode. */
-function seedFormula(ep, endings) {
+function seedFormula(ep, endings, templateId) {
   ep.comedy_story = {};
   ep.product_ending = {};
   F.BEAT_KEYS.forEach((k) => { ep.comedy_story[k] = F.emptyBeat(); });

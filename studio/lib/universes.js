@@ -11,12 +11,12 @@ const { StudioError, nowIso } = require('./util');
 
 const DEFAULT_UNIVERSE = 'jackdiane';
 const SCHEMA = 2;
-const UNIVERSE_FIELDS = ['name', 'description', 'storyStyle', 'language', 'visualStyle'];
+const UNIVERSE_FIELDS = ['name', 'description', 'storyStyle', 'language', 'visualStyle', 'endingTemplateId'];
 const REF_ONLY = '외모는 승인된 참조 이미지로만 정의합니다 (색·무늬를 지어내지 않음)';
 
 const SEED_UNIVERSES = [
-  { id: 'jackdiane', name: 'Jack & Diane', description: 'International married couple: a British husband and a Korean wife.', storyStyle: 'Korean and British cultural comedy about everyday life; warm, teasing married-couple chemistry.', language: 'en', visualStyle: 'Animated sitcom style (2D anime/webtoon, consistent character look).', formula: 'fixed_ending', builtin: true, active: true },
-  { id: 'gregory-cats', name: 'Gregory Cats', description: 'Three cats living in the Gregory household.', storyStyle: 'Pet comedy and personality-driven storytelling.', language: 'en', visualStyle: 'Consistent animated character style across all episodes.', formula: 'free', builtin: true, active: true },
+  { id: 'jackdiane', name: 'Jack & Diane', description: 'International married couple: a British husband and a Korean wife.', storyStyle: 'Korean and British cultural comedy about everyday life; warm, teasing married-couple chemistry.', language: 'en', visualStyle: 'Animated sitcom style (2D anime/webtoon, consistent character look).', endingTemplateId: 'jack-diane-coupang-ending-v1', builtin: true, active: true },
+  { id: 'gregory-cats', name: 'Gregory Cats', description: 'Three cats living in the Gregory household.', storyStyle: 'Pet comedy and personality-driven storytelling.', language: 'en', visualStyle: 'Consistent animated character style across all episodes.', endingTemplateId: 'gregory-cats-ending-v1', builtin: true, active: true },
 ];
 
 const voice = () => ({ provider: 'heygen', language: 'en', heygenVoiceId: '', heygenIdentityId: '', speed: 1.0, verified: false, verifiedAt: '' });
@@ -90,7 +90,7 @@ function createUniverseService({ store, episodes = () => [], storylabCasts = () 
   // ---------- universes ----------
   function cleanUniverse(i, base = {}) {
     const out = Object.assign({}, base);
-    UNIVERSE_FIELDS.forEach((k) => { if (i[k] !== undefined) out[k] = text(i[k], k === 'name' ? 80 : 600); });
+    UNIVERSE_FIELDS.forEach((k) => { if (i[k] !== undefined) out[k] = text(i[k], k === 'name' ? 80 : k === 'endingTemplateId' ? 80 : 600); });
     if (i.active !== undefined) out.active = !!i.active;
     if (!out.name) throw new StudioError('NAME', '유니버스 이름이 필요합니다.', { status: 400 });
     if (!out.language) out.language = 'en';
@@ -100,7 +100,7 @@ function createUniverseService({ store, episodes = () => [], storylabCasts = () 
     const lib = load();
     let id = slug(input.name) || 'universe';
     while (universeOf(lib, id)) id += '-' + Math.random().toString(36).slice(2, 5);
-    const u = cleanUniverse(input, { id, formula: 'free', builtin: false, active: true, createdAt: nowIso() });
+    const u = cleanUniverse(input, { id, endingTemplateId: '', builtin: false, active: true, createdAt: nowIso() });
     u.updatedAt = nowIso();
     lib.universes.push(u); save(lib);
     return overview();
@@ -181,7 +181,7 @@ function createUniverseService({ store, episodes = () => [], storylabCasts = () 
   function normalizeCast(cast, lib = load()) {
     const c = cast && typeof cast === 'object' ? cast : null;
     if (!c || (!c.universeId && !arr(c.characterIds).length)) {
-      return { universeId: DEFAULT_UNIVERSE, characterIds: lib.characters.filter((x) => (x.universeId || DEFAULT_UNIVERSE) === DEFAULT_UNIVERSE).map((x) => x.id), guest: null, narrator: false, implicit: true };
+      return { universeId: DEFAULT_UNIVERSE, characterIds: ['jack', 'diane'].filter((id) => lib.characters.some((x) => x.id === id)).concat(lib.characters.filter((x) => (x.universeId || DEFAULT_UNIVERSE) === DEFAULT_UNIVERSE && !['jack', 'diane'].includes(x.id)).map((x) => x.id)), guest: null, narrator: false, implicit: true };
     }
     const universeId = text(c.universeId) || DEFAULT_UNIVERSE;
     const guest = c.guest && text(c.guest.name) ? { name: text(c.guest.name, 60), description: text(c.guest.description, 300) } : null;

@@ -14,7 +14,8 @@ const SF = require('./scriptformula');
 const { sha256, uid } = require('./util');
 const T = require('./translate');
 
-function createScriptGen({ store, products, storylab, episodeIds, prompts, presets, endings, router, lib }) {
+function createScriptGen({ store, products, storylab, episodeIds, prompts, presets, endings, router, lib, universes: getUniverses = () => null }) {
+  const U = () => getUniverses();
   const storylineText = (c) => c.storyline || [c.hook, c.situation, c.plot, c.payoff].filter(Boolean).join(' ');
   const storySnapshot = (c) => ({ conceptId: c.id, revision: c.revision, title: c.title, storyline: storylineText(c), ko: c.ko || {}, category: c.category || 'drama', maxDurationSec: c.maxDurationSec || null, approvedAt: c.approval && c.approval.at, by: c.approval && c.approval.by });
   /** When the approved story moved on (edited + re-approved), the episode gets the new snapshot as a NEW linked revision; the old one stays in storyHistory. */
@@ -29,9 +30,25 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
     return `${pid}-R${String((used.length ? Math.max(...used) : 1) + 1).padStart(2, '0')}`;
   }
 
+  /** Character rules of a non-Jack&Diane universe come from the library (the Jack & Diane wording stays as it was for existing projects). */
+  function neutralRules(rc) {
+    const out = [`Spoken dialogue in ${rc.universe.language === 'ko' ? 'Korean' : 'English'}; subtitles in Korean.`, 'Keep the approved character references; never change a character\'s identity.'];
+    rc.characters.forEach((c) => (c.negativePrompts || []).concat(c.behaviorRules || []).forEach((r) => out.push(`${c.name}: ${r}`)));
+    return out;
+  }
+
   /** Creates an (empty) episode bound to an approved concept. Product facts are copied from the verified product record. */
-  async function createEpisodeFromConcept(pid, cid, { id, newVersion = false, requestId = '' } = {}) {
+  async function createEpisodeFromConcept(pid, cid, { id, newVersion = false, requestId = '', approveEndingCast = false } = {}) {
     const concept = storylab.requireApproved(pid, cid);
+    // Cast: the universe + characters this concept was written for (a concept from before universes = the Jack & Diane cast).
+    const rc = U().resolveCast(concept.cast);
+    if (rc.errors.length) throw new StudioError('CAST_INVALID', rc.errors[0].message, { status: 409, details: rc.errors, recovery: 'Story Lab에서 출연진을 확인한 뒤 컨셉을 다시 만들거나 승인하세요.' });
+    const isDrama = (concept.category || 'drama') === 'drama';
+    const endingTemplateId = rc.universe.endingTemplateId || endings.forUniverse(rc.universe.id);
+    // The fixed closing (Part B) belongs to the universe. It must not bring in characters nobody selected unless the operator approves it explicitly.
+    const endingCast = isDrama ? endings.castOf({ templateId: endingTemplateId }) : [];
+    const extras = endingCast.filter((c) => !rc.ids.includes(c));
+    if (extras.length && !approveEndingCast) throw new StudioError('ENDING_CAST_MISMATCH', `이 유니버스의 고정 엔딩 3컷에는 선택하지 않은 캐릭터(${extras.join(', ')})가 나옵니다. 출연진에 추가하거나, 엔딩 출연을 명시적으로 승인해야 합니다.`, { status: 409, details: extras.map((c) => ({ code: 'ENDING_CAST_MISMATCH', characterId: c })), recovery: '에피소드 만들기 확인 창에서 엔딩 출연을 승인하세요.' });
     const b = products.bindingFor(pid);
     const p = b.product;
     // A concept that already produced an episode never silently produces another one, and an existing episode is never touched:
@@ -41,9 +58,10 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
     if (existing.length && !newVersion) throw new StudioError('EPISODE_EXISTS', `이 컨셉으로 만든 에피소드가 이미 있습니다: ${existing.map((e) => e.id).join(', ')}`, { details: existing.map((e) => e.id), recovery: '기존 에피소드를 열거나, 확인 후 새 버전 에피소드를 만드세요. 기존 에피소드는 변경되지 않습니다.', status: 409 });
     const build = ({ id: epId }) => {
     const seed = {
-      id: epId, reelId: epId, productId: pid, title: concept.title, titleEn: '', series: 'Jack & Diane',
+      id: epId, reelId: epId, productId: pid, title: concept.title, titleEn: '', series: rc.universe.name, universeId: rc.universe.id,
+      cast: { universeId: rc.universe.id, characterIds: rc.ids, guest: rc.cast.guest, narrator: rc.cast.narrator, approvedExtras: extras },
       product: { id: pid, name: p.name, kind: p.category || '', verifiedFeatures: b.facts, forbiddenClaims: p.forbiddenClaims || [], affiliateUrl: p.affiliateUrl || '', visualSummary: p.description || '', sourceNote: '운영자가 확인한 사실만 사용합니다 (Products 화면).' },
-      characters: ['jack', 'diane'], beats: [],
+      characters: rc.ids.concat(extras), beats: [],
       scenes: [], lines: [], suggestions: [],
       cta: { lines: [], durationSec: 3.5, keyword: '' },
       publishing: { keyword: '', affiliateUrl: p.affiliateUrl || '', disclosure: '[광고] 이 게시물은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.' },
@@ -52,12 +70,12 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
       story: storySnapshot(concept), storyHistory: [], maxDurationSec: concept.maxDurationSec || null,
       // Approved product reference images travel with the episode so Storyboard / Animation can show and use the same images.
       productRefs: { referenceSetId: b.reference.waived ? 'waived' : (p.referenceSet || {}).id || '', imageIds: b.reference.imageIds || [], waived: b.reference.waived || '' },
-      characterRules: ['Diane never calls Jack "오빠".', 'Spoken dialogue in English; subtitles in Korean.', 'Diane may shout "BABYYYY!!!!!!" when excited (not in every scene).', 'Keep the approved 2D character references; exactly one Jack and one Diane.'],
+      characterRules: rc.universe.id === 'jackdiane' ? ['Diane never calls Jack "오빠".', 'Spoken dialogue in English; subtitles in Korean.', 'Diane may shout "BABYYYY!!!!!!" when excited (not in every scene).', 'Keep the approved 2D character references; exactly one Jack and one Diane.'] : neutralRules(rc),
       scriptSource: null,
       formula: 1,
     };
     // The fixed Jack & Diane drama format (six-beat Part A + reusable shopping ending) is for DRAMA only; Viral / Informational stories get a free structure.
-    if ((concept.category || 'drama') === 'drama') SF.seedFormula(seed, endings); else seed.timingStrict = true;
+    if (isDrama) SF.seedFormula(seed, endings, endingTemplateId); else seed.timingStrict = true;
     return seed;
     };
     // Story approval → Episode: {PRODUCT_CODE}-{NN}-{D|V|I}. The number is allocated atomically, only when the episode file is really created;

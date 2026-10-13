@@ -290,7 +290,7 @@ test('ending templates: default name, three fixed shots, versions never rewritte
   const s2 = createStudio({ cfg: m.cfg, aiProviderFactory: a.factory });
   assert.equal(s2.endings.get(t0.id).current, 4);
   assert.equal(s2.endings.get(dup.id).name, '살아남을 템플릿');
-  assert.equal(s2.endings.list().templates.length, 2, 'seeding never overwrites or duplicates an existing file');
+  assert.equal(s2.endings.list().templates.length, 3, 'two built-ins (Jack & Diane, Gregory Cats) + the duplicate: seeding never overwrites or duplicates an existing file');
   assert.ok(fs.existsSync(m.s.store.path('ending-templates.json')));
 });
 

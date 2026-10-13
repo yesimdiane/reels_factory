@@ -58,7 +58,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const presets = createScriptPresets({ store, prompts, seedDir: SEED_DIR });
   const endings = createEndingTemplates({ store, seedDir: SEED_DIR });
   const episodeIds = createEpisodeIds({ store, products });
-  const scriptgen = createScriptGen({ store, products, storylab, episodeIds, prompts, presets, endings, router, lib: () => store.characters.load() });
+  const scriptgen = createScriptGen({ store, products, storylab, episodeIds, prompts, presets, endings, router, lib: () => store.characters.load(), universes: () => universes });
   const translator = createTranslator({ store, router });
   const cutPresets = createCutPresets({ store });
   const startImages = createStartImages({ store, products, router, lib: () => store.characters.load(), log });
@@ -391,8 +391,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const num = (v, d) => (Number.isFinite(Number(v)) && v !== '' && v !== null ? Number(v) : d);
 
   /** Normal path: an episode starts from an APPROVED story concept (Product → Story Lab → episode). */
-  async function createEpisodeFromConcept({ productId, conceptId, id, newVersion = false, requestId = '' }) {
-    const epId = await scriptgen.createEpisodeFromConcept(productId, conceptId, { id, newVersion, requestId });
+  async function createEpisodeFromConcept({ productId, conceptId, id, newVersion = false, requestId = '', approveEndingCast = false }) {
+    const epId = await scriptgen.createEpisodeFromConcept(productId, conceptId, { id, newVersion, requestId, approveEndingCast });
     store.episodes.audit(epId, 'episode.from_concept', { productId, conceptId, newVersion: !!newVersion });
     return epId;
   }
