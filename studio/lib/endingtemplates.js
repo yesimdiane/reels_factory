@@ -33,9 +33,9 @@ const CATS_TEMPLATE = {
 };
 
 /** Product-specific defaults used until the AI (or the operator) fills them in. Never invents product facts. */
-function defaultVars(product = {}) {
+function defaultVars(product = {}, { neutral = false } = {}) {
   const name = String(product.name || 'the product').trim();
-  return { PRODUCT_NAME: name, PRODUCT_NAME_KO: name, USE_PHRASE: 'it', USE_PHRASE_KO: '그걸', DEMO_ACTION: `Diane uses ${name} exactly as intended.`, DEMO_ACTION_KO: `${name}를 제대로 쓰는 모습`, DEMO_LINE_EN: 'Look how easy that is!', DEMO_LINE_KO: '봐, 이렇게 쉬워!' };
+  return { PRODUCT_NAME: name, PRODUCT_NAME_KO: name, USE_PHRASE: 'it', USE_PHRASE_KO: '그걸', DEMO_ACTION: `${neutral ? 'A cast member' : 'Diane'} uses ${name} exactly as intended.`, DEMO_ACTION_KO: `${name}를 제대로 쓰는 모습`, DEMO_LINE_EN: 'Look how easy that is!', DEMO_LINE_KO: '봐, 이렇게 쉬워!' };
 }
 const fill = (text, vars) => String(text == null ? '' : text).replace(/\{\{\s*([A-Z_]+)\s*\}\}/g, (m, k) => (vars[k] !== undefined && vars[k] !== null && String(vars[k]).trim() !== '' ? String(vars[k]) : m));
 

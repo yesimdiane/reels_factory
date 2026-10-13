@@ -151,7 +151,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     if (!F.isStructured(ep)) return { structured: false };
     const shape = (key, group) => {
       const b = ep[group][key] || {};
-      return Object.assign({ key, label: (F.beatMeta(key) || {}).ko, labelEn: (F.beatMeta(key) || {}).en, role: (F.beatMeta(key) || {}).role || '' }, b, { subtitle_ko: F.beatSubtitles(ep, key) });
+      const other = group === 'product_ending' && ep.universeId && ep.universeId !== 'jackdiane'; // the fixed shot labels name Diane/Jack: other universes show their own shot titles
+      return Object.assign({ key, label: other ? (b.title_ko || (F.beatMeta(key) || {}).ko) : (F.beatMeta(key) || {}).ko, labelEn: other ? '' : (F.beatMeta(key) || {}).en, role: (F.beatMeta(key) || {}).role || '' }, b, { subtitle_ko: F.beatSubtitles(ep, key) });
     };
     return {
       structured: true,
@@ -252,6 +253,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         videoStudio: null,
         broll: sba.brollView(ep),
         assets: assetReadiness(ep),
+        // what is missing for the characters actually on screen / speaking (never substituted by another character or voice)
+        castWarnings: universes.assetWarnings([...new Set((ep.scenes || []).flatMap((s) => s.characters || []))], { needsVoice: false })
+          .concat(universes.assetWarnings([...new Set((ep.lines || []).map((l) => l.speaker).filter(Boolean))], { needsVoice: true }).filter((w) => /VOICE/.test(w.code))),
       },
       productRefImages: (() => {
         const refs = ep.productRefs && ep.productRefs.imageIds;

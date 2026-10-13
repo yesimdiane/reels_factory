@@ -46,6 +46,7 @@ export const EN = {
   '연결 테스트': 'Test connection', '키 저장': 'Save key', '키 삭제': 'Delete key', 'LIVE 켜기': 'Turn LIVE on', 'MOCK으로 되돌리기': 'Back to MOCK', '실제(LIVE) 모드 켜기…': 'Turn LIVE mode on…',
   '지출 한도': 'Spend limit', '채널 설정': 'Channel settings', '캐릭터 라이브러리': 'Character library', '제목 저장': 'Save title', '프롬프트 복사': 'Copy prompt',
   // misc
+  '캐릭터': 'Characters', '캐릭터 라이브러리': 'Character Library', '＋ 새 유니버스': 'New universe', '＋ 캐릭터 추가': 'Add character', '프로필 편집': 'Edit profile', '프로필 저장': 'Save profile', '유니버스 저장': 'Save universe', '활성화': 'Activate', '비활성화': 'Deactivate', '게스트 적용': 'Apply guest', '캐릭터 라이브러리 열기': 'Open Character Library', '엔딩 출연을 승인하고 만들기': 'Approve ending cast and create',
   '코드 저장': 'Save code',
   '클립보드에서 붙여넣기': 'Paste from clipboard', '사진 보관함 · 파일에서 선택': 'Choose from Photos / Files', '모두 지우기': 'Clear all', '자르기 적용': 'Apply crop', '초기화': 'Reset',
   '초안 저장': 'Save draft', '연결 테스트': 'Test connection', '토큰 저장': 'Save token', '연결 해제': 'Disconnect', 'ManyChat 열기': 'Open ManyChat', 'ManyChat 대시보드 열기': 'Open ManyChat', '설정 복사 (JSON)': 'Copy config (JSON)', '내보내기': 'Export', 'ManyChat 설정 단계로 넘기기': 'Move to ManyChat setup', '설정 안내 보기 · 설정 복사': 'Guided setup', 'ManyChat 설정 완료 기록': 'Mark configured in ManyChat', '검증 기록 남기기 (테스트 완료)': 'Record verification', '설정 단계로 되돌리기': 'Reopen setup', '실패로 기록': 'Mark failed', '캠페인 기록 보관': 'Archive campaign', '활성으로 기록': 'Record as active', '실패 기록': 'Record failure', '변경하고 다시 검증': 'Change and re-verify', '설정 완료로 기록': 'Record as configured', '확인했고 돌리기': 'Confirm and reopen', '해제': 'Disconnect', '보관': 'Archive',

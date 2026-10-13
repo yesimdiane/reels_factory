@@ -4,6 +4,7 @@ import { h, chip, icon, toast, modal, confirmDialog } from '../ui.js';
 import { state, act, setProduct } from '../state.js';
 import { api } from '../api.js';
 import { pageHead, asyncBlock, confirmPaid } from './common.js';
+import { castSection } from './cast-picker.js';
 
 const view = { tab: 'candidate', open: '', ko: new Set(), category: '', count: 1, maxSec: 45, extra: '' };
 // Count rules mirror the backend (studio/lib/storycategories.js): 1–5 for one category, always 3 for "all". The server enforces them too.
@@ -47,6 +48,7 @@ function body(lab, prod) {
     route.provider === 'mock'
       ? h('div', { class: 'banner mock' }, chip('샘플', 'mock'), h('div', null, h('b', null, '스토리 AI가 연결되지 않아 샘플 응답을 씁니다'), '실제 생성은 Settings → AI 연동에서 키·모델을 지정하세요. ', h('a', { href: '#/settings' }, '설정으로')))
       : h('div', { class: 'banner' }, chip(route.provider, 'done'), h('div', null, h('b', null, `${route.provider} · ${route.model || '(모델 미선택)'}`), '실행 전에 예상 비용(추정)을 보여드리고 확인을 받습니다.')),
+    castSection(pid, lab.cast, redraw),
     categoryPicker(cats, redraw),
     h('div', { class: 'row' },
       h('label', { class: 'row small', style: 'gap:6px' }, '영상 최대 길이', h('input', { type: 'number', inputmode: 'numeric', min: 10, max: 90, step: 1, value: view.maxSec, 'aria-label': '영상 최대 길이(초)', 'data-max-sec': '', style: 'width:84px', oninput: (e) => { view.maxSec = e.target.value === '' ? '' : Number(e.target.value); const el = document.querySelector('[data-gen-summary]'); if (el) el.textContent = genSummary(); } }), '초'),
@@ -54,13 +56,14 @@ function body(lab, prod) {
     h('details', { class: 'small', 'data-advanced': '' }, h('summary', { style: 'cursor:pointer;min-height:36px;display:flex;align-items:center' }, '고급 설정'),
       h('div', { class: 'field', style: 'margin-top:6px' }, h('input', { type: 'text', 'aria-label': '추가 지시', placeholder: '추가 지시 (선택) — 예: 비 오는 날 상황 위주로', value: view.extra, oninput: (e) => (view.extra = e.target.value) }))),
     h('div', { class: 'small', 'data-gen-summary': '' }, genSummary()),
-    h('div', { class: 'row' }, h('button', { class: 'btn', disabled: !ready.ok || !view.category, onclick: generate }, icon('plus'), '스토리 컨셉 생성'))));
+    h('div', { class: 'row' }, h('button', { class: 'btn', disabled: !ready.ok || !view.category || !!(lab.cast.errors && lab.cast.errors.length), onclick: generate }, icon('plus'), '스토리 컨셉 생성'))));
 
   async function generate() {
     if (!view.category) return toast('카테고리를 선택하세요', { error: true });
     const sec = Number(view.maxSec);
     if (!Number.isInteger(sec) || sec < 10 || sec > 90) return toast('영상 최대 길이는 10~90초의 정수로 입력하세요', { error: true });
-    const req = { category: view.category, count: effCount(), maxDurationSec: sec, extra: view.extra };
+    if (lab.cast.errors && lab.cast.errors.length) return toast(lab.cast.errors[0].message, { error: true });
+    const req = { category: view.category, count: effCount(), maxDurationSec: sec, extra: view.extra, cast: lab.cast.cast };
     let est;
     try { est = await api.post(`/api/storylab/${pid}/estimate`, req); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
     const c = await confirmPaid({ title: `스토리 ${est.count}개 생성`, est, confirmLabel: '생성', body: h('div', { class: 'stack', style: 'gap:8px' },
@@ -179,7 +182,14 @@ async function handoff(c, pid, used) {
     newVersion = true;
   }
   let ep;
-  try { ep = await api.post(`/api/storylab/${pid}/concepts/${c.id}/episode`, { newVersion, requestId: (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()) }); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
+  const requestId = (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
+  const post = (approveEndingCast) => api.post(`/api/storylab/${pid}/concepts/${c.id}/episode`, { newVersion, requestId, approveEndingCast });
+  try { ep = await post(false); } catch (e0) {
+    if (e0.code !== 'ENDING_CAST_MISMATCH') { return toast(e0.message, { error: true, recovery: e0.recovery }); }
+    const okExtra = await confirmDialog({ title: '엔딩에 선택하지 않은 캐릭터가 나옵니다', body: e0.message, confirm: '엔딩 출연을 승인하고 만들기' });
+    if (!okExtra) return;
+    try { ep = await post(true); } catch (e1) { return toast(e1.message, { error: true, recovery: e1.recovery }); }
+  }
   state.episodeId = ep.id;
   toast(`에피소드 ${ep.id}를 만들었습니다 (대본은 아직 승인되지 않았습니다)`);
   let draft = false;

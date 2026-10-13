@@ -227,14 +227,24 @@ export function sceneFocus(ep, d, ctx, sceneId, { inline = false } = {}) {
   const refreshDlg = () => { const ls = d.lines.filter((l) => l.sceneId === sid && (l.en || l.ko)); dlgSummary.textContent = ls.length ? `대사 ${ls.length}줄 · ${short(ls[0].ko || ls[0].en)}` : '대사 없음'; };
   refreshDlg();
   const missing = ap && !ap.approved && ap.errors.length ? ap.errors : [];
+  // who is in this scene: chips + (for episodes with a cast) checkboxes limited to that cast; changing them marks the scene dirty and is saved with 씬 저장
+  const chipRow = h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' });
+  const fillChips = () => chipRow.replaceChildren(chip(`${sc.durationSec}초`, ''), ...(sc.characters || []).map((c) => chip((chars.find((x) => x.id === c) || { name: c }).name, '')), sc.showsProduct ? chip('제품 노출', 'attention') : null,
+    ap && ap.approved ? chip(`승인됨 r${ap.revision}`, 'done') : ap && ap.editedAfterApproval ? chip('승인 후 수정됨', 'attention') : null);
+  fillChips();
+  const castList = chars.filter((c) => (ep.characters || []).includes(c.id));
+  const partRow = ep.cast && castList.length > 1 ? h('div', { class: 'row', 'data-participants': sid, style: 'gap:10px;flex-wrap:wrap' }, h('span', { class: 'small muted' }, '출연'),
+    castList.map((c) => h('label', { class: 'row small', style: 'gap:4px' }, h('input', { type: 'checkbox', 'data-participant': c.id, checked: (sc.characters || []).includes(c.id), onchange: (e) => {
+      const set = new Set(sc.characters || []); if (e.target.checked) set.add(c.id); else set.delete(c.id);
+      sc.characters = castList.map((x) => x.id).filter((id) => set.has(id)); dirty(); fillChips();
+    } }), c.name))) : null;
   const el = h('div', { class: 'card scene-card', id: 'script-scene-' + sid, 'data-rf': `S:${sid}:block`, 'data-scene-card': sid },
     h('div', { class: 'scene-head' },
       h('div', { class: 'row', style: 'gap:8px;flex-wrap:nowrap;min-width:0' }, h('span', { class: 'scene-no eyebrow' }, sid), statusChip(ap)),
       h('button', { class: 'btn sm clay', type: 'button', 'data-add-scene': sid, title: '현재 씬 바로 뒤에 새 씬을 만듭니다 (기존 씬은 바뀌지 않습니다)', onclick: () => ctx.addScene(sid) }, icon('plus'), '씬 추가')),
     attach(index, h('div', { class: 'field', style: 'margin:0' }, h('input', { type: 'text', class: 'scene-title', value: sc.title_ko, placeholder: sc.legacyTitle ? '한국어 제목 입력 (현재: ' + sc.legacyTitle + ')' : '한국어 장면 제목 (예: 영국인의 자신감)', maxLength: 24, 'aria-label': '장면 제목 (한국어)', oninput: (e) => { sc.title_ko = e.target.value; dirty(); } })), `S:${sid}:title_ko`),
     h('div', { class: 'scene-summary' }, h('div', { class: 'scene-summary-text' }, desc, dlgSummary,
-      h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, chip(`${sc.durationSec}초`, ''), ...(sc.characters || []).map((c) => chip((chars.find((x) => x.id === c) || { name: c }).name, '')), sc.showsProduct ? chip('제품 노출', 'attention') : null,
-        ap && ap.approved ? chip(`승인됨 r${ap.revision}`, 'done') : ap && ap.editedAfterApproval ? chip('승인 후 수정됨', 'attention') : null))),
+      chipRow, partRow)),
     missing.length ? h('div', { class: 'stack', style: 'gap:6px' }, h('div', { class: 'small', style: 'color:var(--rose);font-weight:600' }, `승인하려면 ${missing.length}개를 고쳐야 합니다`), missing.slice(0, 4).map((e) => h('button', { class: 'issue err issue-link', type: 'button', onclick: () => jumpTo(Object.assign({ sceneId: sid }, e, { key: undefined })) }, h('span', null, e.message)))) : null,
     dialogue, visual, acting, advanced);
   refreshBar();

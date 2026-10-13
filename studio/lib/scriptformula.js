@@ -9,7 +9,7 @@ const { defaultVars, VAR_KEYS } = require('./endingtemplates');
 const SCENE_FIELDS = ['title_ko', 'visual', 'action', 'narration', 'placement', 'durationSec', 'showsProduct'];
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-const endingVars = (ep) => Object.assign(defaultVars(ep.product), (ep.ending && ep.ending.vars) || {});
+const endingVars = (ep) => Object.assign(defaultVars(ep.product, { neutral: !!(ep.universeId && ep.universeId !== 'jackdiane') }), (ep.ending && ep.ending.vars) || {});
 
 function freeIds(used, n, prefix) {
   const out = [];
@@ -45,7 +45,7 @@ function orderScenes(ep) {
  * A shot the operator edited by hand (manualEdit) is kept exactly as it is, unless respectEdits is false.
  */
 function applyEnding(ep, endings, { respectEdits = true } = {}) {
-  const sel = ep.ending || (ep.ending = { templateId: templateId || endings.activeId(), version: null, vars: {}, manualVars: [] });
+  const sel = ep.ending || (ep.ending = { templateId: endings.activeId(), version: null, vars: {}, manualVars: [] });
   const inst = endings.instantiate({ templateId: sel.templateId, version: sel.version }, endingVars(ep));
   sel.structureLocked = inst.structureLocked;
   sel.templateName = inst.templateName;
@@ -78,7 +78,7 @@ function seedFormula(ep, endings, templateId) {
   F.ENDING_KEYS.forEach((k) => { ep.product_ending[k] = F.emptyBeat(); });
   ep.scenes = [];
   ep.lines = [];
-  ep.ending = { templateId: endings.activeId(), version: null, vars: {}, manualVars: [] };
+  ep.ending = { templateId: templateId || endings.activeId(), version: null, vars: {}, manualVars: [] };
   applyEnding(ep, endings, { respectEdits: false });
   return ep;
 }

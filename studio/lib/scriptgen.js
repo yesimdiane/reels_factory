@@ -109,7 +109,8 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
       });
     }
     const v = SF.endingVars(ep);
-    lines.push('ENDING (added by the application, Part B, three fixed shots): Diane\'s shopping excuse → product demonstration → Jack\'s recurring refusal.');
+    const neutralEp = !!(ep.universeId && ep.universeId !== 'jackdiane');
+    lines.push(neutralEp ? 'ENDING (added by the application, Part B, three fixed shots): ' + F.ENDING_KEYS.map((k) => (ep.product_ending[k] || {}).title_ko || k).join(' → ') + '.' : 'ENDING (added by the application, Part B, three fixed shots): Diane\'s shopping excuse → product demonstration → Jack\'s recurring refusal.');
     lines.push('CURRENT_ENDING_VARS: ' + JSON.stringify(v));
     // the ending's fixed lines already use most of each shot's time: keep the product-specific words short so the shots still fit
     const demo = (ep.scenes.find((x) => x.beatKey === 'product_demonstration') || {}).durationSec || 5;
@@ -127,7 +128,7 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
     const ids = castIdList(ep);
     const rc = U().resolveCast({ universeId: (ep.cast && ep.cast.universeId) || 'jackdiane', characterIds: ids, guest: ep.cast && ep.cast.guest, narrator: ep.cast && ep.cast.narrator });
     const neutral = !!(rc.universe && rc.universe.id !== 'jackdiane');
-    const pc = presets.compose(sel, { EXTRA: '' }, { mode: structured ? act.mode : 'legacy', cast: { neutral, ids, universeName: rc.universe && rc.universe.name } });
+    const pc = presets.compose(sel, Object.assign({ EXTRA: '' }, neutral ? { BRANDING: `${rc.universe.name} — ${rc.universe.description} ${rc.universe.storyStyle}` } : {}), { mode: structured ? act.mode : 'legacy', cast: { neutral, ids, universeName: rc.universe && rc.universe.name } });
     let legacyOverride = null;
     try { legacyOverride = prompts.compose('script', {}).providerOverride; } catch (_) { /* none */ }
     const chars = L.characters.filter((c) => ids.includes(c.id)).map((c) => `- ${c.id}: ${c.name} — ${c.promptBlock}${c.forbiddenWords && c.forbiddenWords.length ? ' (never says: ' + c.forbiddenWords.join(', ') + ')' : ''}`);
