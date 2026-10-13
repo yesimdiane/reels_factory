@@ -103,6 +103,33 @@ function windows(dur, n) {
   return out;
 }
 
+
+// Each saved beat represents one 0.5-second interval. Nose/mouth directions live
+// inside the existing expression field so the persisted schema and renderer remain compatible.
+function facialMicroPrompt(beat, stepIndex) {
+  const speaking = !!beat._speak;
+  const listening = !!beat._listen;
+  const phases = ['mouth opens on the stressed syllable', 'mouth narrows for consonants', 'mouth opens naturally on the vowel', 'lips close briefly between words'];
+  const mouth = speaking ? phases[stepIndex % phases.length] : listening ? 'mouth closed, subtle lip reaction' : 'mouth rests naturally, no speech lip-sync';
+  const nose = speaking ? 'subtle nostril movement with breathing' : 'nose remains stable with natural breathing';
+  return [beat.expression, 'nose: ' + nose, 'mouth: ' + mouth].filter(Boolean).join('; ').slice(0, 300);
+}
+function halfSecondBeats(beats, duration) {
+  const result = [];
+  for (const beat of beats) {
+    const start = Math.round(beat.t0 / STEP);
+    const end = Math.min(Math.round(duration / STEP), Math.round(beat.t1 / STEP));
+    for (let tick = start; tick < end; tick++) {
+      const { _speak, _listen, _exit, ...clean } = beat;
+      result.push({ ...clean, t0: tick * STEP, t1: (tick + 1) * STEP,
+        emotion: String(beat.emotion || 'attentive').trim(),
+        expression: facialMicroPrompt(beat, tick - start),
+        body: String(beat.body || 'maintains the established pose').slice(0, 300) });
+    }
+  }
+  return result.sort((a, b) => a.t0 - b.t0 || String(a.characterId).localeCompare(String(b.characterId)));
+}
+
 function draftBeats(ep, scene, characters) {
   const dur = Number(scene.durationSec) || 4;
   const cast = (scene.characters && scene.characters.length ? scene.characters : []).filter(Boolean);
@@ -186,7 +213,7 @@ function draftBeats(ep, scene, characters) {
     const tail = out.slice().sort((a, b) => a.t1 - b.t1).pop();
     out.push({ sceneId: scene.id, t0: r1(last), t1: r1(dur), characterId: tail.characterId, character: tail.character, emotion: tail.emotion, body: 'holds the final pose deliberately, letting the moment land', gaze: tail.gaze, expression: 'a held, knowing look', camera: 'camera holds' });
   }
-  return out.map((b) => { const { _speak, _exit, _listen, ...keep } = b; return keep; }).sort((a, b) => a.t0 - b.t0 || String(a.characterId).localeCompare(String(b.characterId)));
+  return halfSecondBeats(out, dur);
 }
 
 module.exports = { draftBeats, isGeneric, isGenericText, timedSegments, GENERIC, STEP };
