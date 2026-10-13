@@ -32,7 +32,7 @@ test('Script Studio shows no image previews, image prompts or generation control
   for (const key of ["'dialogue'", "'visual'", "'acting'", "'advanced'"]) assert.match(focus, new RegExp("section\\(ep, sid, " + key), 'panel ' + key);
   assert.match(focus, /data-dialogue-summary/);
   assert.match(script, /data-asset-strip/);
-  assert.match(script, /제품 사진/); assert.match(script, /캐릭터 데이터 완료/); assert.match(script, /목소리 API 필요/);
+  assert.match(script, /제품 사진/); assert.match(script, /캐릭터 데이터 완료/); assert.doesNotMatch(script, /목소리 API 필요/, 'generic voice text replaced'); assert.match(script, /providerLabel/); assert.match(script, /data-change-voice/); assert.match(script, /data-connect-provider/);
   assert.match(project, /스토리보드로 이동/);
 });
 
@@ -42,7 +42,7 @@ test('asset readiness is compact data: product photos and per-character referenc
   const a = m.s.episodeView(m.id).derived.assets;
   assert.equal(a.product.ready, true); assert.ok(a.product.count >= 1);
   assert.deepEqual(a.characters.map((c) => c.id).sort(), ['diane', 'jack']);
-  a.characters.forEach((c) => { assert.equal(typeof c.referenceReady, 'boolean'); assert.equal(c.voiceReady, false); assert.equal(c.voiceNote, '목소리 API 필요'); });
+  a.characters.forEach((c) => { assert.equal(typeof c.referenceReady, 'boolean'); assert.equal(c.voiceReady, false); assert.equal(c.voice.state, 'missing', 'no voice assigned yet: the status names the real problem instead of a generic "API required"'); assert.match(c.voiceNote, /목소리 미지정/); });
   assert.ok(!JSON.stringify(a).includes('/media/'), 'no image URLs / galleries in the indicator data');
 });
 

@@ -18,19 +18,27 @@ const { createMockSpeech } = require('./providers/mock-speech');
 const { findVoice } = require('./providers/heygen-voices');
 const { parseWav } = require('../../renderer/lib/wav');
 
-function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProvider = null, runtime = null }) {
+function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProvider = null, runtime = null, voices = null }) {
   // Mode and key are resolved at call time (Settings can switch them without a restart). Live needs BOTH the request and a key.
   const modeNow = () => (runtime ? runtime.voiceMode() : cfg.studioMode);
   const keyNow = () => (runtime ? runtime.heygenKey() : cfg.heygenApiKey);
   const mock = createMockSpeech();
   const provider = () => speechProvider || (modeNow() === 'live' ? createHeyGenTts({ apiKey: keyNow(), ffmpeg: cfg.ffmpeg.ffmpeg, fetchFn }) : mock);
+  // Each character speaks with the provider/voice saved in the Character Library (HeyGen or Google Cloud TTS); never another character's voice.
+  const providerOf = (char) => (char.voice && char.voice.provider === 'google' ? 'google' : 'heygen');
+  const voiceIdOf = (char) => (providerOf(char) === 'google' ? (char.voice.googleVoiceName || '') : (char.voice.heygenVoiceId || ''));
+  const speechFor = (char) => {
+    if (speechProvider) return speechProvider;
+    if (providerOf(char) === 'google') return modeNow() === 'live' && voices ? voices.googleSpeech() : mock;
+    return provider();
+  };
 
   function ttsFor(char) {
     const v = char.voice;
     return createTtsService({
-      provider: provider(),
-      voice: v.heygenVoiceId || 'unset',
-      language: v.language || 'en',
+      provider: speechFor(char),
+      voice: voiceIdOf(char) || 'unset',
+      language: providerOf(char) === 'google' ? (v.googleVoiceLanguage || 'en-US') : (v.language || 'en'),
       speakingRate: Number(v.speed) || 1,
       cacheDir: store.cachePath('voice', char.id),
       ledgerFile: store.path('voice-usage.json'),
@@ -39,7 +47,7 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
     });
   }
 
-  const lineKey = (char, line) => sha256(JSON.stringify([provider().name, char.voice.heygenVoiceId, char.voice.speed, char.voice.language, line.en]));
+  const lineKey = (char, line) => sha256(JSON.stringify([speechFor(char).name, voiceIdOf(char), char.voice.speed, providerOf(char) === 'google' ? char.voice.googleVoiceLanguage : char.voice.language, line.en]));
 
   /** Is the stored audio for `line` current (text, speaker voice and provider unchanged, file present)? */
   function lineAudio(ep, line) {
@@ -60,12 +68,17 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
     const b = [];
     if (!isScriptApproved(ep)) b.push({ code: 'SCRIPT_NOT_APPROVED', message: '대본이 승인되지 않았거나 승인 후 수정되었습니다.', recovery: 'Script Studio에서 대본을 승인하세요.' });
     chars.forEach((c) => {
-      if (modeNow() === 'live') {
-        if (!c.voice.heygenVoiceId) b.push({ code: 'NO_VOICE_ID', message: `${c.name}: HeyGen Voice ID가 없습니다.` + (c.voice.heygenIdentityId ? ' (Identity ID는 Voice ID가 아닙니다.)' : ''), recovery: 'Settings → 캐릭터에서 Voice ID를 입력하고 "음성 확인"을 누르세요.' });
-        else if (!c.voice.verified) b.push({ code: 'VOICE_UNVERIFIED', message: `${c.name}: Voice ID가 HeyGen 목록에서 확인되지 않았습니다.`, recovery: '"음성 확인"을 눌러 확인하세요.' });
+      if (modeNow() !== 'live') return;
+      if (providerOf(c) === 'google') {
+        const st = voices ? voices.status(c) : { ready: false, state: 'not_connected', message: 'Google Cloud TTS를 사용할 수 없습니다.' };
+        if (!st.ready) b.push({ code: st.state === 'missing' ? 'NO_VOICE_ID' : st.state === 'unavailable' ? 'VOICE_UNAVAILABLE' : 'NOT_CONNECTED', message: st.message, recovery: st.state === 'not_connected' || st.state === 'unsynced' ? 'Settings → 음성 연결에서 Google Cloud를 연결·동기화하세요.' : '캐릭터 라이브러리에서 목소리를 지정하거나 바꾸세요. 다른 캐릭터의 목소리로 대체하지 않습니다.' });
+        return;
       }
+      if (!c.voice.heygenVoiceId) b.push({ code: 'NO_VOICE_ID', message: `${c.name}: HeyGen Voice ID가 없습니다.` + (c.voice.heygenIdentityId ? ' (Identity ID는 Voice ID가 아닙니다.)' : ''), recovery: 'Settings → 음성 연결에서 HeyGen을 연결하고 캐릭터 라이브러리에서 목소리를 고르세요.' });
+      else if (!c.voice.verified) b.push({ code: 'VOICE_UNVERIFIED', message: `${c.name}: Voice ID가 HeyGen 목록에서 확인되지 않았습니다.`, recovery: '캐릭터 라이브러리에서 동기화된 목록의 목소리를 고르거나 "음성 확인"을 누르세요.' });
+      else if (voices && voices.status(c).state === 'unavailable') b.push({ code: 'VOICE_UNAVAILABLE', message: voices.status(c).message, recovery: '캐릭터 라이브러리에서 목소리를 바꾸세요.' });
     });
-    if (modeNow() === 'live' && !keyNow()) b.push({ code: 'NO_KEY', message: 'HeyGen API 키가 없습니다.', recovery: 'Settings → AI Integrations에서 HeyGen 키를 저장하세요.' });
+    if (modeNow() === 'live' && chars.some((c) => providerOf(c) === 'heygen') && !keyNow()) b.push({ code: 'NO_KEY', message: 'HeyGen API 키가 없습니다.', recovery: 'Settings → 음성 연결에서 HeyGen을 연결하세요.' });
     return b;
   }
 
@@ -86,7 +99,8 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
     const usd = modeNow() === 'live' ? (rate != null && rate !== '' ? Math.round((billableChars / 1000) * Number(rate) * 1e6) / 1e6 : null) : 0;
     const blockers = blockersFor(ep, chars);
     if (modeNow() === 'live' && billableChars > cfg.maxCharsPerJob) blockers.push({ code: 'TOO_MANY_CHARS', message: `글자 수 ${billableChars}가 작업당 한도 ${cfg.maxCharsPerJob}를 넘습니다.`, recovery: 'RF_TTS_MAX_CHARS_PER_JOB을 조정하거나 대사를 줄이세요.' });
-    return { mode: modeNow(), provider: provider().name, lines, billableChars, usd, usdKnown: usd != null, cachedLines: lines.filter((l) => l.cached).length, blockers, canRun: blockers.length === 0 };
+    const providers = [...new Set(chars.map((c) => speechFor(c).name))];
+    return { mode: modeNow(), provider: providers.length > 1 ? 'mixed' : (providers[0] || provider().name), providers, lines, billableChars, usd, usdKnown: usd != null, cachedLines: lines.filter((l) => l.cached).length, blockers, canRun: blockers.length === 0 };
   }
 
   /** BILLABLE in live mode. confirmChars must equal the estimate the operator saw. */
@@ -114,7 +128,7 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
         continue; // a failed paid line is NOT retried; the operator decides
       }
       await store.episodes.update(epId, (ep) => {
-        ep.voice.lines[line.id] = { key: lineKey(char, line), file: path.relative(store.dir, out.file), durationSec: Math.round(out.duration * 1000) / 1000, speaker: line.speaker, voiceId: char.voice.heygenVoiceId, mock: modeNow() !== 'live', cached: out.cached, at: nowIso(), scriptHash: scriptFingerprint(ep) };
+        ep.voice.lines[line.id] = { key: lineKey(char, line), file: path.relative(store.dir, out.file), durationSec: Math.round(out.duration * 1000) / 1000, speaker: line.speaker, voiceId: voiceIdOf(char), provider: providerOf(char), mock: modeNow() !== 'live', cached: out.cached, at: nowIso(), scriptHash: scriptFingerprint(ep) };
         if (modeNow() === 'live' && !out.cached) ep.spend.push({ at: nowIso(), kind: 'voice', lineId: line.id, chars: [...line.en].length, estimatedUsd: est.usd == null ? null : Math.round((est.usd * [...line.en].length / Math.max(1, est.billableChars)) * 1e6) / 1e6, actualUsd: null, mock: false });
       });
       results.push({ lineId: line.id, status: out.cached ? 'cached' : 'synthesized', durationSec: out.duration });

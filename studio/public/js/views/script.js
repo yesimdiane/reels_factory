@@ -141,7 +141,10 @@ function assetStrip(ep) {
   const item = (label, ok, okText, needText) => h('span', { class: 'asset-chip ' + (ok ? 'ok' : 'need'), 'data-asset': label }, h('b', null, label + ': '), ok ? okText : needText);
   return h('div', { class: 'asset-strip', 'data-asset-strip': '' },
     item('제품 사진', a.product.ready, '준비 완료', '필요'),
-    ...a.characters.map((c) => h('span', { class: 'asset-chip ' + (c.referenceReady && c.voiceReady ? 'ok' : 'need'), 'data-asset': c.name }, h('b', null, c.name + ': '), c.referenceReady ? '캐릭터 데이터 완료' : '캐릭터 이미지 필요', ' / ', c.voiceReady ? '목소리 준비' : '목소리 API 필요')));
+    ...a.characters.map((c) => { const v = c.voice || {}; const vok = c.voiceReady; return h('span', { class: 'asset-chip ' + (c.referenceReady && vok ? 'ok' : 'need'), 'data-asset': c.name }, h('b', null, c.name + ': '), c.referenceReady ? '캐릭터 데이터 완료' : '캐릭터 이미지 필요', ' / ',
+      vok ? `${v.providerLabel || ''} · ${v.name || ''}` : (v.message || c.voiceNote || '목소리 미지정'),
+      !vok && v.action === 'connect' ? h('a', { href: '#/settings', 'data-connect-provider': '', style: 'margin-left:6px', onclick: () => (state.settingsTab = 'voices') }, '제공자 연결') : null,
+      v.state && v.state !== 'ready' ? h('a', { href: '#/characters', 'data-change-voice': '', style: 'margin-left:6px' }, '목소리 변경') : null); }));
 }
 
 let ordering = false;

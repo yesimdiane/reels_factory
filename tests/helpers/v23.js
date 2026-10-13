@@ -71,9 +71,9 @@ function fakeAi(handlers = {}) {
   return { factory, calls };
 }
 
-function make({ env = {}, ai = null, extractFn, downloadFn, vault } = {}) {
+function make({ env = {}, ai = null, extractFn, downloadFn, vault, fetchFn } = {}) {
   const cfg = loadConfig(Object.assign({ RF_STUDIO_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'rf-v23-')), RF_MASTER_KEY: 'test-master-key-for-unit-tests', RF_FONT_NAME: 'Noto Sans CJK KR', RF_ALLOW_FONT_FALLBACK: '1' }, env), { dotenvFile: '/nonexistent' });
-  const studio = createStudio({ cfg, provider: createMockVideoProvider({ ffmpeg: cfg.ffmpeg.ffmpeg }), aiProviderFactory: ai ? ai.factory : null, extractFn, downloadFn, vault });
+  const studio = createStudio({ cfg, provider: createMockVideoProvider({ ffmpeg: cfg.ffmpeg.ffmpeg }), aiProviderFactory: ai ? ai.factory : null, extractFn, downloadFn, vault, fetchFn });
   // The fixed Jack & Diane format (6 beats + 21 s shopping ending) needs about 50 s; fixtures use the 60 s limit unless a test sets its own.
   const gen = studio.storylab.generate;
   studio.storylab.generate = (pid, o = {}) => gen(pid, Object.assign({ maxDurationSec: 60 }, o));

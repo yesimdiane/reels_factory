@@ -4,6 +4,7 @@ import { state, act } from '../state.js';
 import { api } from '../api.js';
 import { pageHead } from './common.js';
 import { charCard } from './settings.js';
+import { voicePicker } from './voice-connections.js';
 import { profileModal, universeModal } from './character-profile.js';
 
 const avatar = (c) => (c.thumb ? h('img', { class: 'cast-thumb', src: c.thumb.url, alt: c.name, loading: 'lazy' }) : h('span', { class: 'cast-thumb cast-init', 'aria-hidden': 'true' }, (c.name || '?')[0]));
@@ -31,11 +32,12 @@ export function characters() {
         return h('article', { class: 'card flat stack', style: 'gap:8px', 'data-library-character': c.id },
           h('div', { class: 'row', style: 'gap:10px;flex-wrap:nowrap' }, avatar(c), h('div', { style: 'min-width:0' }, h('b', null, c.name), h('div', { class: 'small muted' }, c.role || '역할 미입력'))),
           h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, (f.personality || []).slice(0, 4).map((p) => chip(String(p), '')), c.hasApprovedReference ? chip('참조 이미지 승인됨', 'done') : chip('참조 이미지 필요', 'attention'),
-            f.voiceStatus === 'verified' ? chip('목소리 확인됨', 'done') : chip('목소리 ' + ({ unset: '미설정', 'identity-only': 'Identity만 있음', unverified: '미확인' }[f.voiceStatus] || '미설정'), 'attention')),
+            ),
           h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
             h('button', { class: 'btn sm ghost', type: 'button', onclick: () => profileModal({ character: f, universes: U, characters: full, onDone: rerender }) }, '프로필 편집'),
             h('button', { class: 'btn sm ghost danger', type: 'button', onclick: async () => { if (await confirmDialog({ title: `${c.name}을(를) 삭제할까요?`, body: '쓰는 에피소드가 없을 때만 삭제됩니다. 참조 이미지 파일은 서버에 남습니다.', confirm: '삭제', tone: 'danger' })) call(() => api.del('/api/characters/' + c.id), '삭제했습니다'); } }, '삭제')),
-          h('details', { class: 'small' }, h('summary', { style: 'cursor:pointer;min-height:36px;display:flex;align-items:center' }, '참조 이미지 · 목소리'), charCard(f)));
+          voicePicker(f),
+          h('details', { class: 'small' }, h('summary', { style: 'cursor:pointer;min-height:36px;display:flex;align-items:center' }, '참조 이미지'), charCard(f)));
       }).concat([h('button', { type: 'button', class: 'cast-add', onclick: () => profileModal({ universeId: u.id, universes: U, characters: full, onDone: rerender }) }, '＋ 캐릭터 추가')]))));
   });
   return wrap;
