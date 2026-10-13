@@ -13,7 +13,7 @@ async function setup() {
   const ai = fakeAi({ '*': (req) => ({ text: '', json: isScriptPrompt(req) ? scriptResponse(req) : conceptsForPrompt(req), usage: { inputTokens: 5, outputTokens: 5 } }) });
   const m = make({ ai });
   const pid = await readyProduct(m.s); routePaid(m.s);
-  const lab = await m.s.storylab.generate(pid, { category: 'all', maxDurationSec: 40, confirm: CONFIRM });
+  const lab = await m.s.storylab.generate(pid, { category: 'all', maxDurationSec: 60, confirm: CONFIRM });
   for (const c of lab.concepts) await m.s.storylab.approve(pid, c.id);
   const cids = lab.concepts.map((c) => c.id);
   const id = await m.s.createEpisodeFromConcept({ productId: pid, conceptId: cids[0] });

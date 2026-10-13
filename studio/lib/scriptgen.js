@@ -56,7 +56,8 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
       scriptSource: null,
       formula: 1,
     };
-    SF.seedFormula(seed, endings); // fixed formula: empty six-beat Part A + the default three-shot ending (Part B) applied automatically
+    // The fixed Jack & Diane drama format (six-beat Part A + reusable shopping ending) is for DRAMA only; Viral / Informational stories get a free structure.
+    if ((concept.category || 'drama') === 'drama') SF.seedFormula(seed, endings); else seed.timingStrict = true;
     return seed;
     };
     // Story approval → Episode: {PRODUCT_CODE}-{NN}-{D|V|I}. The number is allocated atomically, only when the episode file is really created;

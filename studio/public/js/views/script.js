@@ -60,6 +60,7 @@ export function script() {
 
   const wrap = h('div', { class: 'stack script-studio', style: 'gap:14px' });
   wrap.append(pageHead('Script Studio', '대본 스튜디오', 'PC에서는 S1부터 마지막 씬까지 모든 씬이 한 화면에 쌓여 보이고, 휴대폰에서는 한 번에 씬 하나씩 편집합니다. 씬 저장은 임시 저장이고, 씬 승인을 눌러야 승인됩니다.', episodePicker()));
+  wrap.append(assetStrip(ep));
   wrap.append(projectPanel(ep, d, errorSummary(ep, index, { onJump })));
   if (ep.derived.scriptChangedSinceApproval) wrap.append(h('div', { class: 'banner warn' }, h('div', null, h('b', null, '승인 후 대본이 수정되었습니다'), '유료 생성·음성·렌더가 잠겼습니다. 바뀐 씬을 다시 확인하고 승인하세요.')));
   wrap.append(sceneNavigator(ep, d, ctx, { list: wide }));
@@ -125,4 +126,15 @@ function conceptPanel(ep, d) {
     src ? h('div', { class: 'small muted' }, `생성: ${src.mock ? '샘플 응답' : src.provider + ' / ' + src.model} · ${src.presetId ? '프리셋 ' + src.presetName + ' v' + src.presetVersion + ' · 강도 ' + src.comedyLevel : '대본 프롬프트 v' + src.promptVersion} · 컨셉 r${src.conceptRevision} · ${new Date(src.generatedAt).toLocaleString('ko-KR')}`) : h('div', { class: 'small muted' }, '아직 AI 대본이 없습니다. 직접 작성하거나 아래 버튼으로 초안을 만드세요.'),
     route.provider === 'mock' ? h('div', { class: 'small', style: 'color:var(--clay)' }, '대본 AI가 연결되지 않아 샘플 대본이 만들어집니다 (Settings → AI 연동).') : null,
     h('div', { class: 'row' }, h('button', { class: 'btn', disabled: !c.approved, onclick: () => generate(ep.formula.structured ? ep.scenes.some((x) => x.part === 'A') : ep.lines.length > 0) }, ep.formula.structured ? (ep.scenes.some((x) => x.part === 'A') ? 'AI로 코미디 스토리 다시 만들기 (PART A)' : 'AI로 코미디 스토리 만들기 (PART A)') : (ep.lines.length ? 'AI로 대본 다시 만들기' : 'AI로 대본 만들기')), d.dirty ? h('span', { class: 'small', style: 'color:var(--clay)' }, '저장하지 않은 변경은 다시 만들면 사라집니다') : null));
+}
+
+
+/** Compact asset availability (no galleries, no previews): product reference photos and per-character reference / voice readiness. */
+function assetStrip(ep) {
+  const a = ep.derived.assets;
+  if (!a) return h('div', null);
+  const item = (label, ok, okText, needText) => h('span', { class: 'asset-chip ' + (ok ? 'ok' : 'need'), 'data-asset': label }, h('b', null, label + ': '), ok ? okText : needText);
+  return h('div', { class: 'asset-strip', 'data-asset-strip': '' },
+    item('제품 사진', a.product.ready, '준비 완료', '필요'),
+    ...a.characters.map((c) => h('span', { class: 'asset-chip ' + (c.referenceReady && c.voiceReady ? 'ok' : 'need'), 'data-asset': c.name }, h('b', null, c.name + ': '), c.referenceReady ? '캐릭터 데이터 완료' : '캐릭터 이미지 필요', ' / ', c.voiceReady ? '목소리 준비' : '목소리 API 필요')));
 }

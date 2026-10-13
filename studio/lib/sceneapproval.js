@@ -20,7 +20,7 @@ function sceneContent(ep, sid) {
   const s = sceneOf(ep, sid) || {};
   const ins = insertsCore(s); // insert shots (close-ups) are part of the scene version; omitted when empty so older approvals keep their hash
   return {
-    scene: { id: s.id, part: s.part || '', beatKey: s.beatKey || '', durationSec: s.durationSec, characters: s.characters || [], showsProduct: !!s.showsProduct, visual: s.visual || '', action: s.action || '', narration: s.narration || '', placement: s.placement || '', ...(ins.length ? { inserts: ins } : {}) },
+    scene: { id: s.id, part: s.part || '', beatKey: s.beatKey || '', durationSec: s.durationSec, characters: s.characters || [], showsProduct: !!s.showsProduct, visual: s.visual || '', action: s.action || '', narration: s.narration || '', placement: s.placement || '', ...(s.emotion ? { emotion: s.emotion } : {}), ...(ins.length ? { inserts: ins } : {}) },
     lines: linesOf(ep, sid).map((l) => ({ id: l.id, speaker: l.speaker, en: l.en, ko: l.ko })),
   };
 }
@@ -38,7 +38,7 @@ const record = (ep, sid) => ((ep.sceneApprovals = ep.sceneApprovals || {})[sid] 
 const isSceneApproved = (ep, sid) => !!(ep.sceneApprovals && ep.sceneApprovals[sid] && ep.sceneApprovals[sid].current && ep.sceneApprovals[sid].current.hash === sceneFingerprint(ep, sid) && sceneOf(ep, sid));
 
 // ---- validation of ONE scene ----
-const TEXT_FIELDS = [['visual', '시각 연출'], ['action', '캐릭터 행동'], ['narration', '내레이션'], ['placement', '제품 배치']];
+const TEXT_FIELDS = [['visual', '시각 연출'], ['action', '캐릭터 행동'], ['emotion', '캐릭터 감정'], ['narration', '내레이션'], ['placement', '제품 배치']];
 
 /**
  * Errors/warnings that belong to one scene. Each carries { sceneId, field, lineId? } so the UI can jump to the exact input.

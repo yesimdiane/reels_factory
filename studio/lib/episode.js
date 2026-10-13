@@ -155,7 +155,7 @@ function validateScript(ep, lib) {
   dialogueTiming(ep).forEach((t) => {
     if (t.status === 'ok' || !t.lineCount) return;
     const msg = `${t.sceneId}: 대사가 약 ${t.needSec}초(추정) 필요한데 장면은 ${t.durationSec}초입니다 (${t.overSec}초 초과). 대사를 줄이거나 불필요한 줄을 빼 주세요 — 장면을 늘리는 것은 마지막 수단입니다.`;
-    if (t.status === 'overflow' && formulaEp) E('SCENE_OVERFLOW', msg, { sceneId: t.sceneId, overSec: t.overSec, field: 'timing', lineId: t.lineIds[t.lineIds.length - 1] });
+    if (t.status === 'overflow' && (formulaEp || ep.timingStrict)) E('SCENE_OVERFLOW', msg, { sceneId: t.sceneId, overSec: t.overSec, field: 'timing', lineId: t.lineIds[t.lineIds.length - 1] });
     else W('SCENE_TIGHT', msg, { sceneId: t.sceneId, overSec: t.overSec, field: 'timing', lineId: t.lineIds[t.lineIds.length - 1] });
   });
   const cta = ep.cta || {};
@@ -169,6 +169,9 @@ function validateScript(ep, lib) {
   const total = totalPlannedSec(ep);
   if (total > 90) E('TOO_LONG', `총 길이 ${total.toFixed(1)}초가 인스타그램 릴스 한도(90초)를 넘습니다.`);
   else if (total > 60) W('LONG', `총 길이 ${total.toFixed(1)}초 — 릴스는 보통 60초 이하가 좋습니다.`);
+  // The episode's maximum video length (set in Story Lab) is a hard limit; scenes are never stretched or trimmed silently.
+  const maxSec = Number(ep.maxDurationSec);
+  if (maxSec >= 10 && total > maxSec + 0.001) E('TOTAL_OVER_MAX', `총 길이 ${total.toFixed(1)}초가 이 에피소드의 최대 영상 길이 ${maxSec}초를 넘습니다. 장면 길이를 줄이거나 장면을 줄여 주세요.`, { field: 'durationSec' });
   // Episodes that follow the fixed formula (Part A: six beats, Part B: exactly three product-ending shots) are checked structurally too.
   const formula = require('./formula');
   if (formula.isStructured(ep)) formula.validateFormula(ep).forEach((e) => errors.push(e));

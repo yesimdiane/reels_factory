@@ -118,6 +118,20 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   }
 
   // ---------- derived view of one episode ----------
+  /** Compact asset availability for Script Studio (no galleries): product reference photos, per-character reference + voice readiness. */
+  function assetReadiness(ep) {
+    let productReady = false; let productCount = 0;
+    try { const b = products.bindingFor(ep.productId); productCount = (b.reference.imageIds || []).length; productReady = !!(b.reference.approved || b.reference.waived) && (productCount > 0 || !!b.reference.waived); } catch (_) { productReady = !!(ep.productRefs && (ep.productRefs.imageIds || []).length); productCount = ((ep.productRefs || {}).imageIds || []).length; }
+    const keyOk = !!runtime.heygenKey();
+    const chars = lib().characters.filter((c) => (ep.characters || []).includes(c.id)).map((c) => {
+      const referenceReady = c.references.some((r) => r.approved);
+      const voiceReady = !!c.voice.heygenVoiceId && keyOk;
+      return { id: c.id, name: c.name, referenceReady, voiceReady, voiceNote: voiceReady ? '목소리 준비' : '목소리 API 필요' };
+    });
+    return { product: { ready: productReady, count: productCount }, characters: chars };
+  }
+
+
   function jobsRunning(ep) {
     return (ep.generation.jobs || []).some((j) => ACTIVE_JOB.has(j.status));
   }
@@ -223,6 +237,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         versions: store.episodes.versions(id).filter((v) => !deletedVersions(ep)[v.version]),
         deletedVersionCount: Object.keys(deletedVersions(ep)).length,
         header: null,
+        assets: assetReadiness(ep),
       },
       productRefImages: (() => {
         const refs = ep.productRefs && ep.productRefs.imageIds;
@@ -360,6 +375,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         showsProduct: s.showsProduct != null ? !!s.showsProduct : !!prev.showsProduct,
         visual: String(s.visual != null ? s.visual : prev.visual || '').slice(0, 2000),
         action: String(s.action != null ? s.action : prev.action || '').slice(0, 1500),
+        emotion: String(s.emotion != null ? s.emotion : prev.emotion || '').slice(0, 200),
         narration: String(s.narration != null ? s.narration : prev.narration || '').slice(0, 1500),
         placement: String(s.placement != null ? s.placement : prev.placement || '').slice(0, 800),
         startImage: s.startImage !== undefined ? s.startImage : prev.startImage,

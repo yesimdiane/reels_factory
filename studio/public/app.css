@@ -501,3 +501,10 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .ep-meta { font-size: 13px; color: var(--muted); }
 .ep-status { display: flex; gap: 6px; flex-wrap: wrap; }
 .ep-actions .btn { min-height: 44px; }
+
+/* Script Studio: compact asset availability */
+.asset-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.asset-chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--paper); color: var(--espresso-2); }
+.asset-chip.ok { background: var(--sage-wash); border-color: #c4d3b8; color: var(--sage-deep); }
+.asset-chip.need { background: var(--clay-wash); border-color: #e6c6ab; color: #8a4e2c; }
+.scene-dlg { margin-top: 2px; }
