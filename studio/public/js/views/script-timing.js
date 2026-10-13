@@ -40,7 +40,7 @@ export function timingCard(ep, { d, dirty, redrawAll }) {
   const bad = rows.filter((t) => t.status !== 'ok');
   const sceneOf = (id) => ep.scenes.find((s) => s.id === id) || {};
   const shortenable = bad.filter((t) => sceneOf(t.sceneId).part !== 'B');
-  const card = h('div', { class: 'card stack', style: 'gap:10px;min-width:0;max-width:100%' });
+  const card = h('div', { class: 'card stack' + (bad.length ? ' open' : ''), style: 'gap:10px;min-width:0;max-width:100%' });
   card.append(h('div', { class: 'card-head' }, h('div', null, h('div', { class: 'eyebrow' }, '대사 시간'), h('h3', { style: 'margin:0' }, '대사 시간 점검')),
     bad.length ? chip(`${bad.length}개 장면 넘침 · 합계 ${fmt(T.totalOverSec)}`, T.overflowCount ? 'err' : 'attention') : chip('모든 장면에 들어감 (추정)', 'done')));
   card.append(h('div', { class: 'small muted' }, '"추정"은 단어 수로 계산한 값입니다(초당 약 2.7단어 + 줄 사이 여유). "실측"은 음성을 만든 뒤 실제 오디오 길이로 계산되며 Voice Studio에서 확인합니다. 넘치는 장면은 대사를 줄이는 것을 권장합니다 — 장면을 늘리는 것은 마지막 수단입니다.'));

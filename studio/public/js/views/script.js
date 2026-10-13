@@ -65,9 +65,16 @@ export function script() {
   wrap.append(pageHead('Script Studio', '대본 스튜디오', '영어 대사와 한국어 자막은 따로 저장됩니다. 영어만 음성으로 만들고, 한국어는 자막으로만 쓰입니다.', episodePicker(), saveBtn, approveBtn));
   wrap.append(pipelineBar(ep));
   wrap.append(projectPanel(ep, d, errorSummary(ep, index), { approveScript: approve }));
-  wrap.append(conceptPanel(ep, d));
-  if (ep.derived.concept.linked) wrap.append(presetPanel(ep));
-  wrap.append(timingCard(ep, { d, dirty, redrawAll: () => import('../state.js').then(({ hooks }) => hooks.rerender()) }));
+  // Three small boxes in one row (story concept · prompt · dialogue timing); click a box header to open its details.
+  const presetBox = ep.derived.concept.linked ? presetPanel(ep) : null;
+  if (presetBox) presetBox.style.display = 'contents';
+  const panelRow = h('div', { class: 'panel-row' }, conceptPanel(ep, d), presetBox, timingCard(ep, { d, dirty, redrawAll: () => import('../state.js').then(({ hooks }) => hooks.rerender()) }));
+  panelRow.addEventListener('click', (e) => {
+    const head = e.target.closest('.card-head');
+    if (!head || e.target.closest('a,button,select,input,textarea')) return;
+    head.closest('.card').classList.toggle('open');
+  });
+  wrap.append(panelRow);
   wrap.append(structureMap(ep, { dirty: () => d.dirty }));
   wrap.append(sceneNav(ep, 'script-scene-', { badges: true }));
   if (ep.derived.scriptChangedSinceApproval) wrap.append(h('div', { class: 'banner warn' }, h('div', null, h('b', null, '승인 후 대본이 수정되었습니다'), '유료 생성·음성·렌더가 잠겼습니다. 다시 확인하고 승인하세요.')));
