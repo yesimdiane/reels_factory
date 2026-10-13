@@ -107,7 +107,9 @@ function normalizeInserts(list, { durationSec, src = null, sceneId = '' } = {}) 
 /** Hash of every insert of every scene (render freshness). '' when there are none, so old renders stay valid. */
 function cutsFingerprint(ep) {
   const all = (ep.scenes || []).filter((s) => (s.inserts || []).length).map((s) => ({ id: s.id, inserts: s.inserts.map(core) }));
-  return all.length ? sha256(canonical(all)) : '';
+  // approved B-roll overlays change the picture too (only included when there are some, so older renders stay valid)
+  const br = (ep.broll || []).filter((b) => b.status === 'approved' && b.imageRef).map((b) => ({ id: b.id, rev: b.rev, sceneId: b.sceneId, at: b.insertAtSec, d: b.durationSec, ref: b.imageRef }));
+  return all.length || br.length ? sha256(canonical(br.length ? { cuts: all, broll: br } : all)) : '';
 }
 /** The parts of an insert that change the picture (used in fingerprints). */
 function core(i) { return { id: i.id, preset: i.preset, transition: i.transition, startSec: i.startSec, durationSec: i.durationSec, crop: i.crop, source: i.source }; }

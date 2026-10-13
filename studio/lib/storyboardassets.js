@@ -16,7 +16,7 @@ const r1 = (n) => Math.round(n * 1000) / 1000;
 const onGrid = (n) => Math.abs(n / STEP - Math.round(n / STEP)) < 1e-6;
 const fmt = (n) => n.toFixed(1);
 
-function createStoryboardAssets({ store, dialogueTiming, lib }) {
+function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
   const sceneOf = (ep, sid) => {
     const s = (ep.scenes || []).find((x) => x.id === sid);
     if (!s) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다: ' + sid, { status: 404 });
@@ -220,9 +220,20 @@ function createStoryboardAssets({ store, dialogueTiming, lib }) {
     if (r.type === 'scene_start') { const sc = (ep.scenes || []).find((x) => x.id === r.sceneId); return sc && sc.startImage && sc.startImage.type === 'upload' ? `/media/startframe/${ep.id}/${sc.id}` : ''; }
     return '';
   }
+  /** Absolute path of a B-roll still image, or '' when it cannot be used as an overlay (e.g. a character reference sheet). */
+  function brollFile(ep, b) {
+    const r = b.imageRef;
+    if (!r) return '';
+    try {
+      if (r.type === 'upload') return store.episodes.file(ep.id, path.join('broll', r.file));
+      if (r.type === 'product') return products ? products.mediaFile(ep.productId, r.imageId) : '';
+      if (r.type === 'scene_start') { const sc = (ep.scenes || []).find((x) => x.id === r.sceneId); return sc && sc.startImage && sc.startImage.type === 'upload' ? store.episodes.file(ep.id, path.join('startframes', sc.startImage.file)) : ''; }
+    } catch (_) { return ''; }
+    return '';
+  }
   const brollView = (ep) => brollOf(ep).filter((b) => b.status !== 'removed').map((b) => Object.assign({}, b, { asset: assetStatus(b), kindLabel: KIND_LABEL[b.kind], imageUrl: imageUrl(ep, b) }));
 
-  return { STEP, KINDS, cleanBeats, draftBeats, timelineText, composePrompt, motionOf, saveMotion, draftMotion, saveBroll, setBrollStatus, removeBroll, uploadBrollImage, suggestBroll, approvedBroll, brollView };
+  return { STEP, KINDS, cleanBeats, draftBeats, timelineText, composePrompt, motionOf, saveMotion, draftMotion, saveBroll, setBrollStatus, removeBroll, uploadBrollImage, suggestBroll, approvedBroll, brollView, brollFile };
 }
 
 module.exports = { createStoryboardAssets, STEP, KINDS };
