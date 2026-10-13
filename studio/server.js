@@ -138,11 +138,14 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('GET', '/api/products/:id', async ({ p }) => S.products.get(p.id));
   route('PUT', '/api/products/:id', async ({ p, body }) => S.products.edit(p.id, body));
   route('POST', '/api/products/:id/extract', async ({ p }) => S.products.extract(p.id));
-  route('POST', '/api/products/:id/images', async ({ p, raw, headers, query }) => S.products.upload(p.id, raw, decodeURIComponent(headers['x-filename'] || 'image.png'), { label: query.label }), { upload: true });
+  route('POST', '/api/products/:id/images', async ({ p, raw, headers, query }) => S.products.upload(p.id, raw, decodeURIComponent(headers['x-filename'] || 'image.png'), { label: query.label, source: query.source }), { upload: true });
   route('POST', '/api/products/:id/images/generate', async ({ p, body }) => S.products.generateImage(p.id, { basedOn: body.basedOn || [], extraImageIds: body.extraImageIds || [], style: body.style || 'anime', prompt: body.prompt, confirm: body.confirm }));
   route('POST', '/api/products/:id/images/:iid/choose', async ({ p }) => S.products.chooseVersion(p.id, p.iid));
   route('POST', '/api/products/:id/images/estimate', async ({ p, body }) => S.router.estimate('imageGeneration', { inputChars: 1200, outputTokens: 1500, images: Math.max(1, (body.basedOn || body.extraImageIds) ? S.products.imageCount(p.id, { basedOn: body.basedOn || [], extraImageIds: body.extraImageIds || [] }) : 2) }));
-  route('POST', '/api/products/:id/images/:iid/replace', async ({ p, raw, headers }) => S.products.replace(p.id, p.iid, raw, decodeURIComponent(headers['x-filename'] || 'image.png')), { upload: true });
+  route('POST', '/api/products/:id/images/:iid/replace', async ({ p, raw, headers, query }) => S.products.replace(p.id, p.iid, raw, decodeURIComponent(headers['x-filename'] || 'image.png'), { confirm: query.confirm === '1', source: query.source }), { upload: true });
+  route('PUT', '/api/products/:id/images/order', async ({ p, body }) => S.products.reorderImages(p.id, body.ids));
+  route('POST', '/api/products/:id/images/:iid/primary', async ({ p }) => S.products.setPrimary(p.id, p.iid));
+  route('POST', '/api/products/:id/images/:iid/remove', async ({ p, body }) => S.products.removeImage(p.id, p.iid, { confirm: body.confirm === true }));
   route('POST', '/api/products/:id/images/:iid/status', async ({ p, body }) => S.products.setStatus(p.id, p.iid, body.status));
   route('POST', '/api/products/:id/references/approve', async ({ p, body }) => S.products.approveReferenceSet(p.id, { imageIds: body.imageIds }));
   route('POST', '/api/products/:id/references/waive', async ({ p, body }) => S.products.waiveReferences(p.id, body.reason));

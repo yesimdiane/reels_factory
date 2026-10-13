@@ -551,3 +551,19 @@ a.brand { text-decoration: none; color: inherit; }
 .fold > summary { cursor: pointer; min-height: 48px; display: flex; align-items: center; gap: 10px; }
 .fold[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 12px; }
 @media (max-width: 640px) { .prod-summary { grid-template-columns: 1fr; } .prod-main { max-width: 220px; } }
+
+/* Product image intake */
+.intake-drop { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.intake-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.intake-thumb { margin: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--paper); }
+.intake-thumb.primary { border-color: var(--sage-deep); box-shadow: 0 0 0 2px var(--sage-wash); }
+.intake-thumb img { display: block; width: 100%; aspect-ratio: 1; object-fit: contain; background: #efe9dc; }
+.intake-thumb figcaption { padding: 8px; display: grid; gap: 4px; }
+.btn.icon.sm { min-width: 36px; min-height: 36px; padding: 0 8px; }
+.crop-stage { position: relative; display: inline-block; max-width: 100%; align-self: center; touch-action: none; user-select: none; -webkit-user-select: none; }
+.crop-stage img { display: block; max-width: 100%; max-height: 52vh; }
+.crop-box { position: absolute; border: 2px solid #fff; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .5); touch-action: none; cursor: move; }
+.crop-h { position: absolute; width: 22px; height: 22px; background: var(--sage-deep, #6f7d5c); border: 2px solid #fff; border-radius: 50%; margin: -11px 0 0 -11px; touch-action: none; }
+.crop-h.nw { left: 0; top: 0; cursor: nwse-resize; } .crop-h.n { left: 50%; top: 0; cursor: ns-resize; } .crop-h.ne { left: 100%; top: 0; cursor: nesw-resize; }
+.crop-h.e { left: 100%; top: 50%; cursor: ew-resize; } .crop-h.se { left: 100%; top: 100%; cursor: nwse-resize; } .crop-h.s { left: 50%; top: 100%; cursor: ns-resize; }
+.crop-h.sw { left: 0; top: 100%; cursor: nesw-resize; } .crop-h.w { left: 0; top: 50%; cursor: ew-resize; }
