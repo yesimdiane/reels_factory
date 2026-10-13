@@ -15,6 +15,7 @@ import { review } from './views/review.js';
 import { publishing } from './views/publishing.js';
 import { settings } from './views/settings.js';
 import { guardLeave } from './views/leave-guard.js';
+import { startBilingual } from './bilingual.js';
 
 // [key, ko, en, view, inRail]   Dashboard → Products → Story Lab → Script → Storyboard → Video Studio → Review → Publishing → Settings
 export const NAV = [
@@ -156,6 +157,7 @@ function placeActionBar() {
 if (window.visualViewport) { window.visualViewport.addEventListener('resize', placeActionBar); window.visualViewport.addEventListener('scroll', placeActionBar); }
 window.addEventListener('resize', placeActionBar);
 placeActionBar();
+startBilingual(placeActionBar);
 // Leaving the editor with unsaved edits: keep the current page and ask (save / discard / stay). beforeunload covers closing the tab.
 let lastHash = location.hash;
 let reverting = false;
