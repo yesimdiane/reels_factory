@@ -13,6 +13,7 @@ import { voice } from './views/voice.js';
 import { render } from './views/render.js';
 import { review } from './views/review.js';
 import { publishing } from './views/publishing.js';
+import { autodm } from './views/autodm.js';
 import { settings } from './views/settings.js';
 import { guardLeave } from './views/leave-guard.js';
 import { startBilingual } from './bilingual.js';
@@ -31,13 +32,14 @@ export const NAV = [
   ['render', '렌더', 'Render', render, false],
   ['review', '최종 검토', 'Review', review, true],
   ['publishing', '게시', 'Publishing', publishing, true],
+  ['autodm', '자동 DM', 'Auto-DM', autodm, true],
   ['settings', '설정', 'Settings', settings, true],
 ];
-const ICON = { animation: 'video' };
+const ICON = { animation: 'video', autodm: 'publishing' };
 const VIDEO_GROUP = ['animation', 'voice', 'render'];
 const TAB_VIEWS = ['overview', 'products', 'storylab', 'script', 'animation', 'settings'];
 const PRODUCT_VIEWS = ['products', 'storylab'];
-const EP_HEADER_VIEWS = ['script', 'storyboard', 'animation', 'voice', 'render', 'review', 'publishing'];
+const EP_HEADER_VIEWS = ['script', 'storyboard', 'animation', 'voice', 'render', 'review', 'publishing', 'autodm'];
 const NO_ID_VIEWS = ['overview', 'episodes', 'settings'];
 
 let poll = null;

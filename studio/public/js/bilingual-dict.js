@@ -46,6 +46,7 @@ export const EN = {
   '연결 테스트': 'Test connection', '키 저장': 'Save key', '키 삭제': 'Delete key', 'LIVE 켜기': 'Turn LIVE on', 'MOCK으로 되돌리기': 'Back to MOCK', '실제(LIVE) 모드 켜기…': 'Turn LIVE mode on…',
   '지출 한도': 'Spend limit', '채널 설정': 'Channel settings', '캐릭터 라이브러리': 'Character library', '제목 저장': 'Save title', '프롬프트 복사': 'Copy prompt',
   // misc
+  '초안 저장': 'Save draft', '연결 테스트': 'Test connection', '토큰 저장': 'Save token', '연결 해제': 'Disconnect', 'ManyChat 열기': 'Open ManyChat', 'ManyChat 대시보드 열기': 'Open ManyChat', '설정 복사 (JSON)': 'Copy config (JSON)', '내보내기': 'Export', 'ManyChat 설정 단계로 넘기기': 'Move to ManyChat setup', '설정 안내 보기 · 설정 복사': 'Guided setup', 'ManyChat 설정 완료 기록': 'Mark configured in ManyChat', '검증 기록 남기기 (테스트 완료)': 'Record verification', '설정 단계로 되돌리기': 'Reopen setup', '실패로 기록': 'Mark failed', '캠페인 기록 보관': 'Archive campaign', '활성으로 기록': 'Record as active', '실패 기록': 'Record failure', '변경하고 다시 검증': 'Change and re-verify', '설정 완료로 기록': 'Record as configured', '확인했고 돌리기': 'Confirm and reopen', '해제': 'Disconnect', '보관': 'Archive',
   '보고서 가져오기 (CSV/XLSX)': 'Import report (CSV/XLSX)', '필터 해제': 'Clear filter', '가져오기': 'Import', '스토리랩에서 시작하기': 'Start in Story Lab',
   '스토리보드로 이동': 'Go to Storyboard', '스토리보드 열기': 'Open Storyboard',
   '제목 수정': 'Edit title', '에피소드 보류': 'Hold episode', '이어서 작업': 'Resume work',
@@ -53,7 +54,7 @@ export const EN = {
   '한국어 번역': 'Korean translation', '스토리 승인 →': 'Approve story →', '수정': 'Edit', '전체 현황 보기': 'Show full status',
   '에피소드 복제': 'Duplicate episode', '에피소드 보관': 'Archive episode', '보관 해제': 'Unarchive', '대본 버전 관리': 'Manage script versions', '에피소드 삭제': 'Delete episode',
   '이 버전 삭제': 'Delete this version', '삭제 취소 (복원)': 'Undo delete (restore)', '버전 삭제': 'Delete version', '휴지통으로 이동': 'Move to trash', '삭제한 버전 포함 모두 보기': 'Show all, including deleted', '복제': 'Duplicate',
-  '홈': 'Home', '제품': 'Products', '애니메이션': 'Animation', '캐릭터': 'Characters', '엔딩 템플릿': 'Ending templates', '프롬프트 매니저': 'Prompt manager', 'AI 프롬프트 관리': 'Manage AI prompts', 'AI 연동': 'AI connections',
+  '홈': 'Home', '자동 DM': 'Auto-DM', 'API 연결': 'API connections', '자동 DM 스튜디오': 'Auto-DM Studio', '제품': 'Products', '애니메이션': 'Animation', '캐릭터': 'Characters', '엔딩 템플릿': 'Ending templates', '프롬프트 매니저': 'Prompt manager', 'AI 프롬프트 관리': 'Manage AI prompts', 'AI 연동': 'AI connections',
   '일반 · 비용': 'General · Cost', '사용량 · 한도': 'Usage · Limits', '음성 생성': 'Generate voice', '효과음 추가': 'Add sound effect', '음성 확인 (HeyGen 목록 조회)': 'Check voices (HeyGen list)',
   '목록으로': 'Back to list', '휴지통': 'Trash', '휴지통 보기': 'View trash', '휴지통 닫기': 'Close trash', '복제': 'Duplicate', '새 버전': 'New version',
 };

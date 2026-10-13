@@ -8,8 +8,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { StudioError, nowIso, readJson, writeJsonAtomic } = require('./util');
 
-const PROVIDERS = ['gemini', 'openai', 'anthropic', 'muapi', 'heygen'];
-const ENV_NAMES = { gemini: 'GEMINI_API_KEY', openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', muapi: 'MUAPI_API_KEY', heygen: 'HEYGEN_API_KEY' };
+const PROVIDERS = ['gemini', 'openai', 'anthropic', 'muapi', 'heygen', 'manychat'];
+const ENV_NAMES = { gemini: 'GEMINI_API_KEY', openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', muapi: 'MUAPI_API_KEY', heygen: 'HEYGEN_API_KEY', manychat: 'MANYCHAT_API_TOKEN' };
 
 function deriveKey(secret, salt) {
   return crypto.scryptSync(String(secret), Buffer.from(salt, 'base64'), 32);
