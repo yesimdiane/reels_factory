@@ -224,4 +224,30 @@ async function downloadImage(url, { fetcher = createFetcher() } = {}) {
   return Object.assign({ buffer: res.body }, kind);
 }
 
-module.exports = { extractProduct, downloadImage, createFetcher, parseProductHtml, parseRobots, robotsAllows, detectBlock, isPrivateIp, parseUrl, sniffImage, UA };
+/** Pixel size read from the file header (no decoding). null when the header cannot be parsed. */
+function imageSize(buf) {
+  try {
+    if (buf.length > 24 && buf[0] === 0x89 && buf.toString('latin1', 1, 4) === 'PNG') return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8) {
+      let p = 2;
+      while (p + 9 < buf.length) {
+        if (buf[p] !== 0xff) { p++; continue; }
+        const m = buf[p + 1];
+        if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { p += 2; continue; }
+        const len = buf.readUInt16BE(p + 2);
+        if ((m >= 0xc0 && m <= 0xcf) && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { height: buf.readUInt16BE(p + 5), width: buf.readUInt16BE(p + 7) };
+        p += 2 + len;
+      }
+      return null;
+    }
+    if (buf.length > 30 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') {
+      const t = buf.toString('latin1', 12, 16);
+      if (t === 'VP8 ') return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+      if (t === 'VP8L') { const b = buf.readUInt32LE(21); return { width: (b & 0x3fff) + 1, height: ((b >> 14) & 0x3fff) + 1 }; }
+      if (t === 'VP8X') return { width: 1 + buf.readUIntLE(24, 3), height: 1 + buf.readUIntLE(27, 3) };
+    }
+  } catch (_) { /* fall through */ }
+  return null;
+}
+
+module.exports = { imageSize, extractProduct, downloadImage, createFetcher, parseProductHtml, parseRobots, robotsAllows, detectBlock, isPrivateIp, parseUrl, sniffImage, UA };

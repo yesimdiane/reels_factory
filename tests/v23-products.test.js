@@ -67,15 +67,15 @@ test('product flow: URL blocked → manual entry works; extraction adds UNVERIFI
   assert.deepEqual(e.verifiedFacts, ['색상: 그레이']);
 });
 
-test('reference images: max 5 uploads, approval, replace, set approval bound to hashes, stale detection', async () => {
+test('reference images: max 10 uploads, approval, replace, set approval bound to hashes, stale detection', async () => {
   const { s } = make();
   const p = await s.products.create({ name: 'x', features: ['f'] });
-  for (let i = 0; i < 5; i++) await s.products.upload(p.id, png(10 + i), `i${i}.png`);
+  for (let i = 0; i < 10; i++) await s.products.upload(p.id, png(10 + i), `i${i}.png`);
   await assert.rejects(s.products.upload(p.id, png(99), 'six.png'), (e) => e.code === 'UPLOAD_LIMIT');
   await assert.rejects(s.products.upload(p.id, png(10), 'dup.png'), (e) => e.code === 'DUPLICATE' || e.code === 'UPLOAD_LIMIT');
   await assert.rejects(s.products.upload(p.id, Buffer.from('hello world not image'), 'x.png'), (e) => e.code === 'UPLOAD_LIMIT' || e.code === 'BAD_TYPE');
   let v = s.products.get(p.id);
-  assert.equal(v.counts.uploaded, 5);
+  assert.equal(v.counts.uploaded, 10);
   await assert.rejects(s.products.approveReferenceSet(p.id, {}), (e) => e.code === 'NO_IMAGES');
   await s.products.setStatus(p.id, v.images[0].id, 'approved');
   await s.products.setStatus(p.id, v.images[1].id, 'approved');
@@ -84,10 +84,11 @@ test('reference images: max 5 uploads, approval, replace, set approval bound to 
   assert.equal(v.readiness.ok, true);
   assert.equal(v.reference.imageIds.length, 2);
   // replacing an approved image invalidates the set
-  v = await s.products.replace(p.id, v.images[0].id, png(200), 'new.png');
+  await assert.rejects(s.products.replace(p.id, v.images[0].id, png(200), 'new.png'), (e) => e.code === 'CONFIRM_APPROVED', 'approved images are not replaced without confirmation');
+  v = await s.products.replace(p.id, v.images[0].id, png(200), 'new.png', { confirm: true });
   assert.equal(v.reference.state, 'stale');
   assert.equal(v.readiness.ok, false);
-  assert.equal(v.counts.uploaded, 5, 'replace keeps the 5-upload limit');
+  assert.equal(v.counts.uploaded, 10, 'replace keeps the upload limit');
   const old = v.images.find((i) => i.status === 'replaced');
   assert.ok(old && old.replacedBy);
   await assert.rejects(s.products.approveReferenceSet(p.id, { imageIds: [v.images[2].id] }), (e) => e.code === 'NOT_APPROVED');

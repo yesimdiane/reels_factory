@@ -3,6 +3,7 @@ import { h, chip, icon, toast, modal, confirmDialog } from '../ui.js';
 import { state, act, go, setProduct } from '../state.js';
 import { api } from '../api.js';
 import { pageHead, asyncBlock, confirmPaid } from './common.js';
+import { imageIntake, savedControls } from './image-intake.js';
 
 const KIND_CHIP = { retrieved: ['원본 · 쇼핑몰 수집', 'mock'], uploaded: ['직접 업로드', ''], ai_generated: ['AI 생성 · 제조사 사진 아님', 'attention'] };
 const STATUS_CHIP = { pending: ['검토 대기', ''], approved: ['승인', 'done'], rejected: ['거절', 'err'], replaced: ['교체됨', 'mock'] };
@@ -91,18 +92,23 @@ function draw(p) {
     p.url ? h('p', { class: 'small muted', style: 'margin:0' }, '출처 URL: ' + p.url + ' · 가격·할인·평점은 수집하지 않으며 제품 사실은 직접 확인한 것만 사용합니다.') : null));
 
   // ---- B. images ----
-  const input = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', multiple: true, style: 'display:none', onchange: async (e) => { for (const file of e.target.files) await run(() => api.upload(`/api/products/${p.id}/images?label=${encodeURIComponent(file.name)}`, file), file.name + ' 업로드됨 (승인 필요)'); e.target.value = ''; } });
-  const dz = h('div', { class: 'dropzone', tabindex: 0, onclick: () => input.click(), ondragover: (e) => { e.preventDefault(); dz.classList.add('over'); }, ondragleave: () => dz.classList.remove('over'),
-    ondrop: async (e) => { e.preventDefault(); dz.classList.remove('over'); for (const file of e.dataTransfer.files) await run(() => api.upload(`/api/products/${p.id}/images?label=${encodeURIComponent(file.name)}`, file), file.name + ' 업로드됨'); } },
-  input, icon('upload'), ` 제품 이미지를 끌어놓거나 클릭해서 올리기 (${p.counts.uploaded}/${p.limits.uploads}장 · PNG·JPG·WebP)`);
+  const dz = imageIntake({ product: p, run, rerender: () => act(async () => null) });
   const imgs = p.images;
   const card = (im) => {
-    const rep = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', style: 'display:none', onchange: async (e) => { const file = e.target.files[0]; if (file) await run(() => api.upload(`/api/products/${p.id}/images/${im.id}/replace`, file), '이미지를 교체했습니다'); e.target.value = ''; } });
+    const inSet = (p.reference.imageIds || []).includes(im.id);
+    const rep = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', style: 'display:none', onchange: async (e) => {
+      const file = e.target.files[0]; e.target.value = '';
+      if (!file) return;
+      const guarded = im.status === 'approved' || inSet;
+      if (guarded && !(await confirmDialog({ title: '승인된 참조 이미지를 교체할까요?', body: '교체하면 참조 세트를 다시 승인해야 합니다. 기존 이미지는 "교체됨"으로 남습니다.', confirm: '교체', tone: 'danger' }))) return;
+      await run(() => api.upload(`/api/products/${p.id}/images/${im.id}/replace${guarded ? '?confirm=1' : ''}`, file), '이미지를 교체했습니다');
+    } });
     const set = (status) => run(() => api.post(`/api/products/${p.id}/images/${im.id}/status`, { status }));
     return h('figure', { class: 'ref' + (im.status === 'approved' ? ' ok' : ''), style: im.status === 'replaced' ? 'opacity:.5' : '' },
       h('img', { src: im.url, alt: im.label || '제품 이미지' }),
       h('figcaption', null,
-        h('div', { class: 'row', style: 'gap:6px' }, chip(...KIND_CHIP[im.kind]), chip(...STATUS_CHIP[im.status])),
+        h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, chip(...KIND_CHIP[im.kind]), chip(...STATUS_CHIP[im.status]), im.primary ? chip('대표', 'done') : null),
+        im.width ? h('div', { class: 'small muted' }, `${im.width}×${im.height}px`) : null,
         h('div', { class: 'small' }, im.label || ''),
         im.disclosure ? h('div', { class: 'small', style: 'color:var(--clay)' }, im.disclosure) : null,
         im.licenseNote ? h('div', { class: 'small muted' }, im.licenseNote) : null,
@@ -111,7 +117,8 @@ function draw(p) {
           h('button', { class: 'btn sm ' + (im.status === 'approved' ? 'ghost' : 'sage'), onclick: () => set(im.status === 'approved' ? 'pending' : 'approved') }, im.status === 'approved' ? '승인 취소' : '승인'),
           h('button', { class: 'btn sm danger', disabled: im.status === 'rejected', onclick: () => set('rejected') }, '거절'),
           rep, h('button', { class: 'btn sm ghost', onclick: () => rep.click() }, '교체'),
-          im.kind === 'ai_generated' ? h('button', { class: 'btn sm ghost', onclick: () => compare(p, im) }, '원본과 비교') : null)));
+          im.kind === 'ai_generated' ? h('button', { class: 'btn sm ghost', onclick: () => compare(p, im) }, '원본과 비교') : null),
+        im.status === 'replaced' ? null : savedControls(p, im, imgs.filter((i) => i.kind !== 'ai_generated' && i.status !== 'replaced'), run)));
   };
   const approvedOrig = imgs.filter((i) => i.kind !== 'ai_generated' && i.status === 'approved');
   wrap.append(h('div', { class: 'card stack', style: 'gap:14px' },
