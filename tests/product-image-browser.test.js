@@ -122,7 +122,7 @@ test('a product created without a code can get one from the summary card (no nee
     assert.equal(await page.locator('[data-product-summary] details').count(), 0, 'the field is in the always-visible summary');
     await page.locator('[data-summary-code-input]').fill('zbx');
     await page.locator('[data-summary-code-save]').click();
-    await page.waitForFunction(() => document.querySelector('[data-product-summary] .ep-code').textContent === 'ZBX');
+    await page.waitForFunction(() => (document.querySelector('[data-product-summary] .ep-code') || {}).textContent === 'ZBX');
     assert.equal(s.products.get(p.id).code, 'ZBX');
     await page.locator('[data-summary-code-input]').fill('x');
     await page.locator('[data-summary-code-save]').click();
