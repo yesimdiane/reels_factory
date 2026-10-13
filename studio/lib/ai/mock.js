@@ -95,6 +95,14 @@ function createMockText() {
         });
         return { text: '', json: { concepts }, usage: { inputTokens: null, outputTokens: null } };
       }
+      if (task === 'scriptWriting' && /^SCENE_REGENERATION/.test(prompt)) {
+        let cur = {};
+        try { cur = JSON.parse((/CURRENT_SCENE: (\{.*\})/.exec(prompt) || [, '{}'])[1]); } catch (_) { /* sample only */ }
+        const vis = ((/VISUAL_DIRECTION: ([\s\S]*?)\nACTION: /.exec(prompt) || [, ''])[1] || cur.visual || '').trim();
+        const act = ((/\nACTION: (.*)/.exec(prompt) || [, ''])[1] || cur.action || '').trim();
+        const secs = Number(cur.durationSec) || 4;
+        return { text: '', json: { scene: { title_ko: cur.title_ko || '샘플 장면', visual: `0.0–${secs} s: [sample] ${vis}`.slice(0, 900), action: '[sample] ' + (act || 'The characters act it out.'), narration: cur.narration || '', lines: (cur.lines || []).slice(0, 2).map((l) => ({ speaker: l.speaker, en: l.en.split(/\s+/).slice(0, 8).join(' '), ko: l.ko })) } }, usage: { inputTokens: null, outputTokens: null } };
+      }
       if (task === 'scriptWriting' && /TRANSLATE_TO:/.test(prompt)) { const to = /TRANSLATE_TO:\s*(\w+)/.exec(prompt)[1]; const src = /<<<TEXT\n([\s\S]*?)\nTEXT>>>/.exec(prompt)[1]; return { text: '', json: { translation: (to === 'Korean' ? '[샘플 번역 — AI 미연결] ' : '[Sample translation — AI not connected] ') + src }, usage: { inputTokens: null, outputTokens: null } }; }
       if (task === 'scriptWriting' && /TIMING_TARGETS/.test(prompt)) return { text: '', json: mockTiming(prompt), usage: { inputTokens: null, outputTokens: null } };
       if (task === 'scriptWriting' && /"comedy_story": \{"setup"|\{"ending_vars"|\{"beat": BEAT/.test(prompt)) return { text: '', json: addSampleKo(mockFormula(prompt)), usage: { inputTokens: null, outputTokens: null } };
