@@ -505,6 +505,30 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return episodeView(id);
   }
 
+  // ---------- 에피소드 삭제 = 휴지통: hidden from every list, nothing on disk is removed, restorable ----------
+  /**
+   * "Deleting" an episode moves it to the trash: it disappears from the lists, but its script, clips, voices, renders, approvals,
+   * history and spend records stay on disk (spend still counts toward the limits) and it can be restored. Its id is never reused.
+   * Refused while a generation or a render is running; a published episode needs an explicit extra confirmation.
+   */
+  async function trashEpisode(id, { confirmPublished = false, by = 'operator' } = {}) {
+    const ep0 = store.episodes.get(id);
+    if (ep0.trashedAt) throw new StudioError('ALREADY_TRASHED', '이미 휴지통에 있는 에피소드입니다.', { status: 409 });
+    if (jobsRunning(ep0) || (ep0.renderJob && ep0.renderJob.status === 'running')) throw new StudioError('BUSY', '영상 생성이나 렌더링이 진행 중인 에피소드는 지울 수 없습니다. 끝난 뒤 다시 시도하세요.', { status: 409 });
+    if (ep0.publishing && ep0.publishing.publishedAt && !confirmPublished) throw new StudioError('PUBLISHED', '이미 게시한 에피소드입니다. 휴지통으로 옮기려면 한 번 더 확인해야 합니다.', { status: 409, details: [{ publishedAt: ep0.publishing.publishedAt }] });
+    await store.episodes.update(id, (ep) => { ep.trashedAt = nowIso(); ep.trashedBy = by; });
+    store.episodes.audit(id, 'episode.trashed', { by });
+    return { id, trashed: true };
+  }
+  async function restoreEpisode(id, by = 'operator') {
+    const ep0 = store.episodes.get(id);
+    if (!ep0.trashedAt) throw new StudioError('NOT_TRASHED', '휴지통에 있는 에피소드가 아닙니다.', { status: 409 });
+    await store.episodes.update(id, (ep) => { delete ep.trashedAt; delete ep.trashedBy; });
+    store.episodes.audit(id, 'episode.restored', { by });
+    return episodeView(id);
+  }
+  const trashList = () => store.episodes.list({ trashed: true }).map((e) => ({ id: e.id, title: e.title, productName: (e.product || {}).name || '', trashedAt: e.trashedAt, scenes: (e.scenes || []).length, published: !!(e.publishing && e.publishing.publishedAt), finalApproved: !!(e.approvals && e.approvals.final) }));
+
   // ---------- insert shots (컷 추가): crops of the scene's own approved clip; no AI / video call, no cost ----------
   /** The picture the crops come from: the approved clip (else the newest one); before any clip exists only the start image can be previewed. */
   function cutSource(ep, scene) {
@@ -907,7 +931,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   return {
     cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

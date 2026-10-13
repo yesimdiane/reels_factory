@@ -1,7 +1,7 @@
-import { h, chip, modal, fmtUsd, toast } from '../ui.js';
+import { h, chip, modal, fmtUsd, toast, confirmDialog } from '../ui.js';
 import { state, go, selectEpisode, act } from '../state.js';
 import { api } from '../api.js';
-import { pageHead, modeBanner } from './common.js';
+import { pageHead, modeBanner, asyncBlock } from './common.js';
 
 export function episodes() {
   const s = state.summary;
@@ -19,8 +19,9 @@ export function episodes() {
         e.concept && e.concept.linked ? h('div', { class: 'small' }, chip(e.concept.ok ? '컨셉 ' + e.concept.conceptId + ' r' + e.concept.revision : e.concept.state === 'script_stale' ? '컨셉 변경 · 대본 재생성 필요' : '컨셉 승인 필요', e.concept.ok ? 'done' : 'attention')) : e.concept && e.concept.legacy ? h('div', { class: 'small' }, chip('스토리 랩 이전', 'mock')) : null,
         h('div', { class: 'mini-dots' }, e.steps.map((st) => h('i', { class: st.state, title: st.label }))),
         h('div', { class: 'small muted' }, `${e.scenes}장면 · 약 ${Math.round(e.totalPlannedSec)}초 · 지출 ${fmtUsd(e.spentUsd)}`),
-        h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: async () => { await selectEpisode(e.id); go('overview'); } }, '열기'), h('button', { class: 'btn sm ghost', onclick: async () => { await selectEpisode(e.id); go('script'); } }, '대본'))));
+        h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: async () => { await selectEpisode(e.id); go('overview'); } }, '열기'), h('button', { class: 'btn sm ghost', onclick: async () => { await selectEpisode(e.id); go('script'); } }, '대본'), h('button', { class: 'btn sm danger', type: 'button', 'data-delete-episode': e.id, title: '휴지통으로 옮깁니다 (파일은 지워지지 않고 복원할 수 있습니다)', onclick: () => deleteEpisode(e) }, '삭제'))));
   })));
+  wrap.append(trashBox());
   return wrap;
 }
 
@@ -44,4 +45,29 @@ async function newEpisode() {
 
 function field(label, type, ph, on) {
   return h('div', { class: 'field' }, h('label', null, label), h('input', { type, placeholder: ph, oninput: (e) => on(e.target.value) }));
+}
+
+/** 삭제 = 휴지통: the episode leaves every list but nothing is removed from disk; it can be restored. */
+async function deleteEpisode(e) {
+  const warn = e.published ? '이 에피소드는 이미 게시되었습니다.' : e.finalApproved ? '최종 승인까지 끝난 에피소드입니다.' : '';
+  const ok = await confirmDialog({ title: `"${e.title}" 에피소드를 삭제할까요?`, body: h('div', { class: 'stack small', style: 'gap:8px' },
+    warn ? h('div', { class: 'banner warn' }, h('div', null, warn)) : null,
+    h('div', null, '휴지통으로 옮깁니다. 목록에서 사라지지만 대본, 클립, 음성, 렌더, 승인 기록, 지출 기록은 지워지지 않고, 아래 "휴지통"에서 언제든 복원할 수 있습니다.'),
+    h('div', { class: 'muted' }, `${e.id} · ${e.scenes}장면 · 지출 ${fmtUsd(e.spentUsd)} (지출 기록은 한도 계산에 계속 포함됩니다)`)), confirm: '휴지통으로 이동', tone: 'clay' });
+  if (!ok) return;
+  try {
+    await api.del('/api/episodes/' + e.id, { confirmPublished: !!e.published });
+    if (state.episodeId === e.id) state.episodeId = '';
+    toast('휴지통으로 옮겼습니다');
+    await act(async () => null);
+  } catch (err) { toast(err.message, { error: true, recovery: err.recovery }); }
+}
+
+function trashBox() {
+  return asyncBlock(() => api.get('/api/episodes-trash'), ({ trash }) => {
+    if (!trash.length) return h('div', null);
+    return h('details', { class: 'card', 'data-trash': '1' }, h('summary', { style: 'cursor:pointer;min-height:36px;display:flex;align-items:center;gap:8px' }, h('b', null, `휴지통 (${trash.length})`), h('span', { class: 'small muted' }, '삭제한 에피소드 — 복원할 수 있습니다')),
+      h('div', { class: 'list', style: 'margin-top:10px' }, trash.map((t) => h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, `${t.id} · ${t.title}`), h('div', { class: 'small muted' }, `${t.productName} · ${t.scenes}장면 · ${new Date(t.trashedAt).toLocaleString('ko-KR')}에 삭제`)),
+        h('button', { class: 'btn sm', type: 'button', 'data-restore-episode': t.id, onclick: async () => { try { await api.post(`/api/episodes/${t.id}/restore`); toast('복원했습니다'); await act(async () => null); } catch (err) { toast(err.message, { error: true }); } } }, '복원')))));
+  }, { label: '' });
 }
