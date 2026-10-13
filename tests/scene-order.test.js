@@ -9,7 +9,7 @@ async function episode() {
   const a = fakeAi({ '*': (req) => ({ text: '', json: isScriptPrompt(req) ? scriptResponse(req) : goodConcepts(3), usage: { inputTokens: 10, outputTokens: 10 } }) });
   const m = make({ ai: a });
   const pid = await readyProduct(m.s); routePaid(m.s);
-  const lab = await m.s.storylab.generate(pid, { count: 3, confirm: CONFIRM });
+  const lab = await m.s.storylab.generate(pid, { category: 'all', confirm: CONFIRM });
   await m.s.storylab.approve(pid, lab.concepts[0].id);
   const id = await m.s.createEpisodeFromConcept({ productId: pid, conceptId: lab.concepts[0].id });
   await m.s.scriptgen.generate(id, { confirm: CONFIRM });

@@ -5,7 +5,11 @@ import { api } from '../api.js';
 import { pageHead, asyncBlock, confirmPaid } from './common.js';
 
 const FIELDS = [['hook', '오프닝 훅 (첫 3초)'], ['situation', '제품 문제 / 사용 상황'], ['plot', '30~45초 줄거리'], ['productRole', '자연스러운 제품 등장'], ['characterUsage', 'Jack·Diane 상호작용'], ['visualComedy', '비주얼 코미디 포인트'], ['payoff', '결말 / 페이오프'], ['viewerAppeal', '시청자 공감 포인트'], ['ctaDirection', '마지막 CTA']];
-const view = { filter: 'active', compare: new Set(), count: 3, extra: '' };
+const view = { filter: 'active', compare: new Set(), category: '', count: 1, extra: '' };
+// Count rules mirror the backend (studio/lib/storycategories.js): 1–5 for one category, always 3 for "all". The server enforces them too.
+const isAll = () => view.category === 'all';
+const effCount = () => (isAll() ? 3 : view.count);
+const catName = (cats, k) => { const o = (cats || []).find((x) => x.key === k); return o ? o.ko : ''; };
 
 export function storylab() {
   const s = state.summary;
@@ -39,17 +43,29 @@ function body(lab, prod) {
     route.provider === 'mock'
       ? h('div', { class: 'banner mock' }, chip('샘플', 'mock'), h('div', null, h('b', null, '스토리 AI가 연결되지 않아 샘플 응답을 씁니다'), '아래 컨셉은 실제 AI가 만든 것이 아니라 흐름 확인용 샘플입니다("[샘플]" 표시). 실제 생성은 Settings → AI 연동에서 Gemini/GPT/Claude 키·모델을 지정하세요. ', h('a', { href: '#/settings' }, '설정으로')))
       : h('div', { class: 'banner' }, chip(route.provider, 'done'), h('div', null, h('b', null, `${route.provider} · ${route.model || '(모델 미선택)'}`), '이 호출은 유료일 수 있습니다. 실행 전에 예상 비용(추정)을 보여드리고 확인을 받습니다.')),
+    categoryPicker(lab.categories || [], redraw),
     h('div', { class: 'row' },
-      h('label', { class: 'row small', style: 'gap:6px' }, '컨셉 수', h('select', { style: 'width:auto', onchange: (e) => (view.count = Number(e.target.value)) }, [3, 4, 5].map((n) => h('option', { value: n, selected: n === view.count }, n)))),
-      h('div', { class: 'field', style: 'flex:1;min-width:240px' }, h('input', { type: 'text', placeholder: '추가 지시 (선택) — 예: 비 오는 날 상황 위주로', value: view.extra, oninput: (e) => (view.extra = e.target.value) })),
-      h('button', { class: 'btn', disabled: !ready.ok, onclick: generate }, icon('plus'), '스토리 컨셉 생성'))));
+      h('label', { class: 'row small', style: 'gap:6px' }, '콘셉트 수', h('select', { 'aria-label': '콘셉트 수', disabled: isAll(), title: isAll() ? '"모두 1개씩 만들기"는 항상 3개입니다' : null, onchange: (e) => { view.count = Number(e.target.value); redraw(); } }, [1, 2, 3, 4, 5].map((n) => h('option', { value: n, selected: n === effCount() }, n))), isAll() ? h('span', { class: 'muted' }, '(고정)') : null),
+      h('div', { class: 'field', style: 'flex:1;min-width:240px' }, h('input', { type: 'text', placeholder: '추가 지시 (선택) — 예: 비 오는 날 상황 위주로', value: view.extra, oninput: (e) => (view.extra = e.target.value) }))),
+    h('div', { class: 'small', style: 'color:var(--espresso-2)', 'data-gen-summary': '' }, view.category ? '만들 내용: ' + summaryText(lab.categories || []) + ' · 영어 컨셉 + 한국어 번역 (한 번의 요청)' : '스토리 카테고리를 먼저 선택하세요.'),
+    h('div', { class: 'row' }, h('button', { class: 'btn', disabled: !ready.ok || !view.category, onclick: generate }, icon('plus'), '스토리 컨셉 생성'))));
+
+  function summaryText(cats) {
+    const o = cats.find((x) => x.key === view.category);
+    if (!o) return '';
+    return isAll() ? '반전형 생활 개그 1개 · 바이럴형 1개 · 신뢰·정보형 1개 (총 3개)' : `${o.ko} ${view.count}개`;
+  }
 
   async function generate() {
+    if (!view.category) return toast('스토리 카테고리를 선택하세요', { error: true });
+    const req = { category: view.category, count: effCount(), extra: view.extra };
     let est;
-    try { est = await api.post(`/api/storylab/${pid}/estimate`, { count: view.count, extra: view.extra }); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
-    const c = await confirmPaid({ title: `스토리 컨셉 ${view.count}개 생성`, est, confirmLabel: '생성', body: h('p', { class: 'small muted', style: 'margin:0' }, '확인된 제품 사실, 승인된 참조 이미지, Jack·Diane 참조, 채널 브랜딩과 Prompt Manager의 스토리 프롬프트가 입력으로 쓰입니다.') });
+    try { est = await api.post(`/api/storylab/${pid}/estimate`, req); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
+    const c = await confirmPaid({ title: `스토리 컨셉 ${est.count}개 생성`, est, confirmLabel: '생성', body: h('div', { class: 'stack', style: 'gap:8px' },
+      h('div', { class: 'card flat stack', style: 'gap:4px', 'data-confirm-summary': '' }, h('div', { class: 'small muted' }, '만들 내용'), h('b', null, est.summary), h('div', { class: 'small' }, `총 ${est.count}개 · 영어 컨셉과 한국어 번역을 한 번에 생성`), view.extra ? h('div', { class: 'small muted' }, '추가 지시: ' + view.extra) : null),
+      h('p', { class: 'small muted', style: 'margin:0' }, '확인된 제품 사실, 승인된 참조 이미지, Jack·Diane 참조, 채널 브랜딩과 Prompt Manager의 스토리 프롬프트가 입력으로 쓰입니다. 기존 컨셉과 승인된 스토리는 바뀌지 않고, 새 컨셉이 추가됩니다.')) });
     if (c === null) return;
-    await act(async () => { await api.post(`/api/storylab/${pid}/generate`, { count: view.count, extra: view.extra, confirm: c }); return null; }, { ok: '스토리 컨셉을 만들었습니다' });
+    await act(async () => { await api.post(`/api/storylab/${pid}/generate`, Object.assign({}, req, { confirm: c })); return null; }, { ok: '스토리 컨셉을 만들었습니다' });
   }
 
   // ---- filter ----
@@ -60,19 +76,30 @@ function body(lab, prod) {
     h('div', { class: 'seg', role: 'tablist' }, [['active', `후보·승인 ${counts.active}`], ['rejected', `거절(보관) ${counts.rejected}`], ['superseded', `교체됨 ${counts.superseded}`]].map(([k, l]) => h('button', { role: 'tab', 'aria-pressed': view.filter === k ? 'true' : 'false', onclick: () => { view.filter = k; redraw(); } }, l))),
     h('button', { class: 'btn sm ghost', disabled: view.compare.size < 2, onclick: () => compareModal(all.filter((c) => view.compare.has(c.id))) }, `비교 (${view.compare.size})`)));
   if (!shown.length) box.append(h('div', { class: 'empty' }, view.filter === 'active' ? '아직 스토리 컨셉이 없습니다. 위에서 생성하세요.' : '비어 있습니다.'));
-  box.append(h('div', { class: 'grid two' }, shown.map((c) => conceptCard(c, pid, redraw))));
+  box.append(h('div', { class: 'grid two' }, shown.map((c) => conceptCard(c, pid, redraw, lab.categories))));
   return box;
 }
 
-function conceptCard(c, pid, redraw) {
+/** Required category selector: four compact, tappable options with a one-line explanation each (stacked on phones). */
+function categoryPicker(cats, redraw) {
+  return h('div', { class: 'cat-picker', role: 'radiogroup', 'aria-label': '스토리 카테고리 (필수)' },
+    h('div', { class: 'small', style: 'font-weight:600' }, '스토리 카테고리 ', h('span', { style: 'color:var(--rose)' }, '(필수)')),
+    h('div', { class: 'cat-grid' }, cats.map((o) => h('button', { type: 'button', class: 'cat-opt' + (view.category === o.key ? ' on' : ''), role: 'radio', 'aria-checked': view.category === o.key ? 'true' : 'false', 'data-cat': o.key, onclick: () => { view.category = o.key; if (o.fixedCount) view.count = 3; else if (view.count < 1) view.count = 1; redraw(); } },
+      h('span', { class: 'cat-name' }, o.ko, h('span', { class: 'cat-en' }, ' · ' + o.en)),
+      h('span', { class: 'cat-brief' }, o.brief),
+      h('span', { class: 'cat-goal' }, '목표: ' + o.goal)))));
+}
+
+function conceptCard(c, pid, redraw, cats) {
   const used = (state.summary.episodes || []).filter((e) => e.concept && e.concept.conceptId === c.id);
   const src = c.source || {};
   const stateChip = c.approved ? chip('승인됨 r' + c.revision, 'done') : c.needsReapproval ? chip('수정됨 · 재승인 필요', 'attention') : c.status === 'rejected' ? chip('거절됨', 'err') : c.status === 'superseded' ? chip('교체됨', 'mock') : chip('후보', '');
   const run = (fn, ok) => act(async () => { await fn(); return null; }, { ok });
   return h('article', { class: 'card stack', style: 'gap:10px;' + (c.approved ? 'border-color:var(--sage-deep);box-shadow:0 0 0 2px var(--sage-wash)' : '') },
-    h('div', { class: 'row between' }, h('span', { class: 'eyebrow' }, c.id + (c.edited ? ' · 수정됨' : '')), h('div', { class: 'row', style: 'gap:6px' }, c.sample ? chip('샘플', 'mock') : null, stateChip)),
+    h('div', { class: 'row between' }, h('span', { class: 'eyebrow' }, c.id + (c.edited ? ' · 수정됨' : '')), h('div', { class: 'row', style: 'gap:6px' }, c.category ? chip(catName(cats, c.category) || c.category, 'cat-' + c.category) : null, c.sample ? chip('샘플', 'mock') : null, stateChip)),
     h('h3', { style: 'font-size:18px' }, c.title),
     h('dl', { style: 'margin:0;display:grid;gap:8px' }, FIELDS.filter(([k]) => c[k]).map(([k, l]) => h('div', null, h('dt', { class: 'small muted', style: 'font-weight:600' }, l), h('dd', { style: 'margin:0' }, c[k])))),
+    c.ko && Object.keys(c.ko).length ? h('details', { class: 'small', 'data-ko': '' }, h('summary', null, '한국어 번역 (읽기 전용)' + (c.koStale && c.koStale.length ? ' · 원문이 수정되어 일부 번역이 오래됨' : '')), h('div', { class: 'stack', style: 'gap:6px;margin-top:6px' }, [['title', '제목'], ...FIELDS].filter(([k]) => c.ko[k]).map(([k, l]) => h('div', null, h('div', { class: 'small muted', style: 'font-weight:600' }, l + (c.koStale && c.koStale.includes(k) ? ' (오래됨)' : '')), h('div', null, c.ko[k]))))) : null,
     h('div', { class: 'small muted' }, `예상 길이 약 ${c.estimatedDurationSec}초 · ${c.estimatedScenes ? '약 ' + c.estimatedScenes + '장면 · ' : ''}${src.mock ? '샘플 응답' : (src.provider || '?') + '/' + (src.model || '?')} · 스토리 프롬프트 v${src.promptVersion || '?'}`),
     c.status === 'rejected' && c.rejection ? h('div', { class: 'small', style: 'color:var(--rose)' }, '거절 사유: ' + (c.rejection.reason || '(없음)')) : null,
     c.approval ? h('details', { class: 'small' }, h('summary', null, '승인 기록 (추적용)'), h('div', { class: 'mono', style: 'white-space:pre-wrap;margin-top:6px' }, [`제품: ${c.approval.productId}`, `컨셉: ${c.approval.conceptId} (r${c.approval.revision})`, `제공자/모델: ${c.approval.mock ? '샘플' : c.approval.provider + ' / ' + c.approval.model}`, `스토리 프롬프트 버전: v${c.approval.storyPromptVersion}`, `참조 세트: ${c.approval.referenceSetId}`, `참조 이미지: ${(c.approval.referenceImageIds || []).join(', ') || '(없음)'}`, `상태: ${c.approval.status} · ${c.approval.by} · ${new Date(c.approval.at).toLocaleString('ko-KR')}`].join('\n'))) : null,
@@ -104,14 +131,14 @@ async function regen(c, pid) {
   const feedback = prompt('어떻게 바꾸고 싶나요? (선택, 예: 더 코믹하게 / 부부 대화 위주로)', '');
   if (feedback === null) return;
   let est;
-  try { est = await api.post(`/api/storylab/${pid}/estimate`, { count: 3 }); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
+  try { est = await api.post(`/api/storylab/${pid}/estimate`, { category: c.category || 'drama', count: 1 }); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
   const confirm = await confirmPaid({ title: '컨셉 1개 다시 생성', est, confirmLabel: '다시 생성', body: h('p', { class: 'small muted', style: 'margin:0' }, '기존 컨셉은 "교체됨"으로 보관되고 삭제되지 않습니다.') });
   if (confirm === null) return;
   await act(async () => { await api.post(`/api/storylab/${pid}/concepts/${c.id}/regenerate`, { feedback, confirm }); return null; }, { ok: '새 컨셉을 만들었습니다' });
 }
 
 function compareModal(list) {
-  const rows = [['title', '제목'], ...FIELDS, ['estimatedDurationSec', '예상 길이(초)'], ['estimatedScenes', '예상 장면 수']];
+  const rows = [['category', '카테고리'], ['title', '제목'], ...FIELDS, ['estimatedDurationSec', '예상 길이(초)'], ['estimatedScenes', '예상 장면 수']];
   modal((close) => h('div', { class: 'stack' }, h('h2', null, '컨셉 비교'),
     h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, ''), list.map((c) => h('th', null, c.id)))),
       h('tbody', null, rows.map(([k, l]) => h('tr', null, h('td', { class: 'small muted', style: 'white-space:nowrap' }, l), list.map((c) => h('td', { style: 'min-width:220px;vertical-align:top' }, String(c[k] == null ? '' : c[k])))))))),

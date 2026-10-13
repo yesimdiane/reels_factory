@@ -94,7 +94,7 @@ test('API: key management never returns a key; errors are scrubbed; full Story L
     assert.equal((await req(t.port, 'GET', `/media/product/${p.id}/${iid}`)).status, 200);
     await req(t.port, 'POST', `/api/products/${p.id}/images/${iid}/status`, { headers: H, body: { status: 'approved' } });
     assert.equal((await req(t.port, 'POST', `/api/products/${p.id}/references/approve`, { headers: H, body: {} })).json.reference.state, 'approved');
-    const lab = (await req(t.port, 'POST', `/api/storylab/${p.id}/generate`, { headers: H, body: { count: 3 } })).json;
+    const lab = (await req(t.port, 'POST', `/api/storylab/${p.id}/generate`, { headers: H, body: { category: 'all' } })).json;
     assert.ok(lab.concepts.length >= 3);
     const cid = lab.concepts[0].id;
     assert.equal((await req(t.port, 'POST', `/api/storylab/${p.id}/concepts/${cid}/episode`, { headers: H, body: {} })).status, 409, 'unapproved concept cannot start an episode');

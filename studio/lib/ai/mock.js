@@ -55,14 +55,45 @@ function createMockText() {
       calls.push({ task, promptChars: prompt.length, images: images.length });
       const product = (/PRODUCT_NAME:\s*(.+)/.exec(prompt) || [, '제품'])[1].trim();
       if (task === 'storyConcepts') {
-        const n = Number((/COUNT:\s*(\d+)/.exec(prompt) || [, 3])[1]);
-        const base = [
-          ['현관 우산 대참사', 'Jack drips rainwater across the entryway while Diane holds a cleaning cloth.', '비 오는 날 현관이 물바다가 되는 부부 신경전'],
-          ['Jack은 안 쓸 거라고 했다', 'Diane brings a new gadget; Jack insists he will never use it.', '새 물건을 두고 벌어지는 고집 대결'],
-          ['보이지 않는 집 정리 대결', 'A tidy-off competition between Diane and Jack ends with a surprise.', '정리 내기에서 뜻밖의 반전'],
-          ['한밤의 택배 미스터리', 'A late-night parcel arrives and Jack suspects Diane\'s Coupang habit.', '택배 상자를 둘러싼 유쾌한 추궁'],
-        ];
-        return { text: '', json: { concepts: base.slice(0, Math.max(3, n)).map((b, i) => ({ title: `[샘플] ${b[0]}`, hook: `${product}: ${b[1]}`, situation: b[2], productRole: `${product}를 확인된 기능 범위에서만 보여줍니다.`, characterUsage: i === 2 ? 'Diane과 Jack 모두 등장' : i === 1 ? 'Diane 중심, Jack 반응' : 'Jack 중심, Diane 개입', plot: `[샘플] ${b[2]} → Jack과 Diane의 티키타카 → 제품 등장 → 반전 마무리 (약 ${38 + i * 2}초)`, visualComedy: '[샘플] 과장된 표정 클로즈업과 리액션 컷', payoff: '반전 대사로 마무리', viewerAppeal: '공감 가는 집안 상황', ctaDirection: '댓글 키워드로 링크 안내', estimatedDurationSec: 38 + i * 2, estimatedScenes: 6 + i })) }, usage: { inputTokens: null, outputTokens: null } };
+        const plan = ((/CATEGORY_PLAN:\s*(.+)/.exec(prompt) || [, 'drama, drama, drama'])[1]).split(',').map((x) => x.trim()).filter(Boolean);
+        const BANK = {
+          drama: [
+            ['The Entryway Disaster', 'Jack drips rainwater across the entryway while Diane holds a cleaning cloth.', 'A rainy-day entryway turns into a couple\'s standoff', '현관 대참사', '비 오는 날 현관이 물바다가 되는 부부 신경전'],
+            ['Jack Swore He Would Never Use It', 'Diane brings home a new gadget; Jack insists he will never touch it.', 'A stubborn vow about a new household item', 'Jack은 안 쓴다고 했다', '새 물건을 두고 벌어지는 고집 대결'],
+            ['The Tidy-Off', 'Diane and Jack race to tidy the living room before guests arrive.', 'A speedy cleanup bet with an unexpected finish', '정리 내기', '정리 내기에서 뜻밖의 반전'],
+            ['The Midnight Parcel', 'A late-night parcel arrives and Jack suspects Diane\'s shopping habit.', 'A playful interrogation over a mystery box', '한밤의 택배', '택배 상자를 둘러싼 유쾌한 추궁'],
+            ['Morning Rush Chaos', 'Jack hunts for his keys while Diane films the whole meltdown.', 'A frantic morning that fixes itself overnight', '아침 출근 전쟁', '난장판 아침이 하루 만에 달라진다'],
+          ],
+          viral: [
+            ['Jack Dances With It', 'Jack dances in the living room while holding the product like a trophy.', 'An absurd dance that keeps the product in frame', 'Jack의 제품 댄스', '제품을 들고 춤추는 황당한 장면'],
+            ['The Slow-Motion Reveal', 'Diane unboxes the product in dramatic slow motion while Jack gasps.', 'An over-the-top slow motion unboxing', '슬로모션 언박싱', '과장된 슬로모션 언박싱'],
+            ['Diane Rates It Like a Judge', 'Diane holds up score cards while Jack performs a ridiculous audition.', 'A mock talent show judged from the sofa', '심사위원 Diane', '소파 위 가짜 오디션 쇼'],
+            ['Freeze Frame Prank', 'Jack freezes mid-pose whenever the product appears behind him.', 'A freeze challenge with surprise cutaways', '얼음 땡 장난', '제품이 나타날 때마다 멈추는 챌린지'],
+            ['The Echo Shout', 'Diane shouts a catchphrase and Jack echoes it from another room.', 'A shouting relay across the apartment', '메아리 외침', '집 안을 가로지르는 외침 릴레이'],
+          ],
+          info: [
+            ['Three Smart Buys From Coupang', 'Diane lists three useful finds, with this product as the first.', 'A verified-facts recommendation list', '잘 산 쿠팡템 3가지', '확인된 사실로 소개하는 추천 리스트'],
+            ['Does It Really Work? A Quick Test', 'Jack and Diane test the product exactly as its verified features describe.', 'A short honest demonstration', '진짜 될까? 짧은 시연', '확인된 기능만 보여주는 솔직한 시연'],
+            ['Who Is This For?', 'Diane explains which households benefit, using only confirmed specifications.', 'A simple who-should-buy explainer', '이런 집에 추천', '확인된 사양으로 설명하는 추천 대상'],
+            ['Size And Setup In 20 Seconds', 'Jack measures the product and installs it while Diane reads the verified dimensions.', 'A quick size and installation walkthrough', '크기와 설치 20초', '확인된 크기로 보여주는 설치 과정'],
+            ['Before You Buy Checklist', 'Diane shares a short checklist of things to confirm before ordering.', 'A practical pre-purchase checklist', '구매 전 체크리스트', '주문 전 확인할 항목 정리'],
+          ],
+        };
+        const used = { drama: 0, viral: 0, info: 0 };
+        const concepts = plan.map((cat, i) => {
+          const list = BANK[cat] || BANK.drama;
+          const b = list[used[cat]++ % list.length];
+          const dur = 38 + i * 2;
+          return {
+            category: cat, title: `[Sample] ${b[0]}`, hook: `${product}: ${b[1]}`, situation: b[2], productRole: `The product appears only within its verified features (${product}).`,
+            characterUsage: i % 2 ? 'Diane leads, Jack reacts' : 'Jack leads, Diane interjects', plot: `[Sample] ${b[2]} → banter between Jack and Diane → product reveal → closing beat (about ${dur}s)`,
+            visualComedy: '[Sample] Exaggerated close-up reactions and a quick cutaway', payoff: `[Sample] closing line for ${b[0]}`, viewerAppeal: 'A relatable home moment', ctaDirection: 'Point viewers to the comment keyword for the link',
+            estimatedDurationSec: dur, estimatedScenes: 6 + (i % 3),
+            title_ko: `[샘플] ${b[3]}`, hook_ko: `${product}: ${b[4]}`, situation_ko: b[4], productRole_ko: `${product}를 확인된 기능 범위에서만 보여줍니다.`, characterUsage_ko: i % 2 ? 'Diane 중심, Jack 반응' : 'Jack 중심, Diane 개입',
+            plot_ko: `[샘플] ${b[4]} → Jack과 Diane의 티키타카 → 제품 등장 → 마무리 (약 ${dur}초)`, visualComedy_ko: '[샘플] 과장된 표정 클로즈업과 리액션 컷', payoff_ko: `[샘플] ${b[3]} 마무리 대사`, viewerAppeal_ko: '공감 가는 집안 상황', ctaDirection_ko: '댓글 키워드로 링크 안내',
+          };
+        });
+        return { text: '', json: { concepts }, usage: { inputTokens: null, outputTokens: null } };
       }
       if (task === 'scriptWriting' && /TRANSLATE_TO:/.test(prompt)) { const to = /TRANSLATE_TO:\s*(\w+)/.exec(prompt)[1]; const src = /<<<TEXT\n([\s\S]*?)\nTEXT>>>/.exec(prompt)[1]; return { text: '', json: { translation: (to === 'Korean' ? '[샘플 번역 — AI 미연결] ' : '[Sample translation — AI not connected] ') + src }, usage: { inputTokens: null, outputTokens: null } }; }
       if (task === 'scriptWriting' && /TIMING_TARGETS/.test(prompt)) return { text: '', json: mockTiming(prompt), usage: { inputTokens: null, outputTokens: null } };

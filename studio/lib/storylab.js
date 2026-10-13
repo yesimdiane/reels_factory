@@ -7,6 +7,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { StudioError, nowIso, readJson, writeJsonAtomic, sha256 } = require('./util');
 const { claimHits } = require('./claims');
+const cats = require('./storycategories');
 
 const FIELDS = ['title', 'hook', 'situation', 'plot', 'productRole', 'characterUsage', 'visualComedy', 'payoff', 'viewerAppeal', 'ctaDirection'];
 // Added in the Product Studio update: stored concepts from before it may lack these, so they are required for NEW concepts only.
@@ -34,6 +35,9 @@ const STORY_RULES = [
   'Jack = British husband, muscular/stocky, brown wavy hair, thick mustache, tattooed arms, affectionate dry humour.',
   'Diane NEVER calls Jack "오빠". Spoken dialogue is in ENGLISH; on-screen subtitles are in KOREAN. Keep the approved 2D character look.',
   'Concepts must be meaningfully different (different situation and payoff). Use ONLY the verified product facts; never invent specs, prices or availability.',
+  'CATEGORY: every concept MUST include "category" = exactly one of drama | viral | info, matching CATEGORY_PLAN below. Produce exactly the concepts listed in CATEGORY_PLAN, no more and no fewer.',
+  'LANGUAGE: write every concept field in natural ENGLISH, and in the SAME response also give a natural, idiomatic KOREAN translation of each text field as <field>_ko',
+  '(title_ko, hook_ko, situation_ko, plot_ko, productRole_ko, characterUsage_ko, visualComedy_ko, payoff_ko, viewerAppeal_ko, ctaDirection_ko). Not word-for-word: it must read as natural Korean.',
 ].join('\n');
 
 function createStoryLab({ store, products, prompts, router, log = () => {} }) {
@@ -55,7 +59,7 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
 
   function list(pid) {
     const d = read(pid);
-    return { productId: pid, concepts: d.concepts.map(view), batches: d.batches, fields: FIELD_LABEL };
+    return { productId: pid, concepts: d.concepts.map(view), batches: d.batches, fields: FIELD_LABEL, categories: cats.options() };
   }
 
   function clean(raw, product, { strictNew = true } = {}) {
@@ -79,7 +83,8 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
   }
 
   /** Builds the generation request: verified facts only, approved reference images, character references. */
-  function build(pid, { count, extra }) {
+  function build(pid, { count, extra, plan }) {
+    plan = plan || Array(count).fill('drama');
     const b = products.bindingFor(pid);
     const p = b.product;
     const vars = { COUNT: count, EXTRA: extra || '' };
@@ -92,6 +97,8 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
       ...b.facts.map((f) => '- ' + f),
       'FORBIDDEN_CLAIMS (never imply): ' + ((p.forbiddenClaims || []).join(', ') || 'none'),
       'COUNT: ' + count,
+      'CATEGORY_PLAN: ' + plan.join(', '),
+      ...[...new Set(plan)].map((k) => cats.CATEGORIES[k].rule),
       'The attached product images are the APPROVED reference photos. Do not change the product\'s shape, logo or colour.',
       '',
       STORY_RULES,
@@ -109,21 +116,43 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
     return { product: p, binding: b, prompt: composed.text + '\n\n' + data, composed, images, refs, charRefs };
   }
 
-  function estimate(pid, { count = 3, extra = '', override } = {}) {
-    const q = build(pid, { count, extra });
-    return router.estimate('storyConcepts', { inputChars: q.prompt.length, outputTokens: 900 * count, images: q.images.length, override: override || q.composed.providerOverride });
+  /** What a request will generate (validated). Same rules as generate(): the UI summary, the estimate and the real call cannot disagree. */
+  function plan(req) {
+    const r = cats.resolveRequest(req);
+    return Object.assign(r, { summary: cats.planText(r.plan) });
+  }
+  function estimate(pid, { category, count, extra = '', override } = {}) {
+    const r = cats.resolveRequest({ category, count });
+    const q = build(pid, { count: r.count, extra, plan: r.plan });
+    return Object.assign({}, router.estimate('storyConcepts', { inputChars: q.prompt.length, outputTokens: 1500 * r.count, images: q.images.length, override: override || q.composed.providerOverride }), { category: r.category, count: r.count, plan: r.plan, summary: cats.planText(r.plan) });
   }
 
-  function validateBatch(raw, q, existing) {
+  const KO_FIELDS = FIELDS;
+  function validateBatch(raw, q, plan) {
     const list = Array.isArray(raw && raw.concepts) ? raw.concepts : [];
     const items = [];
     const problems = [];
+    const single = new Set(plan).size === 1;
     list.forEach((r, i) => {
       const { out, problems: pr } = clean(r, q.product);
       pr.forEach((m) => problems.push(`컨셉 ${i + 1}: ${m}`));
+      let cat = r && r.category != null ? String(r.category).trim().toLowerCase() : '';
+      if (!cat && single) cat = plan[0]; // one category requested: the request itself decides it
+      if (!cat) problems.push(`컨셉 ${i + 1}: 카테고리 누락`);
+      else if (!cats.CATEGORIES[cat]) problems.push(`컨셉 ${i + 1}: 알 수 없는 카테고리 "${cat}"`);
+      out.category = cat;
+      const ko = {};
+      KO_FIELDS.forEach((k) => { const v = String((r && r[k + '_ko']) || '').trim(); if (v) ko[k] = v.slice(0, 1200); });
+      out.ko = ko;
+      out.koComplete = KO_FIELDS.every((k) => ko[k]);
       items.push(out);
     });
-    if (items.length < 3) problems.push(`컨셉이 ${items.length}개뿐입니다 (최소 3개 필요).`);
+    if (items.length !== plan.length) problems.push(`컨셉이 ${items.length}개입니다 (정확히 ${plan.length}개 필요).`);
+    const want = cats.tally(plan);
+    const got = cats.tally(items.map((x) => x.category).filter(Boolean));
+    if (JSON.stringify(Object.keys(want).sort().map((k) => [k, want[k]])) !== JSON.stringify(Object.keys(got).sort().map((k) => [k, got[k]]))) {
+      problems.push(`카테고리 구성이 요청과 다릅니다 (요청: ${cats.planText(plan)} / 응답: ${cats.planText(items.map((x) => x.category).filter(Boolean)) || '없음'}).`);
+    }
     for (let i = 0; i < items.length; i++) {
       for (let j = i + 1; j < items.length; j++) {
         const s = similarity(items[i].situation + ' ' + items[i].payoff, items[j].situation + ' ' + items[j].payoff);
@@ -133,19 +162,19 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
     return { items, problems };
   }
 
-  /** Generates ≥3 concepts. Nothing is saved when validation fails (the call may still have been billed — it is in the usage log). */
-  async function generate(pid, { count = 3, extra = '', confirm, override, by = 'operator' } = {}) {
-    count = Math.min(5, Math.max(3, Number(count) || 3));
-    const q = build(pid, { count, extra });
+  /** Generates the requested concepts (category required; 1–5 for one category, exactly 3 for "all"). Nothing is saved when validation fails (the call may still have been billed — it is in the usage log). */
+  async function generate(pid, { category, count, extra = '', confirm, override, by = 'operator' } = {}) {
+    const r = cats.resolveRequest({ category, count });
+    const q = build(pid, { count: r.count, extra, plan: r.plan });
     const ov = override || q.composed.providerOverride || undefined;
-    const res = await router.run('storyConcepts', { system: undefined, prompt: q.prompt, images: q.images, json: true, maxTokens: 900 * count, confirm, override: ov, dedupeKey: pid });
-    const { items, problems } = validateBatch(res.json, q);
-    if (problems.length) throw new StudioError('CONCEPTS_REJECTED', problems[0], { details: problems, recovery: 'AI 응답이 규칙(최소 3개·서로 다른 내용·제품 주장)을 어겨 저장하지 않았습니다. 다시 생성하거나 프롬프트를 조정하세요.', status: 422 });
+    const res = await router.run('storyConcepts', { system: undefined, prompt: q.prompt, images: q.images, json: true, maxTokens: 1500 * r.count, confirm, override: ov, dedupeKey: pid });
+    const { items, problems } = validateBatch(res.json, q, r.plan);
+    if (problems.length) throw new StudioError('CONCEPTS_REJECTED', problems[0], { details: problems, recovery: 'AI 응답이 규칙(요청한 개수·카테고리 구성·서로 다른 내용·제품 주장)을 어겨 저장하지 않았습니다. 다시 생성하거나 프롬프트를 조정하세요.', status: 422 });
     return serial(() => {
       const d = read(pid);
       const batchId = 'B' + String(d.batches.length + 1).padStart(2, '0');
       const source = { provider: res.provider, model: res.model, mock: !!res.mock, promptVersions: q.composed.versions, promptKey: 'storyConcept', promptVersion: q.composed.versions.storyConcept, referenceSetId: q.binding.reference.waived ? 'waived' : (q.product.referenceSet || {}).id, referenceImageIds: q.refs, characterRefs: q.charRefs, generatedAt: nowIso(), by };
-      d.batches.push({ id: batchId, at: nowIso(), count: items.length, source, extra: extra || '', estimate: res.estimate });
+      d.batches.push({ id: batchId, at: nowIso(), count: items.length, category: r.category, plan: r.plan, source, extra: extra || '', estimate: res.estimate });
       items.forEach((it) => {
         d.seq += 1;
         d.concepts.push(Object.assign({ id: `${pid}-C${String(d.seq).padStart(3, '0')}`, productId: pid, batchId, status: 'candidate', revision: 1, edits: [], approval: null, rejection: null, createdAt: nowIso(), source }, it));
@@ -161,12 +190,14 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
     const old = find(d0, cid);
     if (old.status === 'approved') throw new StudioError('APPROVED_LOCKED', '승인된 컨셉은 다시 생성할 수 없습니다. 먼저 승인을 취소하세요.', { status: 409 });
     const extra = `Replace the concept titled "${old.title}" with ONE new, meaningfully different concept (different situation and payoff). ${feedback ? 'Operator feedback: ' + feedback : ''}`;
-    const q = build(pid, { count: 1, extra });
+    const cat = old.category || 'drama'; // concepts from before categories existed are regenerated as Drama
+    const q = build(pid, { count: 1, extra, plan: [cat] });
     const ov = override || q.composed.providerOverride || undefined;
-    const res = await router.run('storyConcepts', { prompt: q.prompt, images: q.images, json: true, maxTokens: 1200, confirm, override: ov, dedupeKey: pid + cid });
+    const res = await router.run('storyConcepts', { prompt: q.prompt, images: q.images, json: true, maxTokens: 1800, confirm, override: ov, dedupeKey: pid + cid });
     const raw = Array.isArray(res.json && res.json.concepts) ? res.json.concepts[0] : null;
-    const { out, problems } = clean(raw, q.product);
-    if (!raw || problems.length) throw new StudioError('CONCEPTS_REJECTED', problems[0] || '컨셉이 비어 있습니다.', { details: problems, status: 422 });
+    const v = validateBatch({ concepts: raw ? [raw] : [] }, q, [cat]);
+    const out = v.items[0];
+    if (!raw || v.problems.length) throw new StudioError('CONCEPTS_REJECTED', v.problems[0] || '컨셉이 비어 있습니다.', { details: v.problems, status: 422 });
     return serial(() => {
       const d = read(pid);
       const o = find(d, cid);
@@ -196,7 +227,9 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
       if (problems.length) throw new StudioError('INVALID_CONCEPT', problems[0], { details: problems, status: 422 });
       if (JSON.stringify(out) === before) return list(pid);
       c.edits.push({ at: nowIso(), by, revisionBefore: c.revision, before: JSON.parse(before) });
+      const changed = FIELDS.filter((k) => (c[k] || '') !== (out[k] || ''));
       Object.assign(c, out);
+      if (c.ko && changed.length) c.koStale = [...new Set((c.koStale || []).concat(changed.filter((k) => c.ko[k])))]; // the Korean translation no longer matches the edited English
       c.revision += 1;
       c.edited = true;
       write(pid, d);
@@ -260,7 +293,7 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
   }
   const peek = (pid, cid) => { const c = read(pid).concepts.find((x) => x.id === cid); return c ? view(c) : null; };
 
-  return { list, generate, regenerate, edit, approve, revoke, reject, reopen, estimate, requireApproved, peek, isApproved, FIELDS, FIELD_LABEL, similarity };
+  return { list, generate, regenerate, edit, approve, revoke, reject, reopen, estimate, plan, requireApproved, peek, isApproved, FIELDS, FIELD_LABEL, similarity };
 }
 
 module.exports = { createStoryLab, FIELDS, NEW_FIELDS, STORY_RULES, similarity };

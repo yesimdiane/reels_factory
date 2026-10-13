@@ -10,15 +10,19 @@ const { createMockVideoProvider } = require('../../studio/lib/providers/mock');
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 const png = (n = 0) => Buffer.concat([PNG, Buffer.from([n, n + 1, n + 2])]);
 
-const goodConcepts = (n = 3, tag = '') => ({
+const CYCLE = ['drama', 'viral', 'info'];
+/** A fake AI's concept answer. `plan` = categories per concept (default: one of each in order, repeating); every concept carries its category + Korean translations. */
+const goodConcepts = (n = 3, tag = '', plan) => ({
   concepts: [
     ['현관 우산 대참사', '비 오는 날 현관이 물바다가 되어 Jack이 우산을 놓을 곳을 못 찾는다', '자석에 우산이 착 붙으며 Jack이 말을 잃는다'],
     ['절대 안 쓴다던 남편', 'Diane이 새 물건을 가져오자 Jack이 단호하게 거절한다', '결국 Jack이 가장 먼저 매일 사용한다'],
     ['정리 내기', '두 사람이 누가 더 빨리 정리하는지 내기를 한다', '정리가 끝난 현관을 보고 둘 다 놀란다'],
     ['택배 미스터리', '밤늦게 도착한 택배 상자를 두고 Jack이 추궁한다', '상자 속 물건이 오히려 Jack의 고민을 풀어준다'],
     ['아침 출근 전쟁', '출근 직전 우산을 찾느라 집이 난장판이 된다', '다음 날은 우산이 제자리에 있어 둘이 여유롭다'],
-  ].slice(0, n).map((c, i) => ({ title: c[0] + tag, hook: c[1], situation: c[1] + ' ' + (i + 1), plot: c[1] + ' → ' + c[2] + ' (' + (i + 1) + ')', visualComedy: '과장된 표정 리액션 ' + (i + 1), estimatedScenes: 6, productRole: '확인된 기능 범위에서만 보여줌', characterUsage: i % 2 ? 'Diane 중심' : 'Jack 중심', payoff: c[2], viewerAppeal: '공감', ctaDirection: '댓글 키워드로 링크 안내', estimatedDurationSec: 40 })),
+  ].slice(0, n).map((c, i) => ({ title: c[0] + tag, hook: c[1], situation: c[1] + ' ' + (i + 1), plot: c[1] + ' → ' + c[2] + ' (' + (i + 1) + ')', visualComedy: '과장된 표정 리액션 ' + (i + 1), estimatedScenes: 6, productRole: '확인된 기능 범위에서만 보여줌', characterUsage: i % 2 ? 'Diane 중심' : 'Jack 중심', payoff: c[2], viewerAppeal: '공감', ctaDirection: '댓글 키워드로 링크 안내', estimatedDurationSec: 40, category: (plan || [])[i] || CYCLE[i % 3], title_ko: c[0] + tag + ' (번역)', hook_ko: c[1] + ' (번역)', situation_ko: c[1] + ' ' + (i + 1) + ' (번역)', plot_ko: c[1] + ' (번역)', productRole_ko: '확인된 기능 범위에서만 보여줌', characterUsage_ko: '번역', visualComedy_ko: '번역 ' + (i + 1), payoff_ko: c[2] + ' (번역)', viewerAppeal_ko: '공감', ctaDirection_ko: '댓글 키워드로 링크 안내' })),
 });
+/** Answers a concept request using the CATEGORY_PLAN line in the prompt (what a well-behaved AI would do). */
+const conceptsForPrompt = (req, tag = '') => { const m = /CATEGORY_PLAN:\s*(.+)/.exec(req.prompt || ''); const plan = m ? m[1].split(',').map((x) => x.trim()) : undefined; return goodConcepts(plan ? plan.length : 3, tag, plan); };
 
 const goodScript = () => ({
   title: '현관 대참사', beats: ['문제', '발견', '반전'],
@@ -87,4 +91,4 @@ function routePaid(s, provider = 'gemini', tasks = ['storyConcepts', 'scriptWrit
   tasks.forEach((t) => s.integrations.setRouting(t, { provider, model: 'model-a' }));
 }
 
-module.exports = { umbrellaStory, goodBeat, scriptResponse, isScriptPrompt, make, fakeAi, goodConcepts, goodScript, png, readyProduct, routePaid };
+module.exports = { conceptsForPrompt, umbrellaStory, goodBeat, scriptResponse, isScriptPrompt, make, fakeAi, goodConcepts, goodScript, png, readyProduct, routePaid };

@@ -97,7 +97,7 @@ test('concepts: new fields are required for new concepts, rules are added by cod
   const { s } = make({ ai });
   const pid = await readyProduct(s);
   routePaid(s);
-  const lab = await s.storylab.generate(pid, { count: 3, confirm: CONFIRM });
+  const lab = await s.storylab.generate(pid, { category: 'all', confirm: CONFIRM });
   assert.equal(lab.concepts.length, 3);
   const prompt = ai.calls[0].prompt;
   assert.match(prompt, /BABYYYY!!!!!!/);
@@ -111,21 +111,21 @@ test('concepts: new fields are required for new concepts, rules are added by cod
   const m2 = make({ ai: bad });
   const pid2 = await readyProduct(m2.s);
   routePaid(m2.s);
-  await assert.rejects(m2.s.storylab.generate(pid2, { count: 3, confirm: CONFIRM }), (e) => e.code === 'CONCEPTS_REJECTED' && /줄거리/.test(e.message));
+  await assert.rejects(m2.s.storylab.generate(pid2, { category: 'all', confirm: CONFIRM }), (e) => e.code === 'CONCEPTS_REJECTED' && /줄거리/.test(e.message));
   assert.equal(m2.s.storylab.list(pid2).concepts.length, 0);
   // "오빠" is still refused
   const o = aiWithImages({ '*': () => ({ text: '', json: { concepts: goodConcepts(3).concepts.map((c, i) => (i ? c : { ...c, plot: c.plot + ' Diane: 오빠!' })) }, usage: {} }) });
   const m3 = make({ ai: o });
   const pid3 = await readyProduct(m3.s);
   routePaid(m3.s);
-  await assert.rejects(m3.s.storylab.generate(pid3, { count: 3, confirm: CONFIRM }), (e) => e.code === 'CONCEPTS_REJECTED');
+  await assert.rejects(m3.s.storylab.generate(pid3, { category: 'all', confirm: CONFIRM }), (e) => e.code === 'CONCEPTS_REJECTED');
 });
 
 test('story approval → Script Studio handoff: transfers product, facts, reference images, hook, CTA, rules; never overwrites; script still needs its own approval', async () => {
   const { s } = make({ ai: textAi() });
   const pid = await readyProduct(s);
   routePaid(s);
-  const lab = await s.storylab.generate(pid, { count: 3, confirm: CONFIRM });
+  const lab = await s.storylab.generate(pid, { category: 'all', confirm: CONFIRM });
   const c = lab.concepts[0];
   await assert.rejects(s.createEpisodeFromConcept({ productId: pid, conceptId: c.id }), (e) => e.code === 'CONCEPT_NOT_APPROVED');
   await s.storylab.approve(pid, c.id);
@@ -159,7 +159,7 @@ test('no paid video generation before script approval (backend gate)', async () 
   const { s } = make({ ai: textAi() });
   const pid = await readyProduct(s);
   routePaid(s);
-  const lab = await s.storylab.generate(pid, { count: 3, confirm: CONFIRM });
+  const lab = await s.storylab.generate(pid, { category: 'all', confirm: CONFIRM });
   await s.storylab.approve(pid, lab.concepts[0].id);
   const id = await s.createEpisodeFromConcept({ productId: pid, conceptId: lab.concepts[0].id });
   await s.scriptgen.generate(id, { confirm: CONFIRM });

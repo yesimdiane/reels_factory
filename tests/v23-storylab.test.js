@@ -10,9 +10,9 @@ const paidAi = (conceptFn) => fakeAi({ '*': (req) => ({ text: '', json: isScript
 test('Story Lab: refuses unless product is ready (verified facts + approved reference set)', async () => {
   const { s } = make();
   const p = await s.products.create({ name: 'x' });
-  await assert.rejects(s.storylab.generate(p.id, {}), (e) => e.code === 'PRODUCT_NOT_READY');
+  await assert.rejects(s.storylab.generate(p.id, { category: 'all' }), (e) => e.code === 'PRODUCT_NOT_READY');
   await s.products.edit(p.id, { specs: [{ text: '사실', verified: true }] });
-  await assert.rejects(s.storylab.generate(p.id, {}), (e) => e.code === 'PRODUCT_NOT_READY', 'still needs the approved reference set');
+  await assert.rejects(s.storylab.generate(p.id, { category: 'all' }), (e) => e.code === 'PRODUCT_NOT_READY', 'still needs the approved reference set');
 });
 
 test('Story Lab: ≥3 distinct concepts via configured provider; inputs include facts, images, character refs, channel, editable prompt; trace stored', async () => {
@@ -21,9 +21,9 @@ test('Story Lab: ≥3 distinct concepts via configured provider; inputs include 
   const pid = await readyProduct(s);
   s.loadDemoReferences && await s.loadDemoReferences();
   routePaid(s);
-  await assert.rejects(s.storylab.generate(pid, {}), (e) => e.code === 'CONFIRM_REQUIRED');
+  await assert.rejects(s.storylab.generate(pid, { category: 'all' }), (e) => e.code === 'CONFIRM_REQUIRED');
   assert.equal(ai.calls.length, 0);
-  const lab = await s.storylab.generate(pid, { count: 3, confirm: CONFIRM });
+  const lab = await s.storylab.generate(pid, { category: 'all', confirm: CONFIRM });
   assert.equal(lab.concepts.length, 3);
   const call = ai.calls[0];
   assert.equal(call.provider, 'gemini');
@@ -44,11 +44,11 @@ test('Story Lab: editing the prompt in Settings changes the next generation and 
   const pid = await readyProduct(s);
   routePaid(s);
   s.prompts.save('storyConcept', { text: 'CUSTOM-HEAD-WRITER-MARKER for {{CHANNEL}}. Produce {{COUNT}} concepts as JSON {"concepts":[...]} {{EXTRA}}', note: 'test' });
-  const lab = await s.storylab.generate(pid, { confirm: CONFIRM });
+  const lab = await s.storylab.generate(pid, { category: 'all', confirm: CONFIRM });
   assert.match(ai.calls[0].prompt, /CUSTOM-HEAD-WRITER-MARKER/);
   assert.equal(lab.concepts[0].source.promptVersion, 2);
   s.prompts.restore('storyConcept', { toDefault: true });
-  await s.storylab.generate(pid, { confirm: CONFIRM });
+  await s.storylab.generate(pid, { category: 'all', confirm: CONFIRM });
   assert.ok(!/CUSTOM-HEAD-WRITER-MARKER/.test(ai.calls[1].prompt));
 });
 
@@ -64,7 +64,7 @@ test('Story Lab: invalid AI output is rejected and nothing is saved (too few / d
     const { s } = make({ ai });
     const pid = await readyProduct(s);
     routePaid(s);
-    await assert.rejects(s.storylab.generate(pid, { confirm: CONFIRM }), (e) => e.code === 'CONCEPTS_REJECTED');
+    await assert.rejects(s.storylab.generate(pid, { category: 'all', confirm: CONFIRM }), (e) => e.code === 'CONCEPTS_REJECTED');
     assert.equal(s.storylab.list(pid).concepts.length, 0);
   }
 });
@@ -74,7 +74,7 @@ test('approval gate: only an approved concept (at its current revision) can crea
   const { s } = make({ ai });
   const pid = await readyProduct(s);
   routePaid(s);
-  const lab = await s.storylab.generate(pid, { confirm: CONFIRM });
+  const lab = await s.storylab.generate(pid, { category: 'all', confirm: CONFIRM });
   const c = lab.concepts[0];
   await assert.rejects(s.createEpisodeFromConcept({ productId: pid, conceptId: c.id }), (e) => e.code === 'CONCEPT_NOT_APPROVED');
   const ap = (await s.storylab.approve(pid, c.id)).concepts.find((x) => x.id === c.id);
@@ -107,7 +107,7 @@ test('changing an approved concept requires re-approval and flags the script for
   const { s } = make({ ai });
   const pid = await readyProduct(s);
   routePaid(s);
-  const c = (await s.storylab.generate(pid, { confirm: CONFIRM })).concepts[0];
+  const c = (await s.storylab.generate(pid, { category: 'all', confirm: CONFIRM })).concepts[0];
   await s.storylab.approve(pid, c.id);
   const epId = await s.createEpisodeFromConcept({ productId: pid, conceptId: c.id });
   await s.scriptgen.generate(epId, { confirm: CONFIRM });
@@ -133,11 +133,11 @@ test('changing an approved concept requires re-approval and flags the script for
 
 test('reject/reopen/regenerate keep history; approved concepts cannot be regenerated or rejected silently', async () => {
   let n = 0;
-  const ai = paidAi(() => (++n === 1 ? goodConcepts(3) : { concepts: [{ ...goodConcepts(5).concepts[4] }] }));
+  const ai = paidAi(() => (++n === 1 ? goodConcepts(3) : { concepts: [{ ...goodConcepts(5, '', Array(5).fill('drama')).concepts[4] }] }));
   const { s } = make({ ai });
   const pid = await readyProduct(s);
   routePaid(s);
-  const lab = await s.storylab.generate(pid, { confirm: CONFIRM });
+  const lab = await s.storylab.generate(pid, { category: 'all', confirm: CONFIRM });
   const [a, b, c] = lab.concepts;
   await s.storylab.reject(pid, b.id, '너무 평범');
   assert.equal(s.storylab.list(pid).concepts.find((x) => x.id === b.id).rejection.reason, '너무 평범');
@@ -156,9 +156,9 @@ test('reject/reopen/regenerate keep history; approved concepts cannot be regener
 test('mock (sample) route works without keys, is labelled sample, and records no billable usage', async () => {
   const { s } = make();
   const pid = await readyProduct(s);
-  const lab = await s.storylab.generate(pid, {});
+  const lab = await s.storylab.generate(pid, { category: 'all' });
   assert.ok(lab.concepts.length >= 3);
-  assert.ok(lab.concepts.every((c) => c.sample && /\[샘플\]/.test(c.title)));
+  assert.ok(lab.concepts.every((c) => c.sample && /\[Sample\]/.test(c.title) && /\[샘플\]/.test(c.ko.title)));
   await s.usage.flush();
   assert.ok(s.usage.list().every((e) => e.mock));
 });
