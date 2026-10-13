@@ -8,7 +8,9 @@ const { createStudio } = require('../../studio/lib/studio');
 const { createMockVideoProvider } = require('../../studio/lib/providers/mock');
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
-const png = (n = 0) => Buffer.concat([PNG, Buffer.from([n, n + 1, n + 2])]);
+// Header-only stub reporting 400x400 (products require >=100px; nothing in the tests decodes it).
+const PNG400 = Buffer.from(PNG); PNG400.writeUInt32BE(400, 16); PNG400.writeUInt32BE(400, 20);
+const png = (n = 0) => Buffer.concat([PNG400, Buffer.from([n, n + 1, n + 2])]);
 
 const CYCLE = ['drama', 'viral', 'info'];
 /** A fake AI's concept answer. `plan` = categories per concept (default: one of each in order, repeating); every concept carries its category + Korean translations. */

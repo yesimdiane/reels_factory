@@ -6,9 +6,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { StudioError, nowIso, sha256, safeName, canonical, readJson, writeJsonAtomic, writeFileAtomic } = require('./util');
-const { extractProduct, downloadImage, sniffImage } = require('./extract');
+const { extractProduct, downloadImage, sniffImage, imageSize } = require('./extract');
 
-const MAX_UPLOADS = 5;
+const MAX_UPLOADS = 10;
+const MIN_SIDE = 100; // px — smaller images are unusable as product references
+const MAX_SIDE = 8000;
 const MAX_RETRIEVED = 8;
 const MAX_GENERATED = 8;
 const MAX_SET = 8;
@@ -100,14 +102,22 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     return (p.specs || []).filter((s) => s.verified).map((s) => s.text).concat((p.sellingPoints || []).filter((s) => s.verified).map((s) => s.text));
   }
 
+  /** Saved order first (imageOrder), everything else after in creation order. Removed images are hidden. */
+  function orderedImages(p) {
+    const vis = p.images.filter((i) => !i.removed);
+    const rank = (i) => { const n = (p.imageOrder || []).indexOf(i.id); return n < 0 ? 1e6 : n; };
+    return vis.map((im, n) => ({ im, n })).sort((a, b) => rank(a.im) - rank(b.im) || a.n - b.n).map((x) => x.im);
+  }
+
   function view(p) {
     const refs = referenceState(p);
     return Object.assign({}, p, {
-      images: p.images.map((im) => Object.assign({}, im, { kindLabel: KIND_LABEL[im.kind], url: `/media/product/${p.id}/${im.id}` })),
+      images: orderedImages(p).map((im) => Object.assign({}, im, { kindLabel: KIND_LABEL[im.kind], url: `/media/product/${p.id}/${im.id}`, primary: p.primaryImageId === im.id })),
+      primaryImageId: p.primaryImageId || '',
       reference: refs,
       verifiedFacts: verifiedFacts(p),
       limits: { uploads: MAX_UPLOADS, retrieved: MAX_RETRIEVED, generated: MAX_GENERATED, extraRefs: 5 },
-      counts: { uploaded: p.images.filter((i) => i.kind === 'uploaded' && i.status !== 'replaced').length, retrieved: p.images.filter((i) => i.kind === 'retrieved').length, generated: p.images.filter((i) => i.kind === 'ai_generated').length },
+      counts: { uploaded: p.images.filter((i) => i.kind === 'uploaded' && i.status !== 'replaced').length, retrieved: p.images.filter((i) => i.kind === 'retrieved' && !i.removed).length, generated: p.images.filter((i) => i.kind === 'ai_generated').length },
       codeLocked: !!p.codeLockedAt, suggestedCode: p.code ? '' : suggestCode(p),
       readiness: readiness(p, refs),
       generations: generationsOf(p),
@@ -117,8 +127,8 @@ function createProductService({ store, router, extractFn = extractProduct, downl
   }
   /** The picture shown for the product: the first image of the APPROVED reference set, else the first approved image, else the first usable upload. Read-only. */
   function mainImageOf(p, refs) {
-    const usable = p.images.filter((i) => !['rejected', 'replaced'].includes(i.status));
-    const pick = (refs && refs.imageIds || []).map((id) => usable.find((i) => i.id === id)).filter(Boolean)[0] || usable.find((i) => i.status === 'approved') || usable[0];
+    const usable = orderedImages(p).filter((i) => !['rejected', 'replaced'].includes(i.status));
+    const pick = usable.find((i) => i.id === p.primaryImageId) || (refs && refs.imageIds || []).map((id) => usable.find((i) => i.id === id)).filter(Boolean)[0] || usable.find((i) => i.status === 'approved') || usable[0];
     return pick ? { id: pick.id, url: `/media/product/${p.id}/${pick.id}`, kind: pick.kind, label: pick.label || '', approved: pick.status === 'approved' } : null;
   }
   /** Episodes created for this product (any state). Read-only: nothing is created or changed here. */
@@ -223,31 +233,79 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     const sn = sniffImage(buffer);
     if (!sn) throw new StudioError('BAD_TYPE', 'PNG, JPG, WEBP 이미지만 올릴 수 있습니다.', { status: 415 });
     if (buffer.length > 10 * 1024 * 1024) throw new StudioError('TOO_LARGE', '10 MB 이하 이미지만 가능합니다.', { status: 413 });
+    const dim = imageSize(buffer);
+    if (!dim) throw new StudioError('BAD_IMAGE', '이미지 크기를 읽을 수 없습니다. 손상된 파일일 수 있습니다.', { status: 415 });
+    if (Math.min(dim.width, dim.height) < MIN_SIDE) throw new StudioError('TOO_SMALL', `이미지가 너무 작습니다 (${dim.width}×${dim.height}px). 짧은 변이 ${MIN_SIDE}px 이상이어야 합니다.`, { status: 422 });
+    if (Math.max(dim.width, dim.height) > MAX_SIDE) throw new StudioError('TOO_BIG_DIMS', `이미지가 너무 큽니다 (${dim.width}×${dim.height}px). 긴 변은 ${MAX_SIDE}px 이하여야 합니다.`, { status: 422 });
     const hash = sha256(buffer);
     if (p.images.some((i) => i.sha256 === hash && i.status !== 'replaced')) throw new StudioError('DUPLICATE', '이미 있는 같은 이미지입니다.', { status: 409 });
     const imgId = 'img_' + hash.slice(0, 10);
     writeFileAtomic(path.join(dirOf(id), imgId + sn.ext), buffer);
-    const im = Object.assign({ id: imgId, file: imgId + sn.ext, kind, sha256: hash, size: buffer.length, status: 'pending', label: label || safeName(filename || '').replace(/\.[^.]+$/, '') || KIND_LABEL[kind], originalName: safeName(filename || ''), createdAt: nowIso() }, extra);
-    p.images.push(im);
-    return im;
+    const fresh = Object.assign({ id: imgId, file: imgId + sn.ext, kind, sha256: hash, size: buffer.length, width: dim.width, height: dim.height, status: 'pending', label: label || safeName(filename || '').replace(/\.[^.]+$/, '') || KIND_LABEL[kind], originalName: safeName(filename || ''), createdAt: nowIso() }, extra);
+    // The same bytes were removed/replaced earlier: bring that record back instead of adding a second record with the same id.
+    const gone = p.images.findIndex((i) => i.id === imgId);
+    if (gone >= 0) p.images[gone] = fresh; else p.images.push(fresh);
+    return fresh;
   }
 
-  async function upload(id, buffer, filename, { label } = {}) {
+  async function upload(id, buffer, filename, { label, source } = {}) {
     const p = await update(id, (p) => {
       if (!buffer || !buffer.length) throw new StudioError('EMPTY_FILE', '빈 파일입니다.', { status: 400 });
-      if (p.images.filter((i) => i.kind === 'uploaded' && i.status !== 'replaced').length >= MAX_UPLOADS) throw new StudioError('UPLOAD_LIMIT', `업로드는 최대 ${MAX_UPLOADS}장입니다. 기존 이미지를 교체하거나 삭제하세요.`, { status: 409 });
-      saveImage(p, id, { buffer, filename, kind: 'uploaded', label });
+      if (p.images.filter((i) => i.kind === 'uploaded' && i.status !== 'replaced').length >= MAX_UPLOADS) throw new StudioError('UPLOAD_LIMIT', `업로드는 최대 ${MAX_UPLOADS}장입니다. 기존 이미지를 삭제하거나 교체하세요.`, { status: 409 });
+      saveImage(p, id, { buffer, filename, kind: 'uploaded', label, extra: { source: ['paste', 'drop', 'file', 'crop'].includes(source) ? source : 'file' } });
     });
     return view(p);
   }
 
-  async function replace(id, imgId, buffer, filename) {
+  /** Replacing or removing an APPROVED image (or one in the approved reference set) changes what Story Lab is bound to: needs confirmation. */
+  function guardApproved(p, im, confirm, what) {
+    const inSet = !!(p.referenceSet && (p.referenceSet.imageIds || []).includes(im.id));
+    if ((im.status === 'approved' || inSet) && !confirm) throw new StudioError('CONFIRM_APPROVED', `승인된 참조 이미지입니다. ${what}하면 참조 세트를 다시 승인해야 합니다. 계속하려면 확인이 필요합니다.`, { status: 409, details: [{ code: 'CONFIRM_APPROVED', imageId: im.id }] });
+  }
+
+  async function replace(id, imgId, buffer, filename, { confirm = false, source = 'file' } = {}) {
     const p = await update(id, (p) => {
       const old = p.images.find((i) => i.id === imgId);
       if (!old) throw new StudioError('NOT_FOUND', '이미지를 찾을 수 없습니다.', { status: 404 });
-      const nu = saveImage(p, id, { buffer, filename, kind: 'uploaded', label: old.label, extra: { replaces: old.id } });
+      guardApproved(p, old, confirm, '교체');
+      const nu = saveImage(p, id, { buffer, filename, kind: 'uploaded', label: old.label, extra: { replaces: old.id, source: source === 'crop' ? 'crop' : 'file' } });
       old.status = 'replaced';
       old.replacedBy = nu.id;
+      p.imageOrder = (p.imageOrder || []).map((x) => (x === old.id ? nu.id : x));
+      if (p.primaryImageId === old.id) p.primaryImageId = nu.id;
+    });
+    return view(p);
+  }
+
+  /** Soft remove (uploaded images only). The file stays on the volume; the record is hidden and its bytes can be uploaded again. */
+  async function removeImage(id, imgId, { confirm = false } = {}) {
+    const p = await update(id, (p) => {
+      const im = p.images.find((i) => i.id === imgId);
+      if (!im || im.status === 'replaced') throw new StudioError('NOT_FOUND', '이미지를 찾을 수 없습니다.', { status: 404 });
+      if (im.kind !== 'uploaded') throw new StudioError('NOT_REMOVABLE', '직접 업로드한 이미지만 삭제할 수 있습니다. 다른 이미지는 거절하세요.', { status: 409 });
+      guardApproved(p, im, confirm, '삭제');
+      im.status = 'replaced'; im.removed = true; im.removedAt = nowIso();
+      p.imageOrder = (p.imageOrder || []).filter((x) => x !== im.id);
+      if (p.primaryImageId === im.id) p.primaryImageId = '';
+    });
+    return view(p);
+  }
+
+  /** Display order of the reference images (does not affect approval: the approved set hash ignores order). */
+  async function reorderImages(id, orderIds) {
+    const p = await update(id, (p) => {
+      const live = orderedImages(p).filter((i) => i.status !== 'replaced').map((i) => i.id);
+      const given = Array.isArray(orderIds) ? orderIds.filter((x, n, a) => live.includes(x) && a.indexOf(x) === n) : [];
+      p.imageOrder = given.concat(live.filter((x) => !given.includes(x)));
+    });
+    return view(p);
+  }
+  /** The product's primary picture (shown on cards / the Products list). Any usable image can be primary. */
+  async function setPrimary(id, imgId) {
+    const p = await update(id, (p) => {
+      const im = p.images.find((i) => i.id === imgId);
+      if (!im || ['replaced', 'rejected'].includes(im.status)) throw new StudioError('NOT_FOUND', '대표로 쓸 수 있는 이미지가 아닙니다.', { status: 404 });
+      p.primaryImageId = im.id;
     });
     return view(p);
   }
@@ -369,7 +427,7 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     return path.join(dirOf(id), im.file);
   }
 
-  return { list, get: (id) => view(get(id)), raw: get, create, edit, extract, upload, replace, setStatus, generateImage, chooseVersion, imageCount, approveReferenceSet, waiveReferences, bindingFor, imageFiles, mediaFile, lockCodeSync, suggestCode, referenceState, verifiedFacts, readiness, MAX_UPLOADS };
+  return { list, get: (id) => view(get(id)), raw: get, create, edit, extract, upload, replace, removeImage, reorderImages, setPrimary, setStatus, generateImage, chooseVersion, imageCount, approveReferenceSet, waiveReferences, bindingFor, imageFiles, mediaFile, lockCodeSync, suggestCode, referenceState, verifiedFacts, readiness, MAX_UPLOADS, MIN_SIDE, MAX_SIDE };
 }
 
-module.exports = { createProductService, KIND_LABEL, MAX_UPLOADS };
+module.exports = { createProductService, KIND_LABEL, MAX_UPLOADS, MIN_SIDE, MAX_SIDE };

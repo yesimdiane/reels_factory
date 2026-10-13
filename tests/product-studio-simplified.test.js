@@ -121,6 +121,10 @@ test('the Product Studio screen: summary first (code, name, link, main image, re
   for (const k of ['data-product-summary', 'data-create-story', 'data-product-card', 'data-fold']) assert.match(src, new RegExp(k), k);
   assert.match(src, /스토리 만들기/); assert.match(src, /대표 참조 이미지/); assert.match(src, /연결된 에피소드/);
   for (const t of ['제품 정보 · 사양 · 금지 표현', '참조 이미지', 'AI 참조 이미지 생성 이력']) assert.match(src, new RegExp(t), 'folded: ' + t);
-  assert.match(src, /type: 'file', accept: 'image\/png,image\/jpeg,image\/webp', multiple: true/, 'a plain file input (works in mobile Safari)');
+  const intake = fs.readFileSync(path.join(VIEWS, 'image-intake.js'), 'utf8');
+  const core = fs.readFileSync(path.join(VIEWS, '..', 'image-intake-core.js'), 'utf8');
+  assert.match(intake, /type: 'file', accept: ACCEPT, multiple: true/, 'a plain file input (works in mobile Safari)');
+  assert.match(core, /ACCEPT = 'image\/png,image\/jpeg,image\/webp'/);
+  assert.match(src, /imageIntake\(/);
   assert.match(src, /fold\(.*false, A\)/s, 'product info starts folded');
 });
