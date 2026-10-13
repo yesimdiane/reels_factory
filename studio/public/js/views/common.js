@@ -76,8 +76,9 @@ export function noEpisode() {
 
 export function episodePicker() {
   const s = state.summary;
-  if (!s || s.episodes.length < 2) return null;
-  return h('select', { 'aria-label': '에피소드 선택', style: 'width:auto;padding:7px 12px;border-radius:999px', onchange: (e) => { selectEpisode(e.target.value).then(() => { location.hash = '#/' + state.view + '/' + state.episodeId; }); } }, s.episodes.map((e) => h('option', { value: e.id, selected: e.id === state.episodeId }, e.id + ' · ' + e.title.slice(0, 22))));
+  const live = s ? s.episodes.filter((e) => !e.archived) : [];
+  if (!s || live.length < 2) return null;
+  return h('select', { 'aria-label': '에피소드 선택', style: 'width:auto;padding:7px 12px;border-radius:999px', onchange: (e) => { selectEpisode(e.target.value).then(() => { location.hash = '#/' + state.view + '/' + state.episodeId; }); } }, live.map((e) => h('option', { value: e.id, selected: e.id === state.episodeId }, e.id + ' · ' + e.title.slice(0, 22))));
 }
 
 export function issueList(items, kind = 'err') {

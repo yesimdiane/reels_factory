@@ -218,7 +218,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         publishing: { checklist: publishChecklist(ep), validation: ep.publishing && ep.publishing.caption ? validatePublishing(ep, ep.publishing) : null },
         jobsRunning: jobsRunning(ep),
         audit: store.episodes.auditLog(id, 40),
-        versions: store.episodes.versions(id),
+        versions: store.episodes.versions(id).filter((v) => !deletedVersions(ep)[v.version]),
+        deletedVersionCount: Object.keys(deletedVersions(ep)).length,
       },
       productRefImages: (() => {
         const refs = ep.productRefs && ep.productRefs.imageIds;
@@ -257,7 +258,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       products: products.list(),
       storylab: storylabSummary(),
       ai: { routing: integrations.overview().routing, usage: usage.summary(store.settings.get().ai.limits) },
-      episodes: eps.map((e) => ({ id: e.id, concept: e.derived.concept, title: e.title, titleEn: e.titleEn, productName: e.product.name, steps: e.derived.steps, spentUsd: e.derived.spentUsd, limitUsd: e.derived.limitUsd, totalPlannedSec: e.derived.totalPlannedSec, scenes: e.scenes.length, thumb: firstClipThumb(e), published: !!(e.publishing && e.publishing.publishedAt), finalApproved: !!e.approvals.final, updatedAt: e.updatedAt })),
+      episodes: eps.map((e) => ({ id: e.id, concept: e.derived.concept, title: e.title, titleEn: e.titleEn, productName: e.product.name, steps: e.derived.steps, spentUsd: e.derived.spentUsd, limitUsd: e.derived.limitUsd, totalPlannedSec: e.derived.totalPlannedSec, scenes: e.scenes.length, thumb: firstClipThumb(e), published: !!(e.publishing && e.publishing.publishedAt), finalApproved: !!e.approvals.final, archived: !!e.archivedAt, updatedAt: e.updatedAt })),
       queue,
       totals: {
         episodes: eps.length,
@@ -442,7 +443,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       projects.assertProjectReady(ep); // every scene must be approved first (never approved silently)
       ep.approvals.script = { hash: scriptFingerprint(ep), version: ep.version || 0, by, at: nowIso() };
     });
-    store.episodes.audit(id, 'script.approved', { by });
+    store.episodes.audit(id, 'script.approved', { by, version: store.episodes.get(id).version || 0 });
     // Free, deterministic: scenes that have no prompt yet get one right away so the Storyboard is never empty.
     const missing = store.episodes.get(id).scenes.filter((s) => !store.episodes.get(id).prompts[s.id]).map((s) => s.id);
     if (missing.length) await promptSvc.generate(id, { sceneIds: missing, mode: 'template' });
@@ -459,6 +460,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   }
 
   async function restoreVersion(id, n, by = 'operator') {
+    if (deletedVersions(store.episodes.get(id))[Number(n)]) throw new StudioError('VERSION_DELETED', `v${n}은 삭제된 버전입니다. 먼저 삭제를 취소하세요.`, { status: 409 });
     const v = store.episodes.version(id, n);
     await store.episodes.update(id, (ep) => {
       ep.title = v.title;
@@ -511,13 +513,65 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
    * history and spend records stay on disk (spend still counts toward the limits) and it can be restored. Its id is never reused.
    * Refused while a generation or a render is running; a published episode needs an explicit extra confirmation.
    */
-  async function trashEpisode(id, { confirmPublished = false, by = 'operator' } = {}) {
+  /** Script versions that were approved at some point (current approval, Image Development snapshots, approval audit entries). They are history worth keeping. */
+  function approvedScriptVersions(ep) {
+    const set = new Set();
+    if (ep.approvals && ep.approvals.script && ep.approvals.script.version != null) set.add(Number(ep.approvals.script.version));
+    ((ep.imageDev && ep.imageDev.snapshots) || []).forEach((x) => x.scriptVersion != null && set.add(Number(x.scriptVersion)));
+    try { store.episodes.auditLog(ep.id, 5000).forEach((e) => e.event === 'script.approved' && e.version != null && set.add(Number(e.version))); } catch (_) { /* no audit yet */ }
+    return set;
+  }
+  const deletedVersions = (ep) => ep.deletedVersions || {};
+
+  /** What deleting this episode touches — shown in the confirmation. Nothing here is removed from disk; the whole episode moves to the trash and comes back as it was. */
+  function episodeImpact(id) {
+    const ep = store.episodes.get(id);
+    const del = deletedVersions(ep);
+    const versions = store.episodes.versions(id).filter((v) => !del[v.version]);
+    const approvedV = [...approvedScriptVersions(ep)].filter((n) => versions.some((v) => v.version === n));
+    const scenes = ep.scenes || [];
+    const prompts = Object.keys(ep.prompts || {}).length;
+    const imgs = scenes.filter((x) => x.startImage && x.startImage.file);
+    const clipVersions = Object.values(ep.clips || {}).reduce((n, c) => n + ((c && c.versions) || []).length, 0);
+    const clipApproved = Object.values(ep.clips || {}).filter((c) => c && c.approvedVersion).length;
+    const voiceLines = Object.keys((ep.voice && ep.voice.lines) || {}).length;
+    const renders = (ep.renders || []).length;
+    const published = !!(ep.publishing && ep.publishing.publishedAt);
+    const protectedItems = [];
+    if (approvedV.length) protectedItems.push(`승인된 대본 버전 ${approvedV.map((n) => 'v' + n).join(', ')}`);
+    if (ep.approvals && ep.approvals.storyboard) protectedItems.push('승인된 스토리보드');
+    if (clipApproved) protectedItems.push(`승인된 클립 ${clipApproved}개`);
+    if (ep.approvals && ep.approvals.final) protectedItems.push('최종 승인된 영상');
+    if (published) protectedItems.push('게시 기록');
+    return {
+      id, title: ep.title, published, archived: !!ep.archivedAt,
+      scripts: { versions: versions.length, approved: approvedV, current: ep.version || 0, scenes: scenes.length, lines: (ep.lines || []).length },
+      storyboards: { prompts, approved: !!(ep.approvals && ep.approvals.storyboard) },
+      images: { startImages: imgs.length, approvedStartImages: imgs.filter((x) => x.startImage.approved).length },
+      videos: { clipVersions, approvedClips: clipApproved, renders, finalApproved: !!(ep.approvals && ep.approvals.final), voiceLines },
+      spentUsd: (ep.spend || []).reduce((n, x) => n + (Number(x.usd) || 0), 0),
+      protected: protectedItems,
+      requiresApprovedConfirm: protectedItems.length > 0,
+      busy: !!(jobsRunning(ep) || (ep.renderJob && ep.renderJob.status === 'running')),
+    };
+  }
+
+  /**
+   * 삭제 = 휴지통: the episode leaves every list but NOTHING is removed from disk — scripts, storyboards, images, clips, voices, renders,
+   * approvals and spend stay as they were and come back on restore. Refused while a generation or a render is running. Episodes that carry
+   * approved history (approved script / storyboard / clips / final) or were published need an explicit confirmation.
+   */
+  async function trashEpisode(id, { confirmPublished = false, confirmApproved = false, by = 'operator' } = {}) {
     const ep0 = store.episodes.get(id);
     if (ep0.trashedAt) throw new StudioError('ALREADY_TRASHED', '이미 휴지통에 있는 에피소드입니다.', { status: 409 });
     if (jobsRunning(ep0) || (ep0.renderJob && ep0.renderJob.status === 'running')) throw new StudioError('BUSY', '영상 생성이나 렌더링이 진행 중인 에피소드는 지울 수 없습니다. 끝난 뒤 다시 시도하세요.', { status: 409 });
     if (ep0.publishing && ep0.publishing.publishedAt && !confirmPublished) throw new StudioError('PUBLISHED', '이미 게시한 에피소드입니다. 휴지통으로 옮기려면 한 번 더 확인해야 합니다.', { status: 409, details: [{ publishedAt: ep0.publishing.publishedAt }] });
+    const imp = episodeImpact(id);
+    if (imp.protected.length && !confirmApproved && !(imp.protected.length === 1 && imp.published && confirmPublished)) {
+      throw new StudioError('APPROVED_CONTENT', `승인된 기록이 있는 에피소드입니다 (${imp.protected.join(' · ')}). 삭제하려면 명시적으로 확인해야 합니다.`, { status: 409, details: imp.protected, recovery: '확인하면 휴지통으로 이동하며, 승인 기록은 지워지지 않고 복원하면 그대로 돌아옵니다.' });
+    }
     await store.episodes.update(id, (ep) => { ep.trashedAt = nowIso(); ep.trashedBy = by; });
-    store.episodes.audit(id, 'episode.trashed', { by });
+    store.episodes.audit(id, 'episode.trashed', { by, confirmedApproved: !!confirmApproved });
     return { id, trashed: true };
   }
   async function restoreEpisode(id, by = 'operator') {
@@ -528,6 +582,62 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return episodeView(id);
   }
   const trashList = () => store.episodes.list({ trashed: true }).map((e) => ({ id: e.id, title: e.title, productName: (e.product || {}).name || '', trashedAt: e.trashedAt, scenes: (e.scenes || []).length, published: !!(e.publishing && e.publishing.publishedAt), finalApproved: !!(e.approvals && e.approvals.final) }));
+
+  /** 보관: keeps the episode (and everything linked to it) but moves it out of the working list. Not a deletion; reversible with 보관 해제. */
+  async function archiveEpisode(id, by = 'operator') {
+    const ep0 = store.episodes.get(id);
+    if (ep0.trashedAt) throw new StudioError('TRASHED', '휴지통에 있는 에피소드는 보관할 수 없습니다. 먼저 복원하세요.', { status: 409 });
+    if (ep0.archivedAt) throw new StudioError('ALREADY_ARCHIVED', '이미 보관된 에피소드입니다.', { status: 409 });
+    await store.episodes.update(id, (ep) => { ep.archivedAt = nowIso(); ep.archivedBy = by; });
+    store.episodes.audit(id, 'episode.archived', { by });
+    return episodeView(id);
+  }
+  async function unarchiveEpisode(id, by = 'operator') {
+    const ep0 = store.episodes.get(id);
+    if (!ep0.archivedAt) throw new StudioError('NOT_ARCHIVED', '보관된 에피소드가 아닙니다.', { status: 409 });
+    await store.episodes.update(id, (ep) => { delete ep.archivedAt; delete ep.archivedBy; });
+    store.episodes.audit(id, 'episode.unarchived', { by });
+    return episodeView(id);
+  }
+
+  // ---------- script versions: soft delete (the numbered version file is never removed) ----------
+  /** Every saved script version with its state. Deleted versions stay listed (with deleted: true) so they can be restored. */
+  function scriptVersions(id) {
+    const ep = store.episodes.get(id);
+    const del = deletedVersions(ep);
+    const approved = approvedScriptVersions(ep);
+    const cur = ep.approvals && ep.approvals.script ? Number(ep.approvals.script.version) : null;
+    return store.episodes.versions(id).map((v) => Object.assign({}, v, {
+      current: v.version === (ep.version || 0), approvedNow: cur === v.version, wasApproved: approved.has(v.version),
+      deleted: !!del[v.version], deletedAt: (del[v.version] || {}).at || null,
+      canDelete: !del[v.version] && v.version !== (ep.version || 0),
+    }));
+  }
+  /**
+   * Hides one saved script version. The parent episode, the current script, other versions and every asset (storyboard prompts, images, clips,
+   * voices, renders, approved-script snapshots) are untouched. The live version cannot be deleted; a version that was approved needs confirmApproved.
+   */
+  async function deleteScriptVersion(id, n, { confirmApproved = false, by = 'operator' } = {}) {
+    n = Number(n);
+    const ep0 = store.episodes.get(id);
+    if (ep0.trashedAt) throw new StudioError('TRASHED', '휴지통에 있는 에피소드입니다.', { status: 409 });
+    store.episodes.version(id, n); // 404 when missing
+    if (deletedVersions(ep0)[n]) throw new StudioError('ALREADY_DELETED', `v${n}은 이미 삭제되었습니다.`, { status: 409 });
+    if (n === (ep0.version || 0)) throw new StudioError('CURRENT_VERSION', `v${n}은 지금 사용 중인 대본입니다. 다른 버전으로 되돌린 뒤 삭제하세요.`, { status: 409, recovery: '대본 스튜디오 → 버전 기록에서 다른 버전을 복원하면 이 버전을 삭제할 수 있습니다.' });
+    const wasApproved = approvedScriptVersions(ep0).has(n);
+    if (wasApproved && !confirmApproved) throw new StudioError('APPROVED_VERSION', `v${n}은 승인된 적이 있는 대본입니다. 삭제하려면 명시적으로 확인해야 합니다.`, { status: 409, details: [{ version: n }], recovery: '확인해도 파일은 지워지지 않고 목록에서만 숨겨지며 언제든 복원할 수 있습니다.' });
+    await store.episodes.update(id, (ep) => { ep.deletedVersions = Object.assign({}, ep.deletedVersions, { [n]: { at: nowIso(), by, wasApproved } }); });
+    store.episodes.audit(id, 'script.version_deleted', { by, version: n, wasApproved });
+    return { id, version: n, deleted: true, versions: scriptVersions(id) };
+  }
+  async function undeleteScriptVersion(id, n, by = 'operator') {
+    n = Number(n);
+    const ep0 = store.episodes.get(id);
+    if (!deletedVersions(ep0)[n]) throw new StudioError('NOT_DELETED', `v${n}은 삭제된 버전이 아닙니다.`, { status: 409 });
+    await store.episodes.update(id, (ep) => { const d = Object.assign({}, ep.deletedVersions); delete d[n]; ep.deletedVersions = d; });
+    store.episodes.audit(id, 'script.version_restored', { by, version: n });
+    return { id, version: n, deleted: false, versions: scriptVersions(id) };
+  }
 
   // ---------- insert shots (컷 추가): crops of the scene's own approved clip; no AI / video call, no cost ----------
   /** The picture the crops come from: the approved clip (else the newest one); before any clip exists only the start image can be previewed. */
@@ -931,7 +1041,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   return {
     cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

@@ -442,3 +442,25 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .cat-brief { font-size: 12.5px; line-height: 1.35; color: var(--espresso-2); }
 .cat-goal { font-size: 11.5px; opacity: .75; }
 @media (max-width: 640px) { .cat-grid { grid-template-columns: 1fr; } }
+
+/* ⋯ menu (episodes, script versions): fixed popover on desktop, bottom sheet on phones */
+.kebab-btn { min-width: 36px; min-height: 36px; font-size: 18px; line-height: 1; letter-spacing: 1px; touch-action: manipulation; }
+.kebab-menu { position: fixed; z-index: 200; min-width: 230px; max-width: calc(100vw - 16px); background: #fff; border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: 0 12px 32px rgba(58, 43, 34, .22); padding: 6px; display: grid; gap: 2px; }
+.kebab-item { appearance: none; border: 0; background: transparent; text-align: left; font: inherit; color: var(--espresso); padding: 10px 12px; min-height: 44px; border-radius: 10px; cursor: pointer; display: grid; gap: 1px; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.kebab-item:hover:not(:disabled) { background: var(--paper); }
+.kebab-item:disabled { opacity: .45; cursor: not-allowed; }
+.kebab-item.danger { color: var(--rose); }
+.kebab-hint { font-size: 11.5px; opacity: .7; font-weight: 400; }
+.kebab-cancel { display: none; text-align: center; font-weight: 600; }
+.kebab-menu.sheet { left: 0; right: 0; bottom: 0; top: auto; max-width: none; border-radius: 18px 18px 0 0; padding: 10px 10px calc(10px + env(safe-area-inset-bottom)); box-shadow: 0 -10px 30px rgba(58, 43, 34, .28); }
+.kebab-menu.sheet .kebab-cancel { display: grid; margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0; }
+.kebab-menu.sheet .kebab-item { min-height: 52px; font-size: 16px; }
+.impact { gap: 6px; display: grid; }
+.impact-h { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+.impact-row { display: grid; grid-template-columns: 92px 1fr; gap: 8px; font-size: 13.5px; }
+.impact-k { color: var(--muted); font-weight: 600; }
+.version-item.is-deleted { opacity: .6; }
+.kebab-item.has-en { align-items: flex-start; justify-content: flex-start; text-align: left; border-radius: 10px; gap: 0; }
+.kebab-item.has-en > .btn-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.kebab-item.has-en > .btn-en { opacity: .6; font-size: 10.5px; }
+.kebab-menu.sheet .kebab-cancel.has-en { align-items: center; }

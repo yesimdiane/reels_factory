@@ -13,7 +13,7 @@ export function go(view, episodeId) {
 
 export async function refresh({ episode = true } = {}) {
   state.summary = await api.get('/api/state');
-  if (!state.episodeId || !state.summary.episodes.some((e) => e.id === state.episodeId)) state.episodeId = (state.summary.episodes[0] || {}).id || '';
+  if (!state.episodeId || !state.summary.episodes.some((e) => e.id === state.episodeId)) state.episodeId = (state.summary.episodes.find((e) => !e.archived) || state.summary.episodes[0] || {}).id || '';
   if (episode && state.episodeId) state.episode = await api.get('/api/episodes/' + state.episodeId);
   else if (!state.episodeId) state.episode = null;
   try { localStorage.setItem('rf.episode', state.episodeId); } catch { /* private mode */ }

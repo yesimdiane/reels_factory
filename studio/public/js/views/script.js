@@ -10,6 +10,7 @@ import { structureMap } from './structure-map.js';
 import { projectPanel } from './script-project.js';
 import { sceneFocus, sceneNavigator, currentSceneId, setFocus, switchScene, addScene, saveAllDirty } from './script-focus.js';
 import { guardLeave } from './leave-guard.js';
+import { versionMenu, versionManager } from './episode-actions.js';
 import { draftOf } from './script-draft.js';
 
 // Wide screens (PC) show EVERY scene, S1 … last, as stacked cards; narrow screens (phone) show one scene at a time.
@@ -95,7 +96,8 @@ export function script() {
 
   // version history of the whole script (compact)
   wrap.append(h('details', { class: 'card' }, h('summary', null, h('b', null, '버전 기록'), h('span', { class: 'small muted' }, ` ${ep.derived.versions.length}개`)),
-    ep.derived.versions.length ? h('div', { class: 'list', style: 'margin-top:10px' }, ep.derived.versions.slice().reverse().slice(0, 8).map((vv) => h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'v' + vv.version + (ep.approvals.script && ep.approvals.script.version === vv.version ? ' · 승인됨' : '')), h('div', { class: 'small muted' }, new Date(vv.at).toLocaleString('ko-KR') + (vv.note ? ' · ' + vv.note : ''))), vv.version === ep.version ? chip('현재', 'done') : h('button', { class: 'btn sm ghost', type: 'button', onclick: async () => { if (isUnsaved()) return toast('저장하지 않은 변경이 있습니다. 먼저 저장하세요.', { error: true }); if (await confirmDialog({ title: `v${vv.version}로 되돌릴까요?`, body: '현재 내용은 새 버전으로 남습니다. 대본 승인은 무효가 될 수 있습니다.', tone: 'clay' })) act(() => api.post(`/api/episodes/${ep.id}/versions/${vv.version}/restore`), { ok: `v${vv.version}을 복원했습니다` }); } }, '복원')))) : h('div', { class: 'muted small' }, '저장하면 버전이 쌓입니다.')));
+    ep.derived.versions.length ? h('div', { class: 'list', style: 'margin-top:10px' }, ep.derived.versions.slice().reverse().slice(0, 8).map((vv) => h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'v' + vv.version + (ep.approvals.script && ep.approvals.script.version === vv.version ? ' · 승인됨' : '')), h('div', { class: 'small muted' }, new Date(vv.at).toLocaleString('ko-KR') + (vv.note ? ' · ' + vv.note : ''))), h('div', { class: 'row', style: 'gap:6px;flex-wrap:nowrap' }, vv.version === ep.version ? chip('현재', 'done') : h('button', { class: 'btn sm ghost', type: 'button', onclick: async () => { if (isUnsaved()) return toast('저장하지 않은 변경이 있습니다. 먼저 저장하세요.', { error: true }); if (await confirmDialog({ title: `v${vv.version}로 되돌릴까요?`, body: '현재 내용은 새 버전으로 남습니다. 대본 승인은 무효가 될 수 있습니다.', tone: 'clay' })) act(() => api.post(`/api/episodes/${ep.id}/versions/${vv.version}/restore`), { ok: `v${vv.version}을 복원했습니다` }); } }, '복원'), versionMenu(ep, { version: vv.version, current: vv.version === ep.version, canDelete: vv.version !== ep.version, wasApproved: !!(ep.approvals.script && ep.approvals.script.version === vv.version) || !!vv.wasApproved }, () => act(async () => null)))))) : h('div', { class: 'muted small' }, '저장하면 버전이 쌓입니다.'),
+    h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'btn sm ghost', type: 'button', 'data-version-manager': '', onclick: () => versionManager(ep) }, '삭제한 버전 포함 모두 보기'))));
   function isUnsaved() { return !!(d.dirty || d.epDirty); }
 
   // sticky bottom action bar (mobile: full width above the tab bar, safe-area and keyboard aware; desktop: floating bottom-right)

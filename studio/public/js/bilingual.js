@@ -10,7 +10,7 @@ function labelOf(el) {
   let t = '';
   el.childNodes.forEach((n) => {
     if (n.nodeType === 3) t += n.textContent;
-    else if (n.nodeType === 1 && !n.classList.contains('btn-en') && !(n instanceof SVGElement) && !n.querySelector('svg')) t += n.textContent;
+    else if (n.nodeType === 1 && !n.classList.contains('btn-en') && !n.classList.contains('kebab-hint') && !(n instanceof SVGElement) && !n.querySelector('svg')) t += n.textContent;
   });
   return t.replace(/\s+/g, ' ').trim();
 }
