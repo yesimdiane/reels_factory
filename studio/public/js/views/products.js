@@ -181,6 +181,15 @@ function draw(p) {
     p.mainImage ? h('img', { class: 'prod-main', src: p.mainImage.url, alt: '대표 참조 이미지' }) : h('div', { class: 'prod-main empty' }, '대표 이미지 없음'),
     h('div', { class: 'stack', style: 'gap:8px;min-width:0' },
       h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, h('span', { class: 'ep-code' }, p.code || '코드 없음'), chip(...refChip), chip(p.readiness.ok ? '스토리 준비 완료' : '준비 필요', p.readiness.ok ? 'done' : 'attention')),
+      p.codeLocked ? null : (() => {
+        const cf = { code: p.code || '' };
+        const inp = h('input', { type: 'text', value: cf.code, maxlength: 5, placeholder: p.suggestedCode || 'UMB', autocapitalize: 'characters', 'aria-label': '제품 코드', 'data-summary-code-input': '', style: 'width:110px;text-transform:uppercase', oninput: (e) => { cf.code = e.target.value.toUpperCase(); } });
+        return h('div', { class: 'stack', style: 'gap:4px', 'data-summary-code': '' },
+          h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, inp,
+            !p.code && p.suggestedCode ? h('button', { class: 'btn sm ghost', type: 'button', onclick: () => { cf.code = p.suggestedCode; inp.value = p.suggestedCode; } }, '추천 ' + p.suggestedCode + ' 사용') : null,
+            h('button', { class: 'btn sm sage', type: 'button', 'data-summary-code-save': '', onclick: () => run(() => api.put('/api/products/' + p.id, { code: cf.code }), '제품 코드를 저장했습니다') }, '코드 저장')),
+          h('div', { class: 'small ' + (p.code ? 'muted' : ''), style: p.code ? '' : 'color:var(--clay)' }, p.code ? '첫 에피소드를 만들면 코드가 고정됩니다.' : '에피소드 ID(예: UMB-01-D)를 만들려면 제품 코드(영문 대문자 2~5자)가 필요합니다.'));
+      })(),
       h('h2', { style: 'margin:0;overflow-wrap:anywhere' }, p.name || '제품'),
       p.url ? h('a', { class: 'small', href: p.url, target: '_blank', rel: 'noopener', style: 'overflow-wrap:anywhere' }, p.url) : h('div', { class: 'small muted' }, '제품 링크 없음 (직접 입력)'),
       h('div', { class: 'small' }, h('b', null, '연결된 에피소드: '), live.length ? live.map((e, i) => [i ? ', ' : '', h('a', { href: '#/script/' + e.id, onclick: () => { state.episodeId = e.id; } }, e.displayId || e.id)]) : '없음'),

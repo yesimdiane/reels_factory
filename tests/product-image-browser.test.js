@@ -110,3 +110,23 @@ test('iPhone-sized viewport: Photos/Files input fallback accepts multiple files 
     await ctx.close();
   } finally { await browser.close(); app.close(); }
 });
+
+test('a product created without a code can get one from the summary card (no need to open the folded info section)', { skip, timeout: 60000 }, async () => {
+  const { s, app, browser, base } = await boot();
+  try {
+    const p = await s.products.create({ name: '코드 없는 제품', features: ['f'] });
+    assert.equal(s.products.get(p.id).code, '');
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+    await page.goto(base + '#/products/' + p.id);
+    await page.waitForSelector('[data-summary-code-input]');
+    assert.equal(await page.locator('[data-product-summary] details').count(), 0, 'the field is in the always-visible summary');
+    await page.locator('[data-summary-code-input]').fill('zbx');
+    await page.locator('[data-summary-code-save]').click();
+    await page.waitForFunction(() => document.querySelector('[data-product-summary] .ep-code').textContent === 'ZBX');
+    assert.equal(s.products.get(p.id).code, 'ZBX');
+    await page.locator('[data-summary-code-input]').fill('x');
+    await page.locator('[data-summary-code-save]').click();
+    await page.waitForSelector('.toast.err');
+    assert.equal(s.products.get(p.id).code, 'ZBX', 'invalid codes are rejected with a message');
+  } finally { await browser.close(); app.close(); }
+});
