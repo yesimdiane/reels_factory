@@ -5,7 +5,7 @@ import { api } from '../api.js';
 import { pageHead, asyncBlock, confirmPaid } from './common.js';
 
 const FIELDS = [['hook', '오프닝 훅 (첫 3초)'], ['situation', '제품 문제 / 사용 상황'], ['plot', '30~45초 줄거리'], ['productRole', '자연스러운 제품 등장'], ['characterUsage', 'Jack·Diane 상호작용'], ['visualComedy', '비주얼 코미디 포인트'], ['payoff', '결말 / 페이오프'], ['viewerAppeal', '시청자 공감 포인트'], ['ctaDirection', '마지막 CTA']];
-const view = { filter: 'active', compare: new Set(), category: '', count: 1, extra: '' };
+const view = { filter: 'active', compare: new Set(), category: '', count: 1, maxSec: 45, extra: '' };
 // Count rules mirror the backend (studio/lib/storycategories.js): 1–5 for one category, always 3 for "all". The server enforces them too.
 const isAll = () => view.category === 'all';
 const effCount = () => (isAll() ? 3 : view.count);
@@ -46,10 +46,12 @@ function body(lab, prod) {
     categoryPicker(lab.categories || [], redraw),
     h('div', { class: 'row' },
       h('label', { class: 'row small', style: 'gap:6px' }, '콘셉트 수', h('select', { 'aria-label': '콘셉트 수', disabled: isAll(), title: isAll() ? '"모두 1개씩 만들기"는 항상 3개입니다' : null, onchange: (e) => { view.count = Number(e.target.value); redraw(); } }, [1, 2, 3, 4, 5].map((n) => h('option', { value: n, selected: n === effCount() }, n))), isAll() ? h('span', { class: 'muted' }, '(고정)') : null),
+      h('label', { class: 'row small', style: 'gap:6px' }, '영상 최대 길이', h('input', { type: 'number', inputmode: 'numeric', min: 10, max: 90, step: 1, value: view.maxSec, 'aria-label': '영상 최대 길이(초)', 'data-max-sec': '', style: 'width:84px', oninput: (e) => { view.maxSec = e.target.value === '' ? '' : Number(e.target.value); const el = document.querySelector('[data-gen-summary]'); if (el) el.textContent = genSummary(lab.categories || []); } }), '초'),
       h('div', { class: 'field', style: 'flex:1;min-width:240px' }, h('input', { type: 'text', placeholder: '추가 지시 (선택) — 예: 비 오는 날 상황 위주로', value: view.extra, oninput: (e) => (view.extra = e.target.value) }))),
-    h('div', { class: 'small', style: 'color:var(--espresso-2)', 'data-gen-summary': '' }, view.category ? '만들 내용: ' + summaryText(lab.categories || []) + ' · 영어 컨셉 + 한국어 번역 (한 번의 요청)' : '스토리 카테고리를 먼저 선택하세요.'),
+    h('div', { class: 'small', style: 'color:var(--espresso-2)', 'data-gen-summary': '' }, genSummary(lab.categories || [])),
     h('div', { class: 'row' }, h('button', { class: 'btn', disabled: !ready.ok || !view.category, onclick: generate }, icon('plus'), '스토리 컨셉 생성'))));
 
+  function genSummary(cats) { return view.category ? '만들 내용: ' + summaryText(cats) + ` · 최대 ${view.maxSec || '?'}초 · 영어 컨셉 + 한국어 번역 (한 번의 요청)` : '스토리 카테고리를 먼저 선택하세요.'; }
   function summaryText(cats) {
     const o = cats.find((x) => x.key === view.category);
     if (!o) return '';
@@ -58,11 +60,13 @@ function body(lab, prod) {
 
   async function generate() {
     if (!view.category) return toast('스토리 카테고리를 선택하세요', { error: true });
-    const req = { category: view.category, count: effCount(), extra: view.extra };
+    const sec = Number(view.maxSec);
+    if (!Number.isInteger(sec) || sec < 10 || sec > 90) return toast('영상 최대 길이는 10~90초의 정수로 입력하세요', { error: true });
+    const req = { category: view.category, count: effCount(), maxDurationSec: sec, extra: view.extra };
     let est;
     try { est = await api.post(`/api/storylab/${pid}/estimate`, req); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
     const c = await confirmPaid({ title: `스토리 컨셉 ${est.count}개 생성`, est, confirmLabel: '생성', body: h('div', { class: 'stack', style: 'gap:8px' },
-      h('div', { class: 'card flat stack', style: 'gap:4px', 'data-confirm-summary': '' }, h('div', { class: 'small muted' }, '만들 내용'), h('b', null, est.summary), h('div', { class: 'small' }, `총 ${est.count}개 · 영어 컨셉과 한국어 번역을 한 번에 생성`), view.extra ? h('div', { class: 'small muted' }, '추가 지시: ' + view.extra) : null),
+      h('div', { class: 'card flat stack', style: 'gap:4px', 'data-confirm-summary': '' }, h('div', { class: 'small muted' }, '만들 내용'), h('b', null, est.summary), h('div', { class: 'small' }, `총 ${est.count}개 · 최대 ${est.maxDurationSec}초 · 영어 컨셉과 한국어 번역을 한 번에 생성`), view.extra ? h('div', { class: 'small muted' }, '추가 지시: ' + view.extra) : null),
       h('p', { class: 'small muted', style: 'margin:0' }, '확인된 제품 사실, 승인된 참조 이미지, Jack·Diane 참조, 채널 브랜딩과 Prompt Manager의 스토리 프롬프트가 입력으로 쓰입니다. 기존 컨셉과 승인된 스토리는 바뀌지 않고, 새 컨셉이 추가됩니다.')) });
     if (c === null) return;
     await act(async () => { await api.post(`/api/storylab/${pid}/generate`, Object.assign({}, req, { confirm: c })); return null; }, { ok: '스토리 컨셉을 만들었습니다' });
@@ -100,7 +104,7 @@ function conceptCard(c, pid, redraw, cats) {
     h('h3', { style: 'font-size:18px' }, c.title),
     h('dl', { style: 'margin:0;display:grid;gap:8px' }, FIELDS.filter(([k]) => c[k]).map(([k, l]) => h('div', null, h('dt', { class: 'small muted', style: 'font-weight:600' }, l), h('dd', { style: 'margin:0' }, c[k])))),
     c.ko && Object.keys(c.ko).length ? h('details', { class: 'small', 'data-ko': '' }, h('summary', null, '한국어 번역 (읽기 전용)' + (c.koStale && c.koStale.length ? ' · 원문이 수정되어 일부 번역이 오래됨' : '')), h('div', { class: 'stack', style: 'gap:6px;margin-top:6px' }, [['title', '제목'], ...FIELDS].filter(([k]) => c.ko[k]).map(([k, l]) => h('div', null, h('div', { class: 'small muted', style: 'font-weight:600' }, l + (c.koStale && c.koStale.includes(k) ? ' (오래됨)' : '')), h('div', null, c.ko[k]))))) : null,
-    h('div', { class: 'small muted' }, `예상 길이 약 ${c.estimatedDurationSec}초 · ${c.estimatedScenes ? '약 ' + c.estimatedScenes + '장면 · ' : ''}${src.mock ? '샘플 응답' : (src.provider || '?') + '/' + (src.model || '?')} · 스토리 프롬프트 v${src.promptVersion || '?'}`),
+    h('div', { class: 'small muted' }, `예상 길이 약 ${c.estimatedDurationSec}초${c.maxDurationSec ? ' (최대 ' + c.maxDurationSec + '초)' : ''} · ${c.estimatedScenes ? '약 ' + c.estimatedScenes + '장면 · ' : ''}${src.mock ? '샘플 응답' : (src.provider || '?') + '/' + (src.model || '?')} · 스토리 프롬프트 v${src.promptVersion || '?'}`),
     c.status === 'rejected' && c.rejection ? h('div', { class: 'small', style: 'color:var(--rose)' }, '거절 사유: ' + (c.rejection.reason || '(없음)')) : null,
     c.approval ? h('details', { class: 'small' }, h('summary', null, '승인 기록 (추적용)'), h('div', { class: 'mono', style: 'white-space:pre-wrap;margin-top:6px' }, [`제품: ${c.approval.productId}`, `컨셉: ${c.approval.conceptId} (r${c.approval.revision})`, `제공자/모델: ${c.approval.mock ? '샘플' : c.approval.provider + ' / ' + c.approval.model}`, `스토리 프롬프트 버전: v${c.approval.storyPromptVersion}`, `참조 세트: ${c.approval.referenceSetId}`, `참조 이미지: ${(c.approval.referenceImageIds || []).join(', ') || '(없음)'}`, `상태: ${c.approval.status} · ${c.approval.by} · ${new Date(c.approval.at).toLocaleString('ko-KR')}`].join('\n'))) : null,
     used.length ? h('div', { class: 'small' }, '이 컨셉으로 만든 에피소드: ' + used.map((e) => e.id).join(', ')) : null,
@@ -157,7 +161,7 @@ async function handoff(c, pid, used) {
     newVersion = true;
   }
   let ep;
-  try { ep = await api.post(`/api/storylab/${pid}/concepts/${c.id}/episode`, { newVersion }); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
+  try { ep = await api.post(`/api/storylab/${pid}/concepts/${c.id}/episode`, { newVersion, requestId: (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()) }); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
   state.episodeId = ep.id;
   toast(`에피소드 ${ep.id}를 만들었습니다 (대본은 아직 승인되지 않았습니다)`);
   let draft = false;

@@ -13,6 +13,7 @@ const { createAiRouter } = require('./ai/router');
 const { createProductService } = require('./products');
 const { createStoryLab } = require('./storylab');
 const { createScriptGen } = require('./scriptgen');
+const { createEpisodeIds } = require('./episodeids');
 const { createScriptPresets } = require('./scriptpresets');
 const { createEndingTemplates } = require('./endingtemplates');
 const F = require('./formula');
@@ -49,7 +50,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const storylab = createStoryLab({ store, products, prompts, router, log });
   const presets = createScriptPresets({ store, prompts, seedDir: SEED_DIR });
   const endings = createEndingTemplates({ store, seedDir: SEED_DIR });
-  const scriptgen = createScriptGen({ store, products, storylab, prompts, presets, endings, router, lib: () => store.characters.load() });
+  const episodeIds = createEpisodeIds({ store, products });
+  const scriptgen = createScriptGen({ store, products, storylab, episodeIds, prompts, presets, endings, router, lib: () => store.characters.load() });
   const translator = createTranslator({ store, router });
   const cutPresets = createCutPresets({ store });
   const startImages = createStartImages({ store, products, router, lib: () => store.characters.load(), log });
@@ -82,7 +84,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const publishing = createPublishingService({ store });
   store.episodes.seedDemo();
   // Projects / scene approvals / Image Development hand-off (no AI or video provider is wired in: nothing here can spend money).
-  const projects = createProjects({ store, lib: () => store.characters.load(), endings, products, log });
+  const projects = createProjects({ store, lib: () => store.characters.load(), endings, products, episodeIds, log });
   store.episodes.hooks.before = projects.hooks.before;
   store.episodes.hooks.after = projects.hooks.after;
 
@@ -258,7 +260,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       products: products.list(),
       storylab: storylabSummary(),
       ai: { routing: integrations.overview().routing, usage: usage.summary(store.settings.get().ai.limits) },
-      episodes: eps.map((e) => ({ id: e.id, concept: e.derived.concept, title: e.title, titleEn: e.titleEn, productName: e.product.name, steps: e.derived.steps, spentUsd: e.derived.spentUsd, limitUsd: e.derived.limitUsd, totalPlannedSec: e.derived.totalPlannedSec, scenes: e.scenes.length, thumb: firstClipThumb(e), published: !!(e.publishing && e.publishing.publishedAt), finalApproved: !!e.approvals.final, archived: !!e.archivedAt, updatedAt: e.updatedAt })),
+      episodes: eps.map((e) => ({ id: e.id, displayId: e.displayId || e.id, uuid: e.uuid || '', productCode: e.productCode || '', episodeNumber: e.episodeNumber || null, category: e.category || (e.concept && e.concept.category) || '', productId: e.productId || '', concept: e.derived.concept, title: e.title, titleEn: e.titleEn, productName: e.product.name, steps: e.derived.steps, spentUsd: e.derived.spentUsd, limitUsd: e.derived.limitUsd, totalPlannedSec: e.derived.totalPlannedSec, scenes: e.scenes.length, thumb: firstClipThumb(e), published: !!(e.publishing && e.publishing.publishedAt), finalApproved: !!e.approvals.final, archived: !!e.archivedAt, updatedAt: e.updatedAt })),
       queue,
       totals: {
         episodes: eps.length,
@@ -291,6 +293,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return made;
   }
   migrateLegacy();
+  episodeIds.migrate(); // old episodes keep their ids; each gets an immutable uuid + display id (idempotent)
   projects.migrateAll(); // old episodes: scenes of an already approved script stay approved; every episode joins a project (idempotent)
 
   function firstClipThumb(e) {
@@ -305,8 +308,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const num = (v, d) => (Number.isFinite(Number(v)) && v !== '' && v !== null ? Number(v) : d);
 
   /** Normal path: an episode starts from an APPROVED story concept (Product → Story Lab → episode). */
-  async function createEpisodeFromConcept({ productId, conceptId, id, newVersion = false }) {
-    const epId = await scriptgen.createEpisodeFromConcept(productId, conceptId, { id, newVersion });
+  async function createEpisodeFromConcept({ productId, conceptId, id, newVersion = false, requestId = '' }) {
+    const epId = await scriptgen.createEpisodeFromConcept(productId, conceptId, { id, newVersion, requestId });
     store.episodes.audit(epId, 'episode.from_concept', { productId, conceptId, newVersion: !!newVersion });
     return epId;
   }
@@ -597,6 +600,16 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     if (!ep0.archivedAt) throw new StudioError('NOT_ARCHIVED', '보관된 에피소드가 아닙니다.', { status: 409 });
     await store.episodes.update(id, (ep) => { delete ep.archivedAt; delete ep.archivedBy; });
     store.episodes.audit(id, 'episode.unarchived', { by });
+    return episodeView(id);
+  }
+
+  /** The CURRENT category is a separate field: changing it never changes the Episode ID (UMB-01-D stays UMB-01-D). */
+  async function setEpisodeCategory(id, category, by = 'operator') {
+    if (!['drama', 'viral', 'info'].includes(category)) throw new StudioError('INVALID_CATEGORY', '알 수 없는 스토리 카테고리입니다: ' + category, { status: 422 });
+    const before = store.episodes.get(id).category || null;
+    if (before === category) return episodeView(id);
+    await store.episodes.update(id, (ep) => { ep.category = category; ep.categoryHistory = (ep.categoryHistory || []).concat([{ from: before, to: category, at: nowIso(), by }]); });
+    store.episodes.audit(id, 'episode.category_changed', { by, from: before, to: category });
     return episodeView(id);
   }
 
@@ -1038,9 +1051,12 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     throw new StudioError('NOT_FOUND', '알 수 없는 미디어입니다.', { status: 404 });
   }
 
+  /** Export filename: the Episode ID first, so files from different episodes never collide in a download folder. */
+  const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
+
   return {
-    cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
-    summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
+    exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    summary, episodeView, episodeIds, setEpisodeCategory, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };

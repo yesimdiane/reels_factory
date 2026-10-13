@@ -464,3 +464,18 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .kebab-item.has-en > .btn-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
 .kebab-item.has-en > .btn-en { opacity: .6; font-size: 10.5px; }
 .kebab-menu.sheet .kebab-cancel.has-en { align-items: center; }
+
+/* Dashboard: workflow board + current step */
+.wf-board { display: grid; gap: 12px; }
+.wf-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.wf-card { display: grid; gap: 14px; padding: 14px; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--paper); color: var(--espresso); text-decoration: none; min-height: 84px; }
+.wf-card.current { border-color: var(--espresso); box-shadow: 0 0 0 2px rgba(58, 43, 34, .12); background: #fff; }
+.wf-card.done .wf-num { color: var(--sage-deep); }
+.wf-top { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+.wf-top svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; flex: 0 0 auto; }
+.wf-bottom { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; color: var(--muted); }
+.wf-check svg { width: 18px; height: 18px; stroke: var(--sage-deep); fill: none; stroke-width: 2.2; }
+.wf-story { font-size: 16px; line-height: 1.55; }
+.wf-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; }
+.wf-actions .btn { justify-content: center; min-height: 46px; }
+@media (max-width: 640px) { .wf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

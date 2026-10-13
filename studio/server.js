@@ -46,7 +46,7 @@ function sendJson(res, status, data) {
   res.end(body);
 }
 
-function sendFile(req, res, file, { download = false } = {}) {
+function sendFile(req, res, file, { download = false, filename = '' } = {}) {
   let st;
   try {
     st = fs.statSync(file);
@@ -60,7 +60,7 @@ function sendFile(req, res, file, { download = false } = {}) {
     headers['X-Frame-Options'] = 'DENY';
     headers['Referrer-Policy'] = 'no-referrer';
   }
-  if (download) headers['Content-Disposition'] = 'attachment; filename="' + path.basename(file) + '"';
+  if (download) headers['Content-Disposition'] = 'attachment; filename="' + String(filename || path.basename(file)).replace(/[^A-Za-z0-9._-]/g, '_') + '"';
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
   if (range && (range[1] || range[2])) {
     let start = range[1] ? Number(range[1]) : st.size - Number(range[2]);
@@ -149,15 +149,15 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
 
   // ---- Story Lab ----
   route('GET', '/api/storylab/:pid', async ({ p }) => S.storylab.list(p.pid));
-  route('POST', '/api/storylab/:pid/estimate', async ({ p, body }) => S.storylab.estimate(p.pid, { category: body.category, count: body.count, extra: body.extra }));
-  route('POST', '/api/storylab/:pid/generate', async ({ p, body }) => S.storylab.generate(p.pid, { category: body.category, count: body.count, extra: body.extra, confirm: body.confirm }));
+  route('POST', '/api/storylab/:pid/estimate', async ({ p, body }) => S.storylab.estimate(p.pid, { category: body.category, count: body.count, maxDurationSec: body.maxDurationSec, extra: body.extra }));
+  route('POST', '/api/storylab/:pid/generate', async ({ p, body }) => S.storylab.generate(p.pid, { category: body.category, count: body.count, maxDurationSec: body.maxDurationSec, extra: body.extra, confirm: body.confirm }));
   route('POST', '/api/storylab/:pid/concepts/:cid/regenerate', async ({ p, body }) => S.storylab.regenerate(p.pid, p.cid, { feedback: body.feedback, confirm: body.confirm }));
   route('PUT', '/api/storylab/:pid/concepts/:cid', async ({ p, body }) => S.storylab.edit(p.pid, p.cid, body));
   route('POST', '/api/storylab/:pid/concepts/:cid/approve', async ({ p }) => S.storylab.approve(p.pid, p.cid));
   route('POST', '/api/storylab/:pid/concepts/:cid/revoke', async ({ p }) => S.storylab.revoke(p.pid, p.cid));
   route('POST', '/api/storylab/:pid/concepts/:cid/reject', async ({ p, body }) => S.storylab.reject(p.pid, p.cid, body.reason));
   route('POST', '/api/storylab/:pid/concepts/:cid/reopen', async ({ p }) => S.storylab.reopen(p.pid, p.cid));
-  route('POST', '/api/storylab/:pid/concepts/:cid/episode', async ({ p, body }) => { const id = await S.createEpisodeFromConcept({ productId: p.pid, conceptId: p.cid, newVersion: body.newVersion === true }); return ep(id); });
+  route('POST', '/api/storylab/:pid/concepts/:cid/episode', async ({ p, body }) => { const id = await S.createEpisodeFromConcept({ productId: p.pid, conceptId: p.cid, newVersion: body.newVersion === true, requestId: String(body.requestId || '').slice(0, 80) }); return ep(id); });
 
   // ---- Settings: AI integrations / prompts ----
   route('GET', '/api/ai', async () => S.integrations.overview());
@@ -245,6 +245,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('GET', '/media/cutframe/:a/:b', async ({ p, query }) => ({ file: await S.cutFrame(p.a, p.b, query.t) }));
   route('GET', '/api/episodes-trash', async () => ({ trash: S.trashList() }));
   route('DELETE', '/api/episodes/:id', async ({ p, body }) => S.trashEpisode(p.id, { confirmPublished: !!(body && body.confirmPublished), confirmApproved: !!(body && body.confirmApproved) }));
+  route('PUT', '/api/episodes/:id/category', async ({ p, body }) => S.setEpisodeCategory(p.id, body.category));
   route('GET', '/api/episodes/:id/impact', async ({ p }) => S.episodeImpact(p.id));
   route('POST', '/api/episodes/:id/archive', async ({ p }) => S.archiveEpisode(p.id));
   route('POST', '/api/episodes/:id/unarchive', async ({ p }) => S.unarchiveEpisode(p.id));
@@ -340,7 +341,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('GET', '/media/product/:a/:b', async ({ p }) => ({ file: S.mediaFile('product', p.a, p.b) }));
   route('GET', '/media/ref/:a/:b', async ({ p }) => ({ file: S.mediaFile('ref', p.a, p.b) }));
   route('GET', '/media/clip/:a/:b/:c', async ({ p }) => ({ file: S.mediaFile('clip', p.a, p.b, p.c) }));
-  route('GET', '/media/render/:a/:b', async ({ p, query }) => ({ file: S.mediaFile('render', p.a, p.b), download: query.download === '1' }));
+  route('GET', '/media/render/:a/:b', async ({ p, query }) => { const file = S.mediaFile('render', p.a, p.b); return { file, download: query.download === '1', filename: S.exportName(p.a, file) }; });
   route('GET', '/media/audio/:a/:b', async ({ p }) => ({ file: S.mediaFile('audio', p.a, p.b) }));
   route('GET', '/media/startframe/:a/:b', async ({ p }) => ({ file: S.mediaFile('startframe', p.a, p.b) }));
 
@@ -409,7 +410,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
             bg(bridge.push(snapshot), 'sheets mirror ' + p.id);
           } catch (_) { /* Non-episode IDs (e.g. characters) are not mirrored. */ }
         }
-        if (isMedia) return sendFile(req, res, out.file, { download: out.download });
+        if (isMedia) return sendFile(req, res, out.file, { download: out.download, filename: out.filename });
         if (out && out.status && out.data !== undefined) return sendJson(res, out.status, out.data);
         return sendJson(res, 200, out);
       }

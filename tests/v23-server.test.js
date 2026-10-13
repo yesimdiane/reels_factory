@@ -87,7 +87,7 @@ test('API: key management never returns a key; errors are scrubbed; full Story L
     const bad = await req(t.port, 'POST', '/api/episodes', { headers: H, body: { id: 'EP9', title: 't' } });
     assert.equal(bad.status, 409); assert.equal(bad.json.error.code, 'CONCEPT_REQUIRED');
     // product → images → reference set → concepts → approve → episode → script
-    const p = (await req(t.port, 'POST', '/api/products', { headers: H, body: { name: '우산꽂이', features: ['자석 부착'] } })).json;
+    const p = (await req(t.port, 'POST', '/api/products', { headers: H, body: { name: '우산꽂이', code: 'UMB', features: ['자석 부착'] } })).json;
     const up = await req(t.port, 'POST', `/api/products/${p.id}/images`, { headers: { 'x-rf-studio': '1', 'x-filename': 'a.png', 'content-type': 'image/png' }, raw: png(3) });
     assert.equal(up.status, 200);
     const iid = up.json.images[0].id;

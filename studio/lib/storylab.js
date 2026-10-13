@@ -83,7 +83,7 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
   }
 
   /** Builds the generation request: verified facts only, approved reference images, character references. */
-  function build(pid, { count, extra, plan }) {
+  function build(pid, { count, extra, plan, maxSec = cats.DEFAULT_SEC }) {
     plan = plan || Array(count).fill('drama');
     const b = products.bindingFor(pid);
     const p = b.product;
@@ -98,6 +98,7 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
       'FORBIDDEN_CLAIMS (never imply): ' + ((p.forbiddenClaims || []).join(', ') || 'none'),
       'COUNT: ' + count,
       'CATEGORY_PLAN: ' + plan.join(', '),
+      'MAX_DURATION_SEC: ' + maxSec + ' (every concept must be playable within this length: estimatedDurationSec <= ' + maxSec + ' and a plot that fits it)',
       ...[...new Set(plan)].map((k) => cats.CATEGORIES[k].rule),
       'The attached product images are the APPROVED reference photos. Do not change the product\'s shape, logo or colour.',
       '',
@@ -121,14 +122,14 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
     const r = cats.resolveRequest(req);
     return Object.assign(r, { summary: cats.planText(r.plan) });
   }
-  function estimate(pid, { category, count, extra = '', override } = {}) {
-    const r = cats.resolveRequest({ category, count });
-    const q = build(pid, { count: r.count, extra, plan: r.plan });
-    return Object.assign({}, router.estimate('storyConcepts', { inputChars: q.prompt.length, outputTokens: 1500 * r.count, images: q.images.length, override: override || q.composed.providerOverride }), { category: r.category, count: r.count, plan: r.plan, summary: cats.planText(r.plan) });
+  function estimate(pid, { category, count, maxDurationSec, extra = '', override } = {}) {
+    const r = cats.resolveRequest({ category, count, maxDurationSec });
+    const q = build(pid, { count: r.count, extra, plan: r.plan, maxSec: r.maxDurationSec });
+    return Object.assign({}, router.estimate('storyConcepts', { inputChars: q.prompt.length, outputTokens: 1500 * r.count, images: q.images.length, override: override || q.composed.providerOverride }), { category: r.category, count: r.count, plan: r.plan, maxDurationSec: r.maxDurationSec, summary: cats.planText(r.plan) });
   }
 
   const KO_FIELDS = FIELDS;
-  function validateBatch(raw, q, plan) {
+  function validateBatch(raw, q, plan, maxSec = cats.MAX_SEC) {
     const list = Array.isArray(raw && raw.concepts) ? raw.concepts : [];
     const items = [];
     const problems = [];
@@ -141,6 +142,7 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
       if (!cat) problems.push(`컨셉 ${i + 1}: 카테고리 누락`);
       else if (!cats.CATEGORIES[cat]) problems.push(`컨셉 ${i + 1}: 알 수 없는 카테고리 "${cat}"`);
       out.category = cat;
+      if (out.estimatedDurationSec > maxSec) problems.push(`컨셉 ${i + 1}: 예상 길이 ${out.estimatedDurationSec}초가 최대 ${maxSec}초를 넘습니다`);
       const ko = {};
       KO_FIELDS.forEach((k) => { const v = String((r && r[k + '_ko']) || '').trim(); if (v) ko[k] = v.slice(0, 1200); });
       out.ko = ko;
@@ -163,21 +165,21 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
   }
 
   /** Generates the requested concepts (category required; 1–5 for one category, exactly 3 for "all"). Nothing is saved when validation fails (the call may still have been billed — it is in the usage log). */
-  async function generate(pid, { category, count, extra = '', confirm, override, by = 'operator' } = {}) {
-    const r = cats.resolveRequest({ category, count });
-    const q = build(pid, { count: r.count, extra, plan: r.plan });
+  async function generate(pid, { category, count, maxDurationSec, extra = '', confirm, override, by = 'operator' } = {}) {
+    const r = cats.resolveRequest({ category, count, maxDurationSec });
+    const q = build(pid, { count: r.count, extra, plan: r.plan, maxSec: r.maxDurationSec });
     const ov = override || q.composed.providerOverride || undefined;
     const res = await router.run('storyConcepts', { system: undefined, prompt: q.prompt, images: q.images, json: true, maxTokens: 1500 * r.count, confirm, override: ov, dedupeKey: pid });
-    const { items, problems } = validateBatch(res.json, q, r.plan);
+    const { items, problems } = validateBatch(res.json, q, r.plan, r.maxDurationSec);
     if (problems.length) throw new StudioError('CONCEPTS_REJECTED', problems[0], { details: problems, recovery: 'AI 응답이 규칙(요청한 개수·카테고리 구성·서로 다른 내용·제품 주장)을 어겨 저장하지 않았습니다. 다시 생성하거나 프롬프트를 조정하세요.', status: 422 });
     return serial(() => {
       const d = read(pid);
       const batchId = 'B' + String(d.batches.length + 1).padStart(2, '0');
       const source = { provider: res.provider, model: res.model, mock: !!res.mock, promptVersions: q.composed.versions, promptKey: 'storyConcept', promptVersion: q.composed.versions.storyConcept, referenceSetId: q.binding.reference.waived ? 'waived' : (q.product.referenceSet || {}).id, referenceImageIds: q.refs, characterRefs: q.charRefs, generatedAt: nowIso(), by };
-      d.batches.push({ id: batchId, at: nowIso(), count: items.length, category: r.category, plan: r.plan, source, extra: extra || '', estimate: res.estimate });
+      d.batches.push({ id: batchId, at: nowIso(), count: items.length, category: r.category, plan: r.plan, maxDurationSec: r.maxDurationSec, source, extra: extra || '', estimate: res.estimate });
       items.forEach((it) => {
         d.seq += 1;
-        d.concepts.push(Object.assign({ id: `${pid}-C${String(d.seq).padStart(3, '0')}`, productId: pid, batchId, status: 'candidate', revision: 1, edits: [], approval: null, rejection: null, createdAt: nowIso(), source }, it));
+        d.concepts.push(Object.assign({ id: `${pid}-C${String(d.seq).padStart(3, '0')}`, productId: pid, batchId, status: 'candidate', revision: 1, edits: [], approval: null, rejection: null, createdAt: nowIso(), source, maxDurationSec: r.maxDurationSec }, it));
       });
       write(pid, d);
       return list(pid);
@@ -191,11 +193,12 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
     if (old.status === 'approved') throw new StudioError('APPROVED_LOCKED', '승인된 컨셉은 다시 생성할 수 없습니다. 먼저 승인을 취소하세요.', { status: 409 });
     const extra = `Replace the concept titled "${old.title}" with ONE new, meaningfully different concept (different situation and payoff). ${feedback ? 'Operator feedback: ' + feedback : ''}`;
     const cat = old.category || 'drama'; // concepts from before categories existed are regenerated as Drama
-    const q = build(pid, { count: 1, extra, plan: [cat] });
+    const maxSec = old.maxDurationSec || cats.DEFAULT_SEC;
+    const q = build(pid, { count: 1, extra, plan: [cat], maxSec });
     const ov = override || q.composed.providerOverride || undefined;
     const res = await router.run('storyConcepts', { prompt: q.prompt, images: q.images, json: true, maxTokens: 1800, confirm, override: ov, dedupeKey: pid + cid });
     const raw = Array.isArray(res.json && res.json.concepts) ? res.json.concepts[0] : null;
-    const v = validateBatch({ concepts: raw ? [raw] : [] }, q, [cat]);
+    const v = validateBatch({ concepts: raw ? [raw] : [] }, q, [cat], maxSec);
     const out = v.items[0];
     if (!raw || v.problems.length) throw new StudioError('CONCEPTS_REJECTED', v.problems[0] || '컨셉이 비어 있습니다.', { details: v.problems, status: 422 });
     return serial(() => {
@@ -205,7 +208,7 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
       o.status = 'superseded';
       d.seq += 1;
       const source = { provider: res.provider, model: res.model, mock: !!res.mock, promptVersions: q.composed.versions, promptKey: 'storyConcept', promptVersion: q.composed.versions.storyConcept, referenceSetId: (q.product.referenceSet || {}).id, referenceImageIds: q.refs, characterRefs: q.charRefs, generatedAt: nowIso() };
-      d.concepts.push(Object.assign({ id: `${pid}-C${String(d.seq).padStart(3, '0')}`, productId: pid, batchId: o.batchId, status: 'candidate', revision: 1, edits: [], approval: null, rejection: null, createdAt: nowIso(), source, replaces: cid }, out));
+      d.concepts.push(Object.assign({ id: `${pid}-C${String(d.seq).padStart(3, '0')}`, productId: pid, batchId: o.batchId, status: 'candidate', revision: 1, edits: [], approval: null, rejection: null, createdAt: nowIso(), source, replaces: cid, maxDurationSec: maxSec }, out));
       write(pid, d);
       return list(pid);
     });

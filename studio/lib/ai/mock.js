@@ -79,11 +79,12 @@ function createMockText() {
             ['Before You Buy Checklist', 'Diane shares a short checklist of things to confirm before ordering.', 'A practical pre-purchase checklist', '구매 전 체크리스트', '주문 전 확인할 항목 정리'],
           ],
         };
+        const maxSec = Number((/MAX_DURATION_SEC:\s*(\d+)/.exec(prompt) || [, 90])[1]);
         const used = { drama: 0, viral: 0, info: 0 };
         const concepts = plan.map((cat, i) => {
           const list = BANK[cat] || BANK.drama;
           const b = list[used[cat]++ % list.length];
-          const dur = 38 + i * 2;
+          const dur = Math.max(10, Math.min(38 + i * 2, maxSec));
           return {
             category: cat, title: `[Sample] ${b[0]}`, hook: `${product}: ${b[1]}`, situation: b[2], productRole: `The product appears only within its verified features (${product}).`,
             characterUsage: i % 2 ? 'Diane leads, Jack reacts' : 'Jack leads, Diane interjects', plot: `[Sample] ${b[2]} → banter between Jack and Diane → product reveal → closing beat (about ${dur}s)`,

@@ -24,6 +24,11 @@ function cleanPrice(v) {
   return { text, source: 'operator', note: '운영자가 직접 입력한 값 · 가격과 재고는 수시로 바뀌므로 게시 전에 쿠팡에서 다시 확인하세요', enteredAt: String(v.enteredAt || '') || nowIso() };
 }
 
+// Product code: short, unique and PERSISTENT (it is the first part of every Episode ID, e.g. UMB-01-D). Editable until the first Episode uses it.
+const CODE_RE = /^[A-Z][A-Z0-9]{1,4}$/;
+const CODE_STOP = new Set(['the', 'and', 'for', 'with', 'magnetic', 'door', 'mounted', 'wall', 'type', 'set', 'new', 'home', 'smart', 'mini', 'pro', 'large', 'small', 'black', 'white', 'gray', 'grey', 'portable', 'foldable', 'folding']);
+function normCode(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+
 function createProductService({ store, router, extractFn = extractProduct, downloadFn = downloadImage, log = () => {} }) {
   const root = () => store.path('products');
   const dirOf = (id) => {
@@ -49,6 +54,30 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     });
     queues.set(id, run.catch(() => {}));
     return run;
+  }
+  const allCodes = (exceptId) => ids().filter((i) => i !== exceptId).map((i) => normCode(get(i).code)).filter(Boolean);
+  function checkCode(code, exceptId) {
+    const c = normCode(code);
+    if (!CODE_RE.test(c)) throw new StudioError('BAD_PRODUCT_CODE', '제품 코드는 영문 대문자로 시작하는 2~5자의 영문 대문자/숫자여야 합니다 (예: UMB).', { status: 422 });
+    if (allCodes(exceptId).includes(c)) throw new StudioError('PRODUCT_CODE_TAKEN', `제품 코드 ${c}은(는) 다른 제품이 이미 쓰고 있습니다.`, { status: 409 });
+    return c;
+  }
+  /** A suggestion only (never applied silently): first meaningful English word of the category / name, 3 letters, made unique. */
+  function suggestCode(p) {
+    const words = (String(p.category || '') + ' ' + String(p.name || '')).match(/[A-Za-z]{3,}/g) || [];
+    const w = words.map((x) => x.toLowerCase()).find((x) => !CODE_STOP.has(x));
+    const taken = new Set(allCodes(p.id));
+    let base = (w ? w.slice(0, 3) : 'PRD').toUpperCase();
+    if (!taken.has(base)) return base;
+    for (let i = 2; i < 100; i += 1) { const c = base.slice(0, 3) + i; if (!taken.has(c)) return c; }
+    return base;
+  }
+  /** Called by Episode ID allocation (synchronously, inside its lock): from now on the code can no longer change. */
+  function lockCodeSync(pid) {
+    const p = get(pid);
+    if (p.codeLockedAt) return;
+    p.codeLockedAt = nowIso();
+    writeJsonAtomic(fileOf(pid), p);
   }
   function ids() {
     if (!fs.existsSync(root())) return [];
@@ -79,6 +108,7 @@ function createProductService({ store, router, extractFn = extractProduct, downl
       verifiedFacts: verifiedFacts(p),
       limits: { uploads: MAX_UPLOADS, retrieved: MAX_RETRIEVED, generated: MAX_GENERATED, extraRefs: 5 },
       counts: { uploaded: p.images.filter((i) => i.kind === 'uploaded' && i.status !== 'replaced').length, retrieved: p.images.filter((i) => i.kind === 'retrieved').length, generated: p.images.filter((i) => i.kind === 'ai_generated').length },
+      codeLocked: !!p.codeLockedAt, suggestedCode: p.code ? '' : suggestCode(p),
       readiness: readiness(p, refs),
       generations: generationsOf(p),
       linkedEpisodes: linkedEpisodes(p.id),
@@ -110,16 +140,17 @@ function createProductService({ store, router, extractFn = extractProduct, downl
 
   const list = () => ids().map((i) => { const p = get(i); return { id: p.id, name: p.name, url: p.url, extraction: p.extraction && p.extraction.status, reference: referenceState(p).state, images: p.images.length, readiness: readiness(p), updatedAt: p.updatedAt }; });
 
-  async function create({ id, name, url = '', affiliateUrl = '', description = '', category = '', features = [], forbiddenClaims = [], legacy = false, price = null } = {}) {
+  async function create({ id, name, url = '', affiliateUrl = '', description = '', category = '', features = [], forbiddenClaims = [], legacy = false, price = null, code = '' } = {}) {
     if (!String(name || '').trim() && !String(url || '').trim()) throw new StudioError('NEED_INPUT', '상품명이나 상품 URL 중 하나는 필요합니다.', { status: 400 });
     if (url) require('./extract').parseUrl(url);
     const pid = id || nextId();
+    const productCode = String(code || '').trim() ? checkCode(code) : '';
     if (fs.existsSync(fileOf(pid))) throw new StudioError('DUPLICATE', '이미 있는 상품 ID입니다: ' + pid, { status: 409 });
     const p = {
       id: pid, name: String(name || '').trim().slice(0, 200), url: String(url || '').trim(), affiliateUrl: String(affiliateUrl || '').trim(), description: String(description || '').slice(0, 3000), category: String(category || '').slice(0, 100),
       specs: (features || []).map(String).map((t) => t.trim()).filter(Boolean).map((text) => ({ text, source: 'manual', verified: true, at: nowIso() })),
       sellingPoints: [], forbiddenClaims: (forbiddenClaims || []).map(String).filter(Boolean),
-      price: cleanPrice(price), extraction: { status: 'none', note: '', at: '' }, images: [], referenceSet: null, legacy: !!legacy, createdAt: nowIso(), updatedAt: nowIso(),
+      price: cleanPrice(price), code: productCode, codeLockedAt: null, extraction: { status: 'none', note: '', at: '' }, images: [], referenceSet: null, legacy: !!legacy, createdAt: nowIso(), updatedAt: nowIso(),
     };
     fs.mkdirSync(dirOf(pid), { recursive: true });
     writeJsonAtomic(fileOf(pid), p);
@@ -128,6 +159,13 @@ function createProductService({ store, router, extractFn = extractProduct, downl
 
   async function edit(id, patch) {
     const p = await update(id, (p) => {
+      if (patch.code !== undefined) {
+        const next = String(patch.code).trim() ? checkCode(patch.code, id) : '';
+        if (next !== normCode(p.code)) {
+          if (p.codeLockedAt) throw new StudioError('PRODUCT_CODE_LOCKED', `제품 코드 ${p.code}은(는) 이미 에피소드 ID에 쓰여 바꿀 수 없습니다.`, { status: 409, recovery: '기존 에피소드 ID는 바뀌지 않습니다.' });
+          p.code = next;
+        }
+      }
       ['name', 'category', 'description', 'url', 'affiliateUrl'].forEach((k) => patch[k] !== undefined && (p[k] = String(patch[k]).trim().slice(0, k === 'description' ? 3000 : 300)));
       if (patch.url) require('./extract').parseUrl(patch.url);
       if (patch.price !== undefined) p.price = cleanPrice(patch.price);
@@ -324,7 +362,7 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     return path.join(dirOf(id), im.file);
   }
 
-  return { list, get: (id) => view(get(id)), raw: get, create, edit, extract, upload, replace, setStatus, generateImage, chooseVersion, imageCount, approveReferenceSet, waiveReferences, bindingFor, imageFiles, mediaFile, referenceState, verifiedFacts, readiness, MAX_UPLOADS };
+  return { list, get: (id) => view(get(id)), raw: get, create, edit, extract, upload, replace, setStatus, generateImage, chooseVersion, imageCount, approveReferenceSet, waiveReferences, bindingFor, imageFiles, mediaFile, lockCodeSync, suggestCode, referenceState, verifiedFacts, readiness, MAX_UPLOADS };
 }
 
 module.exports = { createProductService, KIND_LABEL, MAX_UPLOADS };
