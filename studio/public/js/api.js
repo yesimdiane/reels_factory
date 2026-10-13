@@ -30,6 +30,6 @@ export const api = {
   get: (u) => call('GET', u),
   post: (u, b = {}) => call('POST', u, b),
   put: (u, b = {}) => call('PUT', u, b),
-  del: (u) => call('DELETE', u),
+  del: (u, b) => call('DELETE', u, b),
   upload: (u, file, extra = {}) => call('POST', u, file, Object.assign({ 'x-filename': encodeURIComponent(file.name), 'Content-Type': file.type || 'application/octet-stream' }, extra)),
 };

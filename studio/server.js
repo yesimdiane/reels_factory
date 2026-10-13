@@ -243,6 +243,9 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('DELETE', '/api/cut-presets/:id', async ({ p }) => S.cutPresets.remove(p.id));
   route('PUT', '/api/episodes/:id/scenes/:sid/inserts', async ({ p, body }) => S.saveInserts(p.id, p.sid, body.inserts));
   route('GET', '/media/cutframe/:a/:b', async ({ p, query }) => ({ file: await S.cutFrame(p.a, p.b, query.t) }));
+  route('GET', '/api/episodes-trash', async () => ({ trash: S.trashList() }));
+  route('DELETE', '/api/episodes/:id', async ({ p, body }) => S.trashEpisode(p.id, { confirmPublished: !!(body && body.confirmPublished) }));
+  route('POST', '/api/episodes/:id/restore', async ({ p }) => S.restoreEpisode(p.id));
   route('POST', '/api/episodes/:id/scenes', async ({ p, body }) => S.addScene(p.id, { afterSceneId: body.afterSceneId, beatKey: body.beatKey }));
   route('DELETE', '/api/episodes/:id/scenes/:sid', async ({ p }) => S.deleteScene(p.id, p.sid));
   route('PUT', '/api/episodes/:id/scenes/:sid', async ({ p, body }) => S.saveScene(p.id, p.sid, { scene: body.scene, lines: body.lines }));
@@ -379,7 +382,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
         r.names.forEach((n, i) => (p[n] = decodeURIComponent(m[i + 1])));
         let body = {};
         let raw = null;
-        if (req.method === 'POST' || req.method === 'PUT') {
+        if (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE') {
           if (r.opts.upload) raw = await readBody(req, MAX_UPLOAD);
           else {
             const buf = await readBody(req, MAX_JSON);

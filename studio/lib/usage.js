@@ -36,7 +36,7 @@ function createUsage({ store, log = () => {} }) {
       total += cost(e);
       if (!e.mock && e.estimatedUsd == null && e.actualUsd == null && e.status === 'ok') unknown += 1;
     });
-    store.episodes.list().forEach((ep) => (ep.spend || []).forEach((s) => {
+    store.episodes.list({ all: true }).forEach((ep) => (ep.spend || []).forEach((s) => {
       if (s.mock || new Date(s.at).getTime() < t) return;
       total += s.actualUsd != null ? s.actualUsd : s.estimatedUsd || 0;
     }));
