@@ -16,7 +16,7 @@ const T = require('./translate');
 
 function createScriptGen({ store, products, storylab, prompts, presets, endings, router, lib }) {
   function episodeIdFor(pid) {
-    const used = store.episodes.list().map((e) => e.id).filter((i) => i.startsWith(pid + '-R')).map((i) => Number(i.slice(pid.length + 2))).filter(Number.isFinite);
+    const used = store.episodes.list({ all: true }).map((e) => e.id).filter((i) => i.startsWith(pid + '-R')).map((i) => Number(i.slice(pid.length + 2))).filter(Number.isFinite);
     return `${pid}-R${String((used.length ? Math.max(...used) : 1) + 1).padStart(2, '0')}`;
   }
 

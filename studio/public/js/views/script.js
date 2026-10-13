@@ -10,23 +10,11 @@ import { structureMap } from './structure-map.js';
 import { projectPanel } from './script-project.js';
 import { sceneFocus, sceneNavigator, currentSceneId, setFocus, switchScene, addScene, saveAllDirty } from './script-focus.js';
 import { guardLeave } from './leave-guard.js';
+import { draftOf } from './script-draft.js';
 
-function draftOf(ep) {
-  if (!state.draft.script || state.draft.script.forEpisode !== ep.id) {
-    state.draft.script = {
-      forEpisode: ep.id, dirty: false,
-      title: ep.title, titleEn: ep.titleEn || '',
-      beats: ep.beats.slice(),
-      scenes: ep.scenes.map((s) => ({ id: s.id, part: s.part, beatKey: s.beatKey, title: s.title, title_ko: s.titleKoMissing ? '' : s.title_ko, legacyTitle: s.title, durationSec: s.durationSec, characters: s.characters.slice(), showsProduct: s.showsProduct, visual: s.visual, beat: s.beat, action: s.action || '', narration: s.narration || '', placement: s.placement || '' })),
-      lines: ep.lines.map((l) => ({ ...l })),
-      comedy_story: ep.formula.structured ? Object.fromEntries(ep.formula.partA.map((b) => [b.key, { title_ko: b.title_ko, story_en: b.story_en, visual: b.visual }])) : null,
-      product_ending: ep.formula.structured ? Object.fromEntries(ep.formula.partB.map((b) => [b.key, { title_ko: b.title_ko, story_en: b.story_en, visual: b.visual }])) : null,
-      endingVars: ep.formula.structured ? Object.assign({}, ep.formula.ending.vars) : null,
-      cta: { lines: ep.cta.lines.slice(), keyword: ep.cta.keyword, durationSec: ep.cta.durationSec },
-    };
-  }
-  return state.draft.script;
-}
+// Wide screens (PC) show EVERY scene, S1 … last, as stacked cards; narrow screens (phone) show one scene at a time.
+const WIDE = window.matchMedia('(min-width: 901px)');
+WIDE.addEventListener('change', () => { if (state.view === 'script') hooks.rerender(); });
 
 export function script() {
   const ep = requireEpisode();
@@ -54,24 +42,28 @@ export function script() {
   }
   const ctx = { index, chars, saveEpisode, onChangeOuter: null };
   const addSceneHere = (beatKey) => addScene(ep, d, ctx, beatKey);
-  ctx.addScene = () => addSceneHere();
+  ctx.addScene = (afterSid) => addScene(ep, d, ctx, undefined, afterSid);
+  const wide = WIDE.matches;
   const focusScene = (id) => switchScene(ep, d, id, ctx);
   // leaving this page with unsaved edits asks first (see main.js)
   state.leaveGuard = { dirty: () => !!(d.dirty || d.epDirty), save: () => saveAllDirty(ep, d, ctx) };
 
-  const focus = sceneFocus(ep, d, ctx);
+  const cards = wide ? ep.scenes.map((s) => sceneFocus(ep, d, ctx, s.id, { inline: true })) : null;
+  const focus = wide ? null : sceneFocus(ep, d, ctx);
   const onJump = async (e) => {
+    if (wide) return jumpTo(e); // every scene is on the page
     const target = e.sceneId || ((d.lines.find((l) => l.id === e.lineId) || {}).sceneId) || ((ep.scenes.find((s) => s.beatKey === e.beatKey) || {}).id);
     if (target && target !== sid) { await switchScene(ep, d, target, ctx); setTimeout(() => jumpTo(e), 200); return true; }
     return jumpTo(e);
   };
 
   const wrap = h('div', { class: 'stack script-studio', style: 'gap:14px' });
-  wrap.append(pageHead('Script Studio', '대본 스튜디오', '한 번에 씬 하나씩 편집합니다. 씬 저장은 임시 저장이고, 씬 승인을 눌러야 승인됩니다.', episodePicker()));
+  wrap.append(pageHead('Script Studio', '대본 스튜디오', 'PC에서는 S1부터 마지막 씬까지 모든 씬이 한 화면에 쌓여 보이고, 휴대폰에서는 한 번에 씬 하나씩 편집합니다. 씬 저장은 임시 저장이고, 씬 승인을 눌러야 승인됩니다.', episodePicker()));
   wrap.append(projectPanel(ep, d, errorSummary(ep, index, { onJump })));
   if (ep.derived.scriptChangedSinceApproval) wrap.append(h('div', { class: 'banner warn' }, h('div', null, h('b', null, '승인 후 대본이 수정되었습니다'), '유료 생성·음성·렌더가 잠겼습니다. 바뀐 씬을 다시 확인하고 승인하세요.')));
-  wrap.append(sceneNavigator(ep, d, ctx));
-  wrap.append(focus.el);
+  wrap.append(sceneNavigator(ep, d, ctx, { list: wide }));
+  if (wide) wrap.append(h('div', { class: 'stack scene-list', style: 'gap:16px' }, cards.map((c) => c.el)));
+  else wrap.append(focus.el);
 
   // ---- episode tools (collapsed): everything that is not about the current scene ----
   const presetBox = ep.derived.concept.linked ? presetPanel(ep) : null;
@@ -107,7 +99,7 @@ export function script() {
   function isUnsaved() { return !!(d.dirty || d.epDirty); }
 
   // sticky bottom action bar (mobile: full width above the tab bar, safe-area and keyboard aware; desktop: floating bottom-right)
-  wrap.append(focus.bar);
+  if (!wide) wrap.append(focus.bar);
   return wrap;
 }
 

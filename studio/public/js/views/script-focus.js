@@ -12,6 +12,7 @@ import { withTranslate } from './translate-box.js';
 import { openCutEditor } from './cut-editor.js';
 import { sceneTools, statusChip } from './script-project.js';
 import { guardLeave } from './leave-guard.js';
+import { resetDraftAfterSave } from './script-draft.js';
 
 const SECTION_OF = { en: 'dialogue', ko: 'dialogue', speaker: 'dialogue', narration: 'dialogue', visual: 'visual', action: 'visual', placement: 'visual', showsProduct: 'visual', characters: 'visual', durationSec: 'advanced', timing: 'advanced', startSec: 'advanced', beatKey: 'advanced', id: 'advanced' };
 
@@ -27,7 +28,7 @@ const short = (t, n = 110) => { const s = String(t || '').replace(/\s+/g, ' ').t
 
 export const currentSceneId = (ep) => { const id = (state.sceneFocus || {})[ep.id]; return ep.scenes.some((s) => s.id === id) ? id : (ep.scenes[0] || {}).id; };
 export function setFocus(ep, sid) { state.sceneFocus = Object.assign(state.sceneFocus || {}, { [ep.id]: sid }); }
-const isDirty = (d) => !!(d && (d.dirty || d.epDirty));
+const isDirty = (d) => !!(d && ((d.dirtyScenes && d.dirtyScenes.size) || d.epDirty));
 
 /** The payload of 씬 저장: this scene's own fields and dialogue only. */
 export function scenePayload(d, sid) {
@@ -39,7 +40,7 @@ export function scenePayload(d, sid) {
 export async function saveCurrentScene(ep, d, sid, { toastOk = true } = {}) {
   try {
     const r = await api.put(`/api/episodes/${ep.id}/scenes/${sid}`, scenePayload(d, sid));
-    state.draft.script = null;
+    resetDraftAfterSave(r, d, [sid]);
     state.episode = r;
     if (toastOk) toast('씬을 임시 저장했습니다 (승인되지 않았습니다)');
     return true;
@@ -58,17 +59,19 @@ export async function switchScene(ep, d, sid, ctx) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 export async function saveAllDirty(ep, d, ctx) {
-  const sid = currentSceneId(ep);
-  if (d.dirty && !(await saveCurrentScene(ep, d, sid, { toastOk: false }))) return false;
+  for (const sid of Array.from(d.dirtyScenes || [])) { // every scene with unsaved edits (several can be open on a wide screen)
+    if (!(await saveCurrentScene(ep, d, sid, { toastOk: false }))) return false;
+    d = state.draft.script || d;
+  }
   if (d.epDirty && ctx && ctx.saveEpisode && !(await ctx.saveEpisode())) return false;
   return true;
 }
 
-export async function addScene(ep, d, ctx, beatKey) {
+export async function addScene(ep, d, ctx, beatKey, afterSid) {
   const go = await guardLeave({ dirty: isDirty(d), what: '새 씬을 만들기 전에', save: async () => saveAllDirty(ep, d, ctx) });
   if (!go) return;
   try {
-    const r = await api.post(`/api/episodes/${ep.id}/scenes`, { afterSceneId: currentSceneId(ep), beatKey });
+    const r = await api.post(`/api/episodes/${ep.id}/scenes`, { afterSceneId: afterSid || currentSceneId(ep), beatKey });
     setFocus(ep, r.newSceneId);
     state.draft.script = null;
     state.episode = r;
@@ -82,15 +85,15 @@ export async function addScene(ep, d, ctx, beatKey) {
 /** 씬 승인: save the current edits as a draft, then validate and approve ONLY this scene. On failure: open + scroll to + highlight the invalid field. */
 export async function approveCurrentScene(ep, d, sid) {
   try {
-    if (d.dirty && !(await saveCurrentScene(ep, d, sid, { toastOk: false }))) return;
+    if (d.dirtyScenes && d.dirtyScenes.has(sid) && !(await saveCurrentScene(ep, d, sid, { toastOk: false }))) return;
     const r = await api.post(`/api/episodes/${ep.id}/scenes/${sid}/approve`);
-    state.draft.script = null;
+    resetDraftAfterSave(r, state.draft.script, [sid]);
     state.episode = r;
     toast(`${sid} 씬을 승인했습니다`);
     await refresh();
     hooks.rerender();
   } catch (e) {
-    state.draft.script = null;
+    resetDraftAfterSave(state.episode || ep, state.draft.script, [sid]);
     try { await refresh(); } catch (_) { /* ignore */ }
     hooks.rerender();
     const first = (e.details || []).find((x) => x && (x.field || x.lineId || x.sceneId)) || null;
@@ -120,8 +123,8 @@ function previewFor(ep, sc) {
  * The focused scene. ctx = { index, chars, saveEpisode, addScene(beatKey), onChange }.
  * Returns { el, bar } — `bar` is the (mobile sticky) action bar.
  */
-export function sceneFocus(ep, d, ctx) {
-  const sid = currentSceneId(ep);
+export function sceneFocus(ep, d, ctx, sceneId, { inline = false } = {}) {
+  const sid = sceneId || currentSceneId(ep);
   const sc = d.scenes.find((x) => x.id === sid);
   const srv = ep.scenes.find((x) => x.id === sid);
   const { index, chars } = ctx;
@@ -139,12 +142,13 @@ export function sceneFocus(ep, d, ctx) {
   const mkSave = () => { const b = h('button', { class: 'btn', type: 'button', 'data-scene-save': sid, onclick: onSave }, '씬 저장'); saves.push(b); return b; };
   const mkApprove = () => { const b = h('button', { class: 'btn sage', type: 'button', 'data-scene-approve': sid, onclick: onApprove }, '씬 승인'); approves.push(b); return b; };
   const refreshBar = () => {
-    saves.forEach((b) => { b.disabled = !d.dirty; b.textContent = d.dirty ? '씬 저장' : '저장됨'; });
-    approves.forEach((b) => { b.disabled = !!(ap && ap.approved && !d.dirty); b.textContent = ap && ap.approved && !d.dirty ? `승인됨 · r${ap.revision}` : '씬 승인'; });
-    note.textContent = d.dirty ? '저장하지 않은 변경이 있습니다' : ap && ap.approved ? '승인된 씬입니다 — 수정하면 새 초안이 됩니다' : ap && ap.editedAfterApproval ? `승인 후 수정됨 — r${ap.lastApprovedRev} 승인본은 보관됨` : '저장해도 승인되지 않습니다';
+    const mine = d.dirtyScenes.has(sid);
+    saves.forEach((b) => { b.disabled = !mine; b.textContent = mine ? '씬 저장' : '저장됨'; });
+    approves.forEach((b) => { b.disabled = !!(ap && ap.approved && !mine); b.textContent = ap && ap.approved && !mine ? `승인됨 · r${ap.revision}` : '씬 승인'; });
+    note.textContent = mine ? '저장하지 않은 변경이 있습니다' : ap && ap.approved ? '승인된 씬입니다 — 수정하면 새 초안이 됩니다' : ap && ap.editedAfterApproval ? `승인 후 수정됨 — r${ap.lastApprovedRev} 승인본은 보관됨` : '저장해도 승인되지 않습니다';
   };
-  const dirty = () => { d.dirty = true; refreshBar(); };
-  const bar = h('div', { class: 'scene-actions-bar', role: 'toolbar', 'aria-label': '씬 작업' }, note, h('div', { class: 'bar-buttons' }, mkSave(), mkApprove()));
+  const dirty = () => { d.dirtyScenes.add(sid); d.dirty = true; refreshBar(); };
+  const bar = h('div', { class: 'scene-actions-bar' + (inline ? ' inline' : ''), role: 'toolbar', 'aria-label': '씬 작업' }, note, h('div', { class: 'bar-buttons' }, mkSave(), mkApprove()));
 
   // ---- dialogue ----
   const meter = h('span', { class: 'chip', 'data-rf': `S:${sid}:timing` });
@@ -152,7 +156,7 @@ export function sceneFocus(ep, d, ctx) {
   const refreshMeter = () => {
     const own = d.lines.filter((l) => l.sceneId === sid);
     const need = own.reduce((n, l) => n + speechSec(l.en), 0) + 0.18 * Math.max(0, own.length - 1) + (own.length ? 0.6 : 0);
-    const act0 = !d.dirty && ((ep.derived.timing.scenes.find((x) => x.sceneId === sid) || {}).actual || {});
+    const act0 = !d.dirtyScenes.has(sid) && ((ep.derived.timing.scenes.find((x) => x.sceneId === sid) || {}).actual || {});
     meter.textContent = own.length ? `추정 대사 ${need.toFixed(1)}초 / 장면 ${sc.durationSec}초` + (act0 && act0.complete ? ` · 실측 ${act0.needSec.toFixed(1)}초` : '') : `장면 ${sc.durationSec}초 · 대사 없음`;
     meter.className = 'chip ' + (need > sc.durationSec + 0.05 ? 'attention' : '');
   };
@@ -233,7 +237,7 @@ export function sceneFocus(ep, d, ctx) {
   const el = h('div', { class: 'card scene-card', id: 'script-scene-' + sid, 'data-rf': `S:${sid}:block`, 'data-scene-card': sid },
     h('div', { class: 'scene-head' },
       h('div', { class: 'row', style: 'gap:8px;flex-wrap:nowrap;min-width:0' }, h('span', { class: 'scene-no eyebrow' }, sid), statusChip(ap)),
-      h('button', { class: 'btn sm clay', type: 'button', 'data-add-scene': sid, title: '현재 씬 바로 뒤에 새 씬을 만듭니다 (기존 씬은 바뀌지 않습니다)', onclick: () => ctx.addScene() }, icon('plus'), '씬 추가')),
+      h('button', { class: 'btn sm clay', type: 'button', 'data-add-scene': sid, title: '현재 씬 바로 뒤에 새 씬을 만듭니다 (기존 씬은 바뀌지 않습니다)', onclick: () => ctx.addScene(sid) }, icon('plus'), '씬 추가')),
     attach(index, h('div', { class: 'field', style: 'margin:0' }, h('input', { type: 'text', class: 'scene-title', value: sc.title_ko, placeholder: sc.legacyTitle ? '한국어 제목 입력 (현재: ' + sc.legacyTitle + ')' : '한국어 장면 제목 (예: 영국인의 자신감)', maxLength: 24, 'aria-label': '장면 제목 (한국어)', oninput: (e) => { sc.title_ko = e.target.value; dirty(); } })), `S:${sid}:title_ko`),
     h('div', { class: 'scene-summary' }, previewFor(ep, srv), h('div', { class: 'scene-summary-text' }, desc,
       h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, chip(`${sc.durationSec}초`, ''), ...(sc.characters || []).map((c) => chip((chars.find((x) => x.id === c) || { name: c }).name, '')), sc.showsProduct ? chip('제품 노출', 'attention') : null,
@@ -241,18 +245,19 @@ export function sceneFocus(ep, d, ctx) {
     missing.length ? h('div', { class: 'stack', style: 'gap:6px' }, h('div', { class: 'small', style: 'color:var(--rose);font-weight:600' }, `승인하려면 ${missing.length}개를 고쳐야 합니다`), missing.slice(0, 4).map((e) => h('button', { class: 'issue err issue-link', type: 'button', onclick: () => jumpTo(Object.assign({ sceneId: sid }, e, { key: undefined })) }, h('span', null, e.message)))) : null,
     dialogue, visual, prompts, advanced);
   refreshBar();
+  if (inline) el.append(bar); // wide screens: the action bar sits at the bottom of each scene card (sticky while the card is on screen)
   return { el, bar, dirty };
 }
 
 /** Previous / Next navigation + compact scene tabs. */
-export function sceneNavigator(ep, d, ctx) {
-  const sid = currentSceneId(ep);
+export function sceneNavigator(ep, d, ctx, { list = false } = {}) {
+  const sid = list ? null : currentSceneId(ep);
   const i = ep.scenes.findIndex((x) => x.id === sid);
   const go = (k) => { const t = ep.scenes[k]; if (t) switchScene(ep, d, t.id, ctx); };
   const tabs = h('div', { class: 'scene-tabs', role: 'tablist', 'aria-label': '씬 목록' }, ep.scenes.map((s) => {
     const a = s.approval || {};
     const badge = a.approved ? h('span', { class: 'tab-badge ok' }, '✓') : a.errorCount ? h('span', { class: 'tab-badge err' }, String(a.errorCount)) : a.editedAfterApproval ? h('span', { class: 'tab-badge stale' }, '↻') : a.status === 'ready' ? h('span', { class: 'tab-badge ready' }, '○') : h('span', { class: 'tab-badge draft' }, '·');
-    return h('button', { class: 'btn sm ghost scene-tab' + (s.id === sid ? ' current' : ''), type: 'button', role: 'tab', 'aria-selected': s.id === sid ? 'true' : 'false', 'data-scene-tab': s.id, title: `${s.id} · ${s.title_ko || ''}`, onclick: () => switchScene(ep, d, s.id, ctx) }, s.id, badge);
+    return h('button', { class: 'btn sm ghost scene-tab' + (s.id === sid ? ' current' : ''), type: 'button', role: 'tab', 'aria-selected': s.id === sid ? 'true' : 'false', 'data-scene-tab': s.id, title: `${s.id} · ${s.title_ko || ''}`, onclick: () => { if (list) { const el = document.getElementById('script-scene-' + s.id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } else switchScene(ep, d, s.id, ctx); } }, s.id, badge);
   }));
   const nav = h('div', { class: 'scene-nav' },
     h('button', { class: 'btn', type: 'button', 'data-prev-scene': '1', disabled: i <= 0, onclick: () => go(i - 1) }, '← 이전 씬'),
@@ -260,5 +265,5 @@ export function sceneNavigator(ep, d, ctx) {
     h('button', { class: 'btn', type: 'button', 'data-next-scene': '1', disabled: i >= ep.scenes.length - 1, onclick: () => go(i + 1) }, '다음 씬 →'));
   // keep the current tab in view inside the scroller (never scrolls the page sideways)
   setTimeout(() => { const cur = tabs.querySelector('.current'); if (cur && tabs.scrollTo) tabs.scrollTo({ left: Math.max(0, cur.offsetLeft - 60), behavior: 'auto' }); }, 0);
-  return h('div', { class: 'stack', style: 'gap:8px' }, nav, tabs);
+  return h('div', { class: 'stack' + (list ? ' scene-tabs-wide' : ''), style: 'gap:8px' }, ...(list ? [tabs] : [nav, tabs]));
 }

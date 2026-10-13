@@ -149,13 +149,15 @@ function createStore({ dir, seedDir = SEED_DIR }) {
     /** Optional observers of every episode write (before/after the mutation); the Studio uses them to track scene-approval changes. */
     hooks: { before: null, after: null },
     exists: (id) => fs.existsSync(epFile(id)),
-    list() {
+    /** Active episodes. `{ all: true }` also returns trashed ones (spend history, id uniqueness); `{ trashed: true }` only those. */
+    list({ all = false, trashed = false } = {}) {
       const root = p('episodes');
       if (!fs.existsSync(root)) return [];
       return fs
         .readdirSync(root)
         .map((id) => readJson(path.join(root, id, 'episode.json')))
         .filter(Boolean)
+        .filter((e) => all || (trashed ? !!e.trashedAt : !e.trashedAt))
         .sort((a, b) => String(a.id).localeCompare(String(b.id)));
     },
     get(id) {

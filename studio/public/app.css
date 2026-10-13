@@ -423,3 +423,11 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .tabbar button.has-en { flex-direction: column; }
 .tabbar button.has-en > .btn-main { flex-direction: column; gap: 2px; }
 .tabbar button.has-en > .btn-en { font-size: 9px; }
+
+/* ---------- wide screens: every scene as a stacked card, actions at the bottom of each card ---------- */
+.scene-tabs-wide .scene-tabs { position: sticky; top: 0; z-index: 30; background: var(--ivory); padding: 6px 0; }
+.scene-actions-bar.inline { position: sticky; left: auto; right: auto; bottom: 12px; border-radius: 16px; margin-top: 4px; flex-direction: row; align-items: center; justify-content: space-between; box-shadow: var(--shadow); max-width: 100%; padding: 8px 12px 8px 16px; }
+.scene-actions-bar.inline .bar-note { text-align: left; }
+.scene-actions-bar.inline .bar-buttons { flex: 0 0 auto; }
+.scene-actions-bar.inline .btn { flex: 0 0 auto; min-height: 40px; font-size: 14px; }
+.scene-list .scene-card { scroll-margin-top: 64px; }
