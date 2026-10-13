@@ -15,7 +15,7 @@ const { sniffImage } = require('./extract');
 const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 const MAX_PRODUCT_REFS = 3;
 
-function createStartImages({ store, products, router, lib, log = () => {} }) {
+function createStartImages({ store, products, router, lib, charRefs, log = () => {} }) {
   const hasFrame = (s) => !!(s.startImage && s.startImage.type === 'upload');
 
   /** Which scenes would be generated, and why the others are skipped. Pure: nothing is billed or changed. */
@@ -40,15 +40,10 @@ function createStartImages({ store, products, router, lib, log = () => {} }) {
   function inputs(ep, scene) {
     const L = lib();
     const cast = scene.characters || [];
-    const images = [];
-    const used = [];
-    cast.forEach((cid) => {
-      const c = L.characters.find((x) => x.id === cid);
-      const r = c && c.references.find((x) => x.approved && !x.placeholder);
-      if (!r) throw new StudioError('NO_CHARACTER_REF', `${scene.id}: ${c ? c.name : cid}의 승인된 캐릭터 참조 이미지가 없습니다 (데모 임시 이미지는 사용하지 않습니다).`, { recovery: '캐릭터 라이브러리에서 실제 참조 이미지를 올리고 승인하세요.', status: 409 });
-      images.push({ label: `Character reference sheet for ${c.name} (ONE person, identity only, never a scene layout):`, mimeType: MIME[path.extname(r.file)] || 'image/png', data: fs.readFileSync(store.characters.refPath(cid, r)).toString('base64') });
-      used.push({ characterId: cid, refId: r.id });
-    });
+    // the ACTUAL approved image bytes of the characters in this scene (validated first; throws before any paid call)
+    const ci = charRefs.inputsFor(ep, scene);
+    const images = ci.images.slice();
+    const used = ci.used;
     let productIds = [];
     if (scene.showsProduct && ep.productId && ep.productRefs && (ep.productRefs.imageIds || []).length) {
       const files = products.imageFiles(ep.productId, ep.productRefs.imageIds.slice(0, MAX_PRODUCT_REFS));
@@ -63,6 +58,7 @@ function createStartImages({ store, products, router, lib, log = () => {} }) {
       scene.action ? 'ACTION AT THE FIRST FRAME: ' + scene.action : '',
       castDirective(cast, L),
       ...identityLines(cast, L),
+      ...ci.lines,
       cast.length ? SHEET_RULE : '',
       scene.showsProduct && productIds.length ? 'The product appears in this scene: draw it EXACTLY like the approved product reference(s). Never add features. Verified facts only: ' + (facts.join('; ') || 'none') : 'Do NOT show the product in this frame.',
       'No text, captions, subtitles, speech bubbles, logos or watermarks anywhere in the image.',
@@ -117,7 +113,7 @@ function createStartImages({ store, products, router, lib, log = () => {} }) {
         store.episodes.saveFile(epId, path.join('startframes', file), buf);
         await store.episodes.update(epId, (e) => {
           const s = e.scenes.find((x) => x.id === scene.id);
-          s.startImage = { type: 'upload', file, sha256: hash, approved: false, generated: true, name: `AI 시작 프레임 ${scene.id}`, provider: out.provider, model: out.model, prompt: q.prompt, characterRefs: q.used, productImageIds: q.productIds, createdAt: nowIso(), createdBy: by };
+          s.startImage = { type: 'upload', file, sha256: hash, approved: false, generated: true, name: `AI 시작 프레임 ${scene.id}`, provider: out.provider, model: out.model, prompt: q.prompt, characterRefs: q.used, characterRefAssetIds: q.used.map((u) => u.assetId), productImageIds: q.productIds, createdAt: nowIso(), createdBy: by };
         });
         store.episodes.audit(epId, 'startimage.generated', { sceneId: scene.id, provider: out.provider, model: out.model, file });
         generated.push({ sceneId: scene.id, file });

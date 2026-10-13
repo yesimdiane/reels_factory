@@ -166,7 +166,10 @@ test('per-scene approval and regeneration never touch other scenes; paid image g
   const eps = m.s.store.episodes.get(m.id);
   assert.equal(JSON.stringify(eps.scenes.find((s) => s.id === m.sid).startImage), a, 'scene 1 keeps its approved frame');
   assert.equal(eps.scenes.find((s) => s.id === m.sid2).startImage.approved, false, 'the new frame of scene 2 needs its own approval');
-  await assert.rejects(m.s.startImages.generate(m.id, [m.sid2], {}), (e) => /CONFIRM|확인|승인/.test(e.code + e.message));
+  // without a real approved character reference the request stops first, with the exact message
+  await assert.rejects(m.s.startImages.generate(m.id, [m.sid2], {}), (e) => /Character reference missing/.test(e.message));
+  ['jack', 'diane'].forEach((cid, i) => { m.s.store.characters.addReference(cid, { buffer: png(120 + i), filename: cid + '.png', mime: 'image/png' }); const r = m.s.store.characters.get(cid).references.slice(-1)[0]; m.s.store.characters.setReferenceApproved(cid, r.id, true); });
+  await assert.rejects(m.s.startImages.generate(m.id, [m.sid2], {}), (e) => /CONFIRM|확인|승인|연결/.test(e.code + e.message));
 });
 
 test('HTTP: motion, draft and B-roll routes', async () => {

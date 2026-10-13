@@ -26,7 +26,7 @@ const AUTH_TTL_MS = 30 * 60 * 1000;
 const ACTIVE = new Set(['preparing', 'submitting', 'processing']);
 const RECOVERABLE = new Set(['processing', 'polling_interrupted', 'download_failed']);
 
-function createGenerationService({ store, provider, cfg, now = () => Date.now(), log = () => {}, composePrompt = (ep, sid, text) => text }) {
+function createGenerationService({ store, provider, cfg, now = () => Date.now(), log = () => {}, composePrompt = (ep, sid, text) => text, charRefs = null }) {
   const running = new Set();
   const lib = () => store.characters.load();
 
@@ -71,6 +71,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     const add = (code, message, recovery) => out.push({ code, message, recovery });
     if (!isScriptApproved(ep)) add('SCRIPT_NOT_APPROVED', '대본이 승인되지 않았거나 승인 후 수정되었습니다.', 'Script Studio에서 대본을 다시 확인하고 승인하세요.');
     if (!isStoryboardApproved(ep)) add('STORYBOARD_NOT_APPROVED', '스토리보드가 승인되지 않았거나 승인 후 수정되었습니다.', 'Storyboard에서 프롬프트를 확인하고 승인하세요.');
+    if (charRefs && provider.mode === 'live') charRefs.validate(ep, scenes).problems.forEach((p) => add(p.code, p.message, '캐릭터 라이브러리에서 실제 참조 이미지를 올리고 승인하거나 장면의 "캐릭터 참조 이미지"에서 고르세요.'));
     scenes.forEach((s) => {
       const p = ep.prompts && ep.prompts[s.id];
       if (!p || !String(p.video || '').trim()) add('NO_PROMPT', `${s.id}: 영상 프롬프트가 없습니다.`, 'Storyboard에서 프롬프트를 만드세요.');
