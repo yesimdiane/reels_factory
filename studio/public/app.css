@@ -412,3 +412,14 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .cut-seg-label { pointer-events: none; }
 .chk-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--paper); font-size: 13px; font-weight: 600; cursor: pointer; min-height: 36px; }
 .chk-btn input { width: 18px; height: 18px; accent-color: var(--espresso); }
+
+/* English subtitle under every button (js/bilingual.js) */
+.has-en { flex-direction: column; justify-content: center; gap: 1px; border-radius: 18px; line-height: 1.2; }
+.btn.has-en.sm { padding-top: 4px; padding-bottom: 4px; }
+.has-en > .btn-main { display: inline-flex; align-items: center; gap: 8px; }
+.has-en > .btn-en { font-size: 10px; font-weight: 500; letter-spacing: .02em; opacity: .72; white-space: nowrap; }
+.btn.sm.has-en > .btn-en { font-size: 9.5px; }
+.btn.icon.has-en { border-radius: 10px; }
+.tabbar button.has-en { flex-direction: column; }
+.tabbar button.has-en > .btn-main { flex-direction: column; gap: 2px; }
+.tabbar button.has-en > .btn-en { font-size: 9px; }
