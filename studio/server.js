@@ -156,6 +156,10 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/storylab/:pid/concepts/:cid/approve', async ({ p }) => S.storylab.approve(p.pid, p.cid));
   route('POST', '/api/storylab/:pid/concepts/:cid/revoke', async ({ p }) => S.storylab.revoke(p.pid, p.cid));
   route('POST', '/api/storylab/:pid/concepts/:cid/reject', async ({ p, body }) => S.storylab.reject(p.pid, p.cid, body.reason));
+  route('POST', '/api/storylab/:pid/concepts/:cid/hold', async ({ p, body }) => S.storylab.hold(p.pid, p.cid, body && body.reason, 'operator', { confirmApproved: !!(body && body.confirmApproved) }));
+  route('POST', '/api/storylab/:pid/concepts/:cid/resume', async ({ p }) => S.storylab.resume(p.pid, p.cid));
+  route('DELETE', '/api/storylab/:pid/concepts/:cid', async ({ p, body }) => S.storylab.remove(p.pid, p.cid, 'operator', { confirmApproved: !!(body && body.confirmApproved) }));
+  route('POST', '/api/storylab/:pid/concepts/:cid/restore', async ({ p }) => S.storylab.restore(p.pid, p.cid));
   route('POST', '/api/storylab/:pid/concepts/:cid/reopen', async ({ p }) => S.storylab.reopen(p.pid, p.cid));
   route('POST', '/api/storylab/:pid/concepts/:cid/episode', async ({ p, body }) => { const id = await S.createEpisodeFromConcept({ productId: p.pid, conceptId: p.cid, newVersion: body.newVersion === true, requestId: String(body.requestId || '').slice(0, 80) }); return ep(id); });
 

@@ -92,7 +92,7 @@ test('AI reference: choosing one version approves it and rejects pending sibling
   assert.deepEqual(set.reference.imageIds.sort(), [src.id, b.id].sort());
 });
 
-test('concepts: new fields are required for new concepts, rules are added by code, legacy concepts stay editable', async () => {
+test('concepts: storyline-only generation, rules are added by code, a response without a storyline is rejected', async () => {
   const ai = textAi();
   const { s } = make({ ai });
   const pid = await readyProduct(s);
@@ -102,19 +102,19 @@ test('concepts: new fields are required for new concepts, rules are added by cod
   const prompt = ai.calls[0].prompt;
   assert.match(prompt, /BABYYYY!!!!!!/);
   assert.match(prompt, /NEVER calls Jack "오빠"/);
-  assert.match(prompt, /ENGLISH; on-screen subtitles are in KOREAN/);
-  assert.match(prompt, /FIRST 3 SECONDS/);
-  assert.match(prompt, /estimatedScenes/);
-  lab.concepts.forEach((c) => { assert.ok(c.plot && c.visualComedy && c.estimatedScenes >= 3); });
-  // a response without the new fields is rejected and nothing is saved
-  const bad = aiWithImages({ '*': () => ({ text: '', json: { concepts: goodConcepts(3).concepts.map(({ plot, visualComedy, ...r }) => r) }, usage: {} }) });
+  assert.match(prompt, /natural ENGLISH/);
+  assert.match(prompt, /Do NOT decide how many scenes/);
+  assert.doesNotMatch(prompt, /FIRST 3 SECONDS|estimatedScenes/, 'no hook / scene-count fields are requested any more');
+  lab.concepts.forEach((c) => { assert.ok(c.title && c.storyline.length >= 40); });
+  // a response without a storyline is rejected and nothing is saved
+  const bad = aiWithImages({ '*': () => ({ text: '', json: { concepts: goodConcepts(3).concepts.map(({ storyline, ...r }) => r) }, usage: {} }) });
   const m2 = make({ ai: bad });
   const pid2 = await readyProduct(m2.s);
   routePaid(m2.s);
-  await assert.rejects(m2.s.storylab.generate(pid2, { category: 'all', confirm: CONFIRM }), (e) => e.code === 'CONCEPTS_REJECTED' && /줄거리/.test(e.message));
+  await assert.rejects(m2.s.storylab.generate(pid2, { category: 'all', confirm: CONFIRM }), (e) => e.code === 'CONCEPTS_REJECTED' && /스토리라인/.test(e.message));
   assert.equal(m2.s.storylab.list(pid2).concepts.length, 0);
   // "오빠" is still refused
-  const o = aiWithImages({ '*': () => ({ text: '', json: { concepts: goodConcepts(3).concepts.map((c, i) => (i ? c : { ...c, plot: c.plot + ' Diane: 오빠!' })) }, usage: {} }) });
+  const o = aiWithImages({ '*': () => ({ text: '', json: { concepts: goodConcepts(3).concepts.map((c, i) => (i ? c : { ...c, storyline: c.storyline + ' Diane: 오빠!' })) }, usage: {} }) });
   const m3 = make({ ai: o });
   const pid3 = await readyProduct(m3.s);
   routePaid(m3.s);
