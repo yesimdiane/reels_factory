@@ -153,7 +153,8 @@ function queue(home) {
           h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, h('span', { class: 'ep-code' }, i.code), chip(i.statusLabel, STATUS_KIND[i.status] || '')),
           h('div', { class: 't' }, i.title),
           h('div', { class: 'small muted' }, [i.productName, i.stage].filter(Boolean).join(' · ')),
-          h('div', { class: 'small', style: 'font-weight:600' }, '다음: ' + i.next)),
+          h('div', { class: 'small', style: 'font-weight:600' }, '다음: ' + i.next),
+          i.finalApproved || (i.dm && i.dm.status !== 'none') ? h('div', { class: 'small muted', 'data-dm-status': i.dm ? i.dm.status : 'none' }, 'DM 설정: ' + (i.dm ? i.dm.label : '미설정')) : null),
         h('span', { class: 'small muted', 'aria-hidden': 'true' }, '›')))))) : h('div', { class: 'empty small' }, queueFilter ? '이 조건에 맞는 항목이 없습니다.' : '처리할 항목이 없습니다.'));
 }
 

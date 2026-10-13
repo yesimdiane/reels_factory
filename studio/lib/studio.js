@@ -16,6 +16,7 @@ const { createScriptGen } = require('./scriptgen');
 const { createEpisodeIds } = require('./episodeids');
 const { createStoryboardAssets } = require('./storyboardassets');
 const { createPerformance } = require('./performance');
+const { createManychat } = require('./manychat');
 const { createScriptPresets } = require('./scriptpresets');
 const { createEndingTemplates } = require('./endingtemplates');
 const F = require('./formula');
@@ -70,6 +71,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   };
   const video = provider || new Proxy({}, { get: (_t, prop) => currentVideo()[prop] });
   const performance = createPerformance({ store });
+  const manychat = createManychat({ store, vault: keys, fetchFn, log });
   const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load(), products });
   const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: sba.composePrompt });
   const promptSvc = createPromptService({
@@ -327,7 +329,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     else if (awaiting.length) { status = 'approval'; statusLabel = '내 승인 대기'; }
     else if (stepKey === 'done') { status = 'done'; statusLabel = '완료'; }
     const next = hd.onHold ? '보류 해제 후 계속' : vs && group === 'video' ? vs.next.label : stepKey === 'done' ? (published ? '완료' : '게시하기') : NEXT_TEXT[stepKey] || '';
-    return { id: e.id, code: hd.code, title: e.title, productName: hd.productName, productId: e.productId || '', stage: hd.stage.label, group, status, statusLabel, awaiting, next, view, finalApproved: !!e.approvals.final, published };
+    return { id: e.id, dm: manychat.statusFor(e.id), code: hd.code, title: e.title, productName: hd.productName, productId: e.productId || '', stage: hd.stage.label, group, status, statusLabel, awaiting, next, view, finalApproved: !!e.approvals.final, published };
   }
   function homeSummary(eps) {
     const live = eps.filter((e) => !e.archivedAt);
@@ -1263,7 +1265,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
 
   return {
     exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
-    summary, episodeView, episodeIds, sba, performance, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
+    summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };

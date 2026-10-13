@@ -344,6 +344,21 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/sfx', async ({ p, raw, headers, query }) => S.uploadSfx(p.id, raw, decodeURIComponent(headers['x-filename'] || 'sfx.wav'), query.label, query.atSec), { upload: true });
   route('PUT', '/api/episodes/:id/sfx/:fid', async ({ p, body }) => S.updateSfx(p.id, p.fid, body));
 
+  // ---- ManyChat (token vault, connection test, Auto-DM campaign records; never creates anything in ManyChat) ----
+  route('GET', '/api/manychat', async () => ({ connection: S.manychat.connection(), campaigns: S.manychat.list() }));
+  route('PUT', '/api/manychat/token', async ({ body }) => S.manychat.setToken(body.token));
+  route('DELETE', '/api/manychat/token', async () => S.manychat.disconnect());
+  route('POST', '/api/manychat/test', async () => S.manychat.test());
+  route('GET', '/api/episodes/:id/dm', async ({ p }) => S.manychat.forEpisode(p.id));
+  route('PUT', '/api/episodes/:id/dm', async ({ p, body }) => S.manychat.save(p.id, body));
+  route('POST', '/api/episodes/:id/dm/prepare', async ({ p }) => S.manychat.prepare(p.id));
+  route('POST', '/api/episodes/:id/dm/configured', async ({ p, body }) => S.manychat.markConfigured(p.id, body));
+  route('POST', '/api/episodes/:id/dm/verify', async ({ p, body }) => S.manychat.verify(p.id, body));
+  route('POST', '/api/episodes/:id/dm/fail', async ({ p, body }) => S.manychat.fail(p.id, body));
+  route('POST', '/api/episodes/:id/dm/reopen', async ({ p, body }) => S.manychat.reopen(p.id, body));
+  route('DELETE', '/api/episodes/:id/dm', async ({ p }) => S.manychat.archive(p.id));
+  route('GET', '/api/episodes/:id/dm/export', async ({ p }) => S.manychat.exportConfig(p.id));
+
   // ---- publishing ----
   route('POST', '/api/episodes/:id/publishing/generate', async ({ p, body }) => { await S.publishing.init(p.id, { force: !!body.force }); return ep(p.id); });
   route('PUT', '/api/episodes/:id/publishing', async ({ p, body }) => { await S.publishing.save(p.id, body); return ep(p.id); });

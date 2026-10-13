@@ -536,6 +536,13 @@ a.brand { text-decoration: none; color: inherit; }
 .perf-stat { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .perf-v { font-family: var(--serif); font-size: 20px; font-weight: 600; }
 @media (max-width: 900px) { .home-counters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .home-counter:last-child { grid-column: 1 / -1; } .perf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Auto-DM Studio */
+.dm-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.dm-step { padding: 8px 6px; border-radius: 10px; background: var(--card-2, #f1ebe0); color: var(--muted); font-size: 12px; text-align: center; border: 1px solid var(--line); }
+.dm-step.on { background: color-mix(in srgb, var(--sage, #6f7d5c) 18%, transparent); color: var(--ink); }
+.dm-step.cur { border-color: var(--sage, #6f7d5c); font-weight: 700; }
+@media (max-width: 640px) { .dm-steps { grid-template-columns: repeat(2, 1fr); } }
 /* Product Studio: summary first, everything else folded */
 .prod-summary { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 16px; align-items: start; }
 .prod-main { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background: #fff; border: 1px solid var(--line-strong); border-radius: 14px; }
