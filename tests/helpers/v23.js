@@ -77,7 +77,8 @@ function make({ env = {}, ai = null, extractFn, downloadFn, vault } = {}) {
 
 /** A product that is READY for Story Lab: verified feature + one approved uploaded image + approved reference set. */
 async function readyProduct(s, over = {}) {
-  const p = await s.products.create(Object.assign({ name: '테스트 우산꽂이', features: ['자석으로 부착 가능', '장우산과 접이식 우산 수납'], forbiddenClaims: ['방수', '100%'] }, over));
+  const code = 'UM' + String.fromCharCode(66 + s.products.list().filter((x) => s.products.raw(x.id).code).length); // UMB, UMC, UMD … (unique per studio)
+  const p = await s.products.create(Object.assign({ name: '테스트 우산꽂이', code, features: ['자석으로 부착 가능', '장우산과 접이식 우산 수납'], forbiddenClaims: ['방수', '100%'] }, over));
   await s.products.upload(p.id, png(1), 'a.png');
   const view = s.products.get(p.id);
   await s.products.setStatus(p.id, view.images[0].id, 'approved');

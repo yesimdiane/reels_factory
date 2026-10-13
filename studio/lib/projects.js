@@ -15,7 +15,7 @@ const F = require('./formula');
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const ID_OK = /^[A-Za-z0-9][A-Za-z0-9_-]{0,40}$/;
 
-function createProjects({ store, lib, endings, products, log = () => {} }) {
+function createProjects({ store, episodeIds, lib, endings, products, log = () => {} }) {
   const registryFile = store.path('projects.json');
   const templatesFile = store.path('scene-templates.json');
 
@@ -244,7 +244,7 @@ function createProjects({ store, lib, endings, products, log = () => {} }) {
   }
 
   // ---------- duplication ----------
-  const RUNTIME_KEYS = ['approvals', 'prompts', 'clips', 'generation', 'spend', 'voice', 'renders', 'sfx', 'renderJob', 'sceneApprovals', 'imageDev', 'suggestions', 'status', 'version', 'createdAt', 'updatedAt', 'spendLimitUsd', 'duplicatedFrom', 'trashedAt', 'trashedBy', 'archivedAt', 'archivedBy', 'deletedVersions'];
+  const RUNTIME_KEYS = ['approvals', 'prompts', 'clips', 'generation', 'spend', 'voice', 'renders', 'sfx', 'renderJob', 'sceneApprovals', 'imageDev', 'suggestions', 'status', 'version', 'createdAt', 'updatedAt', 'spendLimitUsd', 'duplicatedFrom', 'trashedAt', 'trashedBy', 'archivedAt', 'archivedBy', 'deletedVersions', 'uuid', 'displayId', 'productCode', 'episodeNumber', 'idScheme'];
   function freeEpisodeId(srcId) {
     const base = srcId.replace(/-C\d+$/, '').slice(0, 34);
     for (let n = 1; n < 1000; n += 1) { const cand = `${base}-C${n}`; if (!store.episodes.exists(cand)) return cand; }
@@ -253,18 +253,26 @@ function createProjects({ store, lib, endings, products, log = () => {} }) {
   /** Independent copy of an episode's script (scenes, dialogue, CTA, ending selection). Approvals, prompts, images, clips, voices and renders are NOT copied. */
   async function duplicateEpisode(srcId, { newId, title, by = 'operator' } = {}) {
     const src = store.episodes.get(srcId);
-    const id = newId || freeEpisodeId(srcId);
-    if (!ID_OK.test(id)) throw new StudioError('BAD_ID', '에피소드 ID 형식이 올바르지 않습니다.');
-    if (store.episodes.exists(id)) throw new StudioError('DUPLICATE', '이미 있는 에피소드 ID입니다: ' + id, { status: 409 });
+    // A copy is a NEW episode: with the product-based scheme it takes the next number of the product (never a reused one).
+    const scheme = !newId && src.productCode && src.productId && episodeIds;
+    const id = scheme ? 'PENDING' : (newId || freeEpisodeId(srcId));
+    if (!scheme && !ID_OK.test(id)) throw new StudioError('BAD_ID', '에피소드 ID 형식이 올바르지 않습니다.');
+    if (!scheme && store.episodes.exists(id)) throw new StudioError('DUPLICATE', '이미 있는 에피소드 ID입니다: ' + id, { status: 409 });
+    const makeSeed = (ids) => {
+    const id = ids ? ids.id : newId || freeEpisodeId(srcId);
     const seed = clone(src);
     RUNTIME_KEYS.forEach((k) => delete seed[k]);
     Object.assign(seed, { id, reelId: id, title: String(title || '').trim() || `${src.title} (복제)`, projectId: projectIdFor(src), duplicatedFrom: { episodeId: srcId, scriptVersion: src.version || 0, at: nowIso(), by } });
     seed.publishing = { keyword: (src.publishing || {}).keyword || '', affiliateUrl: (src.publishing || {}).affiliateUrl || '', disclosure: (src.publishing || {}).disclosure || '' };
     seed.scenes = seed.scenes.map((s) => { const c = clone(s); delete c.startImage; c.origin = { type: 'episode', episodeId: srcId, sceneId: s.id, linked: false, copiedAt: nowIso() }; return c; });
-    store.episodes.create(seed);
-    await store.episodes.update(id, () => {}, { snapshot: true, by, note: `복제본 (원본 ${srcId})` });
-    store.episodes.audit(id, 'episode.duplicated', { from: srcId, by });
-    return id;
+    return seed;
+    };
+    let newEpId = id;
+    if (scheme) newEpId = episodeIds.createEpisode({ productId: src.productId, category: src.category || 'drama', buildSeed: makeSeed }).id;
+    else store.episodes.create(makeSeed(null));
+    await store.episodes.update(newEpId, () => {}, { snapshot: true, by, note: `복제본 (원본 ${srcId})` });
+    store.episodes.audit(newEpId, 'episode.duplicated', { from: srcId, by });
+    return newEpId;
   }
 
   // ---------- scene copy / templates ----------

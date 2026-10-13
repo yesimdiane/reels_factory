@@ -14,14 +14,14 @@ const SF = require('./scriptformula');
 const { sha256, uid } = require('./util');
 const T = require('./translate');
 
-function createScriptGen({ store, products, storylab, prompts, presets, endings, router, lib }) {
+function createScriptGen({ store, products, storylab, episodeIds, prompts, presets, endings, router, lib }) {
   function episodeIdFor(pid) {
     const used = store.episodes.list({ all: true }).map((e) => e.id).filter((i) => i.startsWith(pid + '-R')).map((i) => Number(i.slice(pid.length + 2))).filter(Number.isFinite);
     return `${pid}-R${String((used.length ? Math.max(...used) : 1) + 1).padStart(2, '0')}`;
   }
 
   /** Creates an (empty) episode bound to an approved concept. Product facts are copied from the verified product record. */
-  async function createEpisodeFromConcept(pid, cid, { id, newVersion = false } = {}) {
+  async function createEpisodeFromConcept(pid, cid, { id, newVersion = false, requestId = '' } = {}) {
     const concept = storylab.requireApproved(pid, cid);
     const b = products.bindingFor(pid);
     const p = b.product;
@@ -29,7 +29,7 @@ function createScriptGen({ store, products, storylab, prompts, presets, endings,
     // a repeat handoff is only allowed with an explicit confirmation and always creates a NEW episode (a version of the earlier one).
     const existing = store.episodes.list().filter((e) => e.concept && e.concept.conceptId === cid);
     if (existing.length && !newVersion) throw new StudioError('EPISODE_EXISTS', `이 컨셉으로 만든 에피소드가 이미 있습니다: ${existing.map((e) => e.id).join(', ')}`, { details: existing.map((e) => e.id), recovery: '기존 에피소드를 열거나, 확인 후 새 버전 에피소드를 만드세요. 기존 에피소드는 변경되지 않습니다.', status: 409 });
-    const epId = id || episodeIdFor(pid);
+    const build = ({ id: epId }) => {
     const seed = {
       id: epId, reelId: epId, productId: pid, title: concept.title, titleEn: '', series: 'Jack & Diane',
       product: { id: pid, name: p.name, kind: p.category || '', verifiedFeatures: b.facts, forbiddenClaims: p.forbiddenClaims || [], affiliateUrl: p.affiliateUrl || '', visualSummary: p.description || '', sourceNote: '운영자가 확인한 사실만 사용합니다 (Products 화면).' },
@@ -37,7 +37,7 @@ function createScriptGen({ store, products, storylab, prompts, presets, endings,
       scenes: [], lines: [], suggestions: [],
       cta: { lines: [], durationSec: 3.5, keyword: '' },
       publishing: { keyword: '', affiliateUrl: p.affiliateUrl || '', disclosure: '[광고] 이 게시물은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.' },
-      concept: { productId: pid, conceptId: cid, revision: concept.revision, title: concept.title, approvedAt: concept.approval.at, hook: concept.hook, ctaDirection: concept.ctaDirection, estimatedScenes: concept.estimatedScenes || null, versionOf: existing.length ? existing[0].id : null },
+      concept: { productId: pid, conceptId: cid, revision: concept.revision, title: concept.title, approvedAt: concept.approval.at, hook: concept.hook, ctaDirection: concept.ctaDirection, estimatedScenes: concept.estimatedScenes || null, category: concept.category || 'drama', categoryAssumed: !concept.category, versionOf: existing.length ? existing[0].id : null },
       // Approved product reference images travel with the episode so Storyboard / Animation can show and use the same images.
       productRefs: { referenceSetId: b.reference.waived ? 'waived' : (p.referenceSet || {}).id || '', imageIds: b.reference.imageIds || [], waived: b.reference.waived || '' },
       characterRules: ['Diane never calls Jack "오빠".', 'Spoken dialogue in English; subtitles in Korean.', 'Diane may shout "BABYYYY!!!!!!" when excited (not in every scene).', 'Keep the approved 2D character references; exactly one Jack and one Diane.'],
@@ -45,8 +45,13 @@ function createScriptGen({ store, products, storylab, prompts, presets, endings,
       formula: 1,
     };
     SF.seedFormula(seed, endings); // fixed formula: empty six-beat Part A + the default three-shot ending (Part B) applied automatically
-    store.episodes.create(seed);
-    return epId;
+    return seed;
+    };
+    // Story approval → Episode: {PRODUCT_CODE}-{NN}-{D|V|I}. The number is allocated atomically, only when the episode file is really created;
+    // a retry with the same requestId returns the episode it already made. (An explicit id is the legacy / test path and gets no number.)
+    if (id) { const seed = build({ id }); store.episodes.create(seed); return id; }
+    const r = episodeIds.createEpisode({ productId: pid, category: concept.category || 'drama', requestKey: requestId ? `${cid}:${requestId}` : '', buildSeed: build });
+    return r.id;
   }
 
   const STORY_ACTIONS = {
