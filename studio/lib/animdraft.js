@@ -118,7 +118,7 @@ function facialMicroPrompt(beat, stepIndex) {
 // when speech actually ends between regular 0.5s motion boundaries.
 function compactCharacterBeats(beats, duration, speechWindows) {
   const result = [];
-  const tenths = (n) => Math.round(n * 10) / 10;
+  const tenths = (n) => Math.round(n * 10) / 10; // store 0.3s audio cuts on a 0.1s-compatible timeline
   const audioEnd = new Map();
   for (const w of speechWindows) {
     const key = String(w.line.speaker);
@@ -164,7 +164,7 @@ function dialogueWindows(ep, lines, duration, exitFrom) {
     if (cursor >= duration - 1e-6 || cursor >= exitFrom - 1e-6) break;
     const measured = audioDuration(ep, line);
     const estimated = Math.max(1, snap(String(line.en).trim().split(/\\s+/).length / 2.7));
-    const seconds = measured == null ? estimated : Math.max(0.1, Math.ceil(measured * 10) / 10);
+    const seconds = measured == null ? estimated : Math.max(0.1, Math.ceil(measured / 0.3) * 0.3);
     const t0 = snap(cursor);
     const audioEnd = Math.min(duration, exitFrom, Math.round((t0 + seconds) * 10) / 10);
     const t1 = Math.min(duration, exitFrom, Math.ceil(audioEnd / STEP) * STEP);
