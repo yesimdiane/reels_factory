@@ -19,6 +19,10 @@ const F = require('./formula');
 const SF = require('./scriptformula');
 const { createStartImages } = require('./startimages');
 const { createProjects } = require('./projects');
+const { createTranslator } = require('./translate');
+const cuts = require('./cuts');
+const { createCutPresets } = require('./cutpresets');
+const { run: runFfmpeg } = require('../../renderer/lib/ffmpeg');
 const { createIntegrations } = require('./integrations');
 const { createVideoProvider } = require('./providers');
 const { createGenerationService } = require('./generation');
@@ -46,6 +50,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const presets = createScriptPresets({ store, prompts, seedDir: SEED_DIR });
   const endings = createEndingTemplates({ store, seedDir: SEED_DIR });
   const scriptgen = createScriptGen({ store, products, storylab, prompts, presets, endings, router, lib: () => store.characters.load() });
+  const translator = createTranslator({ store, router });
+  const cutPresets = createCutPresets({ store });
   const startImages = createStartImages({ store, products, router, lib: () => store.characters.load(), log });
   const integrations = createIntegrations({ store, vault: keys, runtime, router, usage, cfg, fetchFn, muapiFactory, log });
 
@@ -171,6 +177,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         clips: { approvedVersion: clips.approvedVersion, versions: clips.versions.map((v) => Object.assign({}, v, { url: `/media/clip/${id}/${s.id}/${v.v}` })) },
         line: ep.lines.filter((l) => l.sceneId === s.id).map((l) => l.id),
         approval: readiness.scenes.find((x) => x.sceneId === s.id),
+        cutInfo: cutInfoFor(ep, s),
         link: sceneLinks[s.id] || null,
       });
     });
@@ -498,6 +505,94 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return episodeView(id);
   }
 
+  // ---------- insert shots (컷 추가): crops of the scene's own approved clip; no AI / video call, no cost ----------
+  /** The picture the crops come from: the approved clip (else the newest one); before any clip exists only the start image can be previewed. */
+  function cutSource(ep, scene) {
+    const c = ep.clips[scene.id] || { versions: [], approvedVersion: null };
+    const v = c.versions.find((x) => x.v === c.approvedVersion) || c.versions[c.versions.length - 1];
+    if (v) return { kind: 'clip', approved: v.v === c.approvedVersion, v: v.v, width: v.width || 0, height: v.height || 0, durationSec: v.durationSec || 0 };
+    const img = gen.startImage(ep, scene);
+    if (!img.error && img.file && !img.characterId) return { kind: 'start_image', approved: !!img.approved, width: 0, height: 0, durationSec: 0 };
+    return { kind: 'none', approved: false, width: 0, height: 0, durationSec: 0 };
+  }
+  function cutInfoFor(ep, scene) {
+    const src = cutSource(ep, scene);
+    let inserts = []; let warnings = [];
+    try { ({ inserts, warnings } = cuts.normalizeInserts(scene.inserts || [], { durationSec: scene.durationSec, src, sceneId: scene.id })); } catch (e) { warnings = [{ code: e.code || 'INSERTS_INVALID', message: e.message }]; inserts = scene.inserts || []; }
+    return { source: src, inserts, warnings, effectNote: '컷은 카메라 크롭입니다. 새로운 눈·표정 움직임은 만들지 않습니다.' };
+  }
+  /** Replaces the scene's insert shots (the whole editable list). Versioned; the scene needs a new approval; the scene length never changes. */
+  async function saveInserts(id, sceneId, list, by = 'operator') {
+    const ep0 = store.episodes.get(id);
+    const sc0 = ep0.scenes.find((x) => x.id === sceneId);
+    if (!sc0) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다: ' + sceneId, { status: 404 });
+    const { inserts, warnings } = cuts.normalizeInserts(list, { durationSec: sc0.durationSec, src: cutSource(ep0, sc0), sceneId });
+    await store.episodes.update(id, (ep) => {
+      const sc = ep.scenes.find((x) => x.id === sceneId);
+      sc.inserts = inserts.map((i) => { const { resolution, motion, ...keep } = i; return keep; });
+    }, { snapshot: true, by, note: `컷 편집 (${sceneId})` });
+    store.episodes.audit(id, 'scene.inserts', { sceneId, count: inserts.length, by });
+    const v = episodeView(id);
+    v.cutWarnings = warnings;
+    return v;
+  }
+  /** A still frame of the approved clip (cached JPEG) for the crop preview. t is clamped to the clip; the start image is used before a clip exists. */
+  async function cutFrame(id, sceneId, t = 0) {
+    const ep = store.episodes.get(id);
+    const sc = ep.scenes.find((x) => x.id === sceneId);
+    if (!sc) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다.', { status: 404 });
+    const src = cutSource(ep, sc);
+    if (src.kind === 'start_image') return gen.startImage(ep, sc).file;
+    if (src.kind !== 'clip') throw new StudioError('NO_SOURCE', '이 장면에는 미리볼 클립이나 시작 이미지가 없습니다.', { status: 404 });
+    const ver = ep.clips[sceneId].versions.find((x) => x.v === src.v);
+    const clipFile = store.episodes.file(id, ver.file);
+    const at = Math.max(0, Math.min(Number(t) || 0, Math.max(0, (src.durationSec || 1) - 0.1)));
+    const out = store.cachePath('cutframes', `${ver.sha256.slice(0, 16)}-${at.toFixed(1)}.jpg`);
+    if (!fs.existsSync(out)) {
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      await runFfmpeg(cfg.ffmpeg.ffmpeg, ['-hide_banner', '-y', '-ss', at.toFixed(2), '-i', clipFile, '-frames:v', '1', '-q:v', '3', out], { cwd: path.dirname(out) });
+    }
+    return out;
+  }
+
+  /**
+   * Drag & drop reorder. Formula episodes: { beats: { setup: [ids], problem: [ids], ... } } moves Part A scenes within / between the six beats
+   * (every beat keeps at least one scene; Part B, the fixed ending, can never be moved). Other episodes: { order: [ids] }.
+   * Only the order / beat assignment changes; a scene whose predecessor changed gets its (template/AI) prompt flagged stale.
+   */
+  async function reorderScenes(id, { beats, order } = {}, by = 'operator') {
+    await store.episodes.update(id, (ep) => {
+      const before = ep.scenes.map((x) => x.id);
+      if (F.isStructured(ep)) {
+        if (!beats || typeof beats !== 'object') throw new StudioError('BAD_ORDER', '단계별 장면 순서가 필요합니다.', { status: 422 });
+        const a = ep.scenes.filter((x) => x.part !== 'B');
+        const b = ep.scenes.filter((x) => x.part === 'B');
+        const given = [].concat(...F.BEAT_KEYS.map((k) => (Array.isArray(beats[k]) ? beats[k].map(String) : [])));
+        if (given.length !== a.length || new Set(given).size !== a.length || a.some((x) => !given.includes(x.id))) throw new StudioError('BAD_ORDER', '장면 목록이 현재와 맞지 않습니다. 화면을 새로고침하세요.', { status: 409 });
+        const empty = F.BEAT_KEYS.filter((k) => !(beats[k] || []).length);
+        if (empty.length) throw new StudioError('BEAT_EMPTY', `각 단계에는 최소 한 장면이 필요합니다 (비는 단계: ${empty.map((k) => (F.beatMeta(k) || {}).ko).join(', ')}).`, { status: 422 });
+        const next = [];
+        F.BEAT_KEYS.forEach((k) => beats[k].forEach((sid) => {
+          const sc = a.find((x) => x.id === sid);
+          sc.part = 'A'; sc.beatKey = k; sc.beat = F.ALL_KEYS.indexOf(k) + 1;
+          next.push(sc);
+        }));
+        ep.scenes = next.concat(b);
+        F.syncBeats(ep);
+      } else {
+        if (!Array.isArray(order) || order.length !== ep.scenes.length || new Set(order).size !== order.length || ep.scenes.some((x) => !order.includes(x.id))) throw new StudioError('BAD_ORDER', '장면 목록이 현재와 맞지 않습니다. 화면을 새로고침하세요.', { status: 409 });
+        ep.scenes = order.map((sid) => ep.scenes.find((x) => x.id === sid));
+        ep.scenes.forEach((x, i) => { x.beat = i + 1; });
+      }
+      const after = ep.scenes.map((x) => x.id);
+      if (JSON.stringify(before) === JSON.stringify(after) && !F.isStructured(ep)) return;
+      // the continuity line of a prompt names the previous scene: flag prompts whose predecessor changed
+      after.forEach((sid, i) => { if (before[before.indexOf(sid) - 1] !== after[i - 1] && ep.prompts[sid]) ep.prompts[sid].stale = true; });
+    }, { snapshot: true, by, note: '장면 순서 변경' });
+    store.episodes.audit(id, 'scenes.reordered', { by });
+    return episodeView(id);
+  }
+
   /** Edits ONLY the Korean title of one scene. Titles are not part of the script/storyboard fingerprints, so approvals stay valid. */
   async function setSceneTitle(id, sceneId, title) {
     const t = String(title == null ? '' : title).trim();
@@ -721,9 +816,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   }
 
   return {
-    cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects,
+    cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

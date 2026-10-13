@@ -64,7 +64,7 @@ test('product checkbox immediately previews images, saves visibility and rolls b
   const state = { draft: {}, summary: { characters: [] } };
   const calls = [];
   let fail = false;
-  const context = { h, state, chip: () => null, icon: () => null, api: { put: async (url, body) => { calls.push({ url, body }); if (fail) throw Error('failed'); sc.showsProduct = body.scenes[0].showsProduct; return ep; } }, act: async (fn) => { try { return await fn(); } catch { return null; } } };
+  const context = { h, state, translateControl: () => ({ btn: null, panel: null }), chip: () => null, icon: () => null, api: { put: async (url, body) => { calls.push({ url, body }); if (fail) throw Error('failed'); sc.showsProduct = body.scenes[0].showsProduct; return ep; } }, act: async (fn) => { try { return await fn(); } catch { return null; } } };
   vm.createContext(context);
   const source = fs.readFileSync(path.join(__dirname, '../studio/public/js/views/storyboard.js'), 'utf8').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
   vm.runInContext(source, context);

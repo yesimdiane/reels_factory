@@ -2,6 +2,8 @@ import { h, chip, icon, copyText, confirmDialog, toast } from '../ui.js';
 import { state, act, requireEpisode } from '../state.js';
 import { api } from '../api.js';
 import { imageDevCard } from './image-dev.js';
+import { translateControl } from './translate-box.js';
+import { openCutEditor } from './cut-editor.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, lockedNotice, charAvatar, productRefStrip, makeStartImages, sceneNav } from './common.js';
 
 export function storyboard() {
@@ -15,6 +17,7 @@ export function storyboard() {
     h('button', { class: 'btn', disabled: !ep.derived.scriptApproved, title: ep.derived.scriptApproved ? '' : '대본 승인 후 사용할 수 있습니다', onclick: () => aiPrompts(ep, null) }, icon('play'), 'AI로 프롬프트 만들기')));
   wrap.append(h('div', { class: 'row', style: 'gap:10px' }, h('button', { class: 'btn clay', disabled: !ep.derived.scriptApproved, title: ep.derived.scriptApproved ? '' : '대본 승인 후 사용할 수 있습니다', onclick: () => makeStartImages(ep, [], { after: () => act(async () => null) }) }, icon('plus'), '모든 장면 시작 이미지 만들기'), h('span', { class: 'small muted' }, '장면 설명 + 캐릭터/제품 참조로 AI가 첫 프레임을 만듭니다. 만든 뒤 하나씩 승인하세요.')));
   wrap.append(imageDevCard(ep));
+  wrap.append(h('div', { class: 'row', style: 'gap:10px;flex-wrap:wrap' }, h('button', { class: 'btn sm ghost', onclick: async () => { try { const r = await api.get('/api/prompts/videoMaster'); await copyText(r.text, '영상 마스터 프롬프트를 복사했습니다 (Google Flow 프로젝트 지침 등에 붙여 넣으세요)'); } catch (e) { toast(e.message, { error: true }); } } }, icon('copy'), '영상 마스터 프롬프트 복사'), h('span', { class: 'small muted' }, 'Jack & Diane 비주얼·모션 마스터 프롬프트 — AI 프롬프트 생성에도 함께 쓰이며, 설정 → AI 프롬프트에서 수정할 수 있습니다.')));
   { const strip = productRefStrip(ep); if (strip) wrap.append(strip); }
   wrap.append(sceneNav(ep, 'sb-scene-'));
   autoBuild(ep);
@@ -65,6 +68,7 @@ function sceneCard(ep, sc, i, chars) {
     h('span', { class: 'tag' }, img && !img.error ? (img.placeholder ? chip('데모 임시', 'mock') : img.approved ? chip('승인된 이미지', 'done') : chip('미승인', 'attention')) : chip('필요', 'err')));
   const fileIn = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', style: 'display:none', onchange: async (e) => { const f = e.target.files[0]; if (f) await act(() => api.upload(`/api/episodes/${ep.id}/scenes/${sc.id}/start-frame`, f), { ok: '시작 프레임을 올렸습니다 — 승인해야 사용할 수 있습니다' }); } });
   const promptEl = h('textarea', { rows: 9, 'aria-label': '영상 프롬프트', oninput: (e) => (d.video = e.target.value) }, d.video);
+  const tr = translateControl(ep, () => promptEl.value);
   const negEl = h('textarea', { rows: 2, 'aria-label': '네거티브 프롬프트', oninput: (e) => (d.negative = e.target.value) }, d.negative);
   const cLines = ep.lines.filter((l) => l.sceneId === sc.id);
   const titleIn = h('input', { type: 'text', value: sc.titleKoMissing ? '' : sc.title_ko, maxLength: 24, placeholder: sc.titleKoMissing ? '한국어 제목 입력 (현재: ' + (sc.title || '없음') + ')' : '한국어 장면 제목', 'aria-label': sc.id + ' 장면 제목 (한국어)', style: 'font-weight:700;font-size:18px;min-width:220px' });
@@ -99,12 +103,14 @@ function sceneCard(ep, sc, i, chars) {
       } }, '장면 저장'), h('button', { class: 'btn sm ghost', title: '위로', onclick: () => reorder(ep, i, -1) }, icon('up')), h('button', { class: 'btn sm ghost', title: '아래로', onclick: () => reorder(ep, i, 1) }, icon('down'))),
       h('hr', { class: 'divider', style: 'margin:4px 0' }),
       h('div', { class: 'field' }, h('div', { class: 'row between' }, h('label', null, 'Google Flow / Muapi 영상 프롬프트'), h('div', { class: 'row', style: 'gap:6px' },
+        tr.btn,
+        h('button', { class: 'btn sm ghost', 'data-edit-cuts': sc.id, title: '이 장면의 영상을 잘라 클로즈업 컷을 넣습니다 (요금 없음)', onclick: () => openCutEditor(ep, sc.id) }, '컷 편집' + (sc.inserts && sc.inserts.length ? ` (${sc.inserts.length})` : '')),
         h('button', { class: 'btn sm ghost', onclick: () => copyText(promptEl.value, sc.id + ' 프롬프트를 복사했습니다') }, icon('copy'), 'Copy Prompt'),
         h('button', { class: 'btn sm ghost', disabled: !ep.derived.scriptApproved, onclick: () => aiPrompts(ep, sc) }, icon('play'), 'AI로 다시 만들기'),
         h('button', { class: 'btn sm ghost', onclick: async () => { if (!sc.prompt || !sc.prompt.edited || await confirmDialog({ title: '수정한 프롬프트를 덮어쓸까요?', body: '이 장면의 프롬프트를 템플릿으로 다시 만듭니다. 직접 수정한 내용은 사라집니다(버전 기록에는 남지 않습니다).', tone: 'clay', confirm: '다시 만들기' })) { delete state.draft[key]; await act(() => api.post(`/api/episodes/${ep.id}/storyboard/prompts`, { sceneIds: [sc.id], force: true }), { ok: '프롬프트를 다시 만들었습니다' }); } } }, icon('refresh'), '다시 만들기'),
         h('button', { class: 'btn sm', onclick: async () => { const r = await act(() => api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/prompt`, { video: promptEl.value, negative: negEl.value }), { ok: '프롬프트를 저장했습니다' }); if (r) delete state.draft[key]; } }, '프롬프트 저장'))),
         sc.prompt ? h('div', { class: 'row', style: 'gap:6px;margin:2px 0' }, chip(sc.prompt.source === 'gemini' ? 'Gemini 생성' : '템플릿', sc.prompt.source === 'gemini' ? 'done' : 'mock'), sc.prompt.edited ? chip('직접 수정함', 'attention') : null, sc.prompt.stale ? chip('등장인물이 바뀜 — 프롬프트 다시 만들기 필요', 'err') : null, sc.usesSheet ? chip('캐릭터 시트 규칙 포함', 'done') : null, sc.characters.length ? chip('등장 ' + sc.characters.length + '명 고정', '') : chip('캐릭터 없음', '')) : null,
-        sc.prompt ? promptEl : h('div', { class: 'empty' }, '아직 프롬프트가 없습니다. 위의 "템플릿으로 만들기"를 누르세요.'),
+        sc.prompt ? [promptEl, tr.panel] : h('div', { class: 'empty' }, '아직 프롬프트가 없습니다. 위의 "템플릿으로 만들기"를 누르세요.'),
         sc.prompt && sc.prompt.sections ? sectionsView(sc.prompt.sections) : null,
         sc.castWarnings && sc.castWarnings.length ? h('div', { class: 'issue err' }, sc.castWarnings.map((w) => w.message).join(' ')) : null,
         sc.promptWarnings.length ? h('div', { class: 'issue err' }, '확인되지 않은 제품 주장: ' + sc.promptWarnings.join(', ')) : null),

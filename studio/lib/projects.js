@@ -156,7 +156,7 @@ function createProjects({ store, lib, endings, products, log = () => {} }) {
       return {
         id: s.id, part: s.part || '', beatKey: s.beatKey || '', title_ko: sceneTitle(s), durationSec: s.durationSec,
         visual: s.visual || '', action: s.action || '', narration: s.narration || '', placement: s.placement || '',
-        characters: s.characters || [], showsProduct: !!s.showsProduct, sceneRevision: st.rev || null, sceneHash: st.hash || '',
+        characters: s.characters || [], showsProduct: !!s.showsProduct, inserts: s.inserts || [], sceneRevision: st.rev || null, sceneHash: st.hash || '',
         dialogue: ep.lines.filter((l) => l.sceneId === s.id).map((l) => ({ id: l.id, speaker: l.speaker, en: l.en, ko: l.ko })),
         origin: s.origin || null,
       };
