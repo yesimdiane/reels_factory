@@ -9,7 +9,7 @@ const path = require('node:path');
 const { StudioError, nowIso, sha256, safeName } = require('./util');
 const animdraft = require('./animdraft');
 
-const STEP = 0.5;
+const STEP = 0.1; // permit precise audio-end cuts; normal motion remains 0.5s
 const KINDS = ['close_up', 'reaction', 'insert', 'broll'];
 const KIND_LABEL = { close_up: '클로즈업', reaction: '리액션 컷', insert: '인서트', broll: 'B-roll' };
 const FIELDS = ['character', 'emotion', 'body', 'gaze', 'expression', 'camera'];
@@ -36,7 +36,7 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
       const t0 = Number(b && b.t0); const t1 = Number(b && b.t1);
       const n = i + 1;
       if (!Number.isFinite(t0) || !Number.isFinite(t1)) return problems.push({ index: i, field: 't0', message: `비트 ${n}: 시작/끝 시간이 필요합니다.` });
-      if (!onGrid(t0) || !onGrid(t1)) problems.push({ index: i, field: 't0', message: `비트 ${n}: 시간은 0.5초 단위여야 합니다 (${t0}–${t1}).` });
+      if (!onGrid(t0) || !onGrid(t1)) problems.push({ index: i, field: 't0', message: `비트 ${n}: 시간은 0.1초 단위여야 합니다 (${t0}–${t1}).` });
       if (!(t1 > t0)) problems.push({ index: i, field: 't1', message: `비트 ${n}: 끝 시간은 시작보다 커야 합니다.` });
       if (t0 < 0 || t1 > dur + 1e-6) problems.push({ index: i, field: 't1', message: `비트 ${n}: 장면 길이(${dur}초)를 벗어납니다 (${t0}–${t1}). 장면은 자동으로 늘어나지 않습니다.` });
       // character: by id (preferred) or by name; it must be in this scene's cast
