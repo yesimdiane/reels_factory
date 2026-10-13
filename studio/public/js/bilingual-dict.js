@@ -46,13 +46,14 @@ export const EN = {
   '연결 테스트': 'Test connection', '키 저장': 'Save key', '키 삭제': 'Delete key', 'LIVE 켜기': 'Turn LIVE on', 'MOCK으로 되돌리기': 'Back to MOCK', '실제(LIVE) 모드 켜기…': 'Turn LIVE mode on…',
   '지출 한도': 'Spend limit', '채널 설정': 'Channel settings', '캐릭터 라이브러리': 'Character library', '제목 저장': 'Save title', '프롬프트 복사': 'Copy prompt',
   // misc
+  '보고서 가져오기 (CSV/XLSX)': 'Import report (CSV/XLSX)', '필터 해제': 'Clear filter', '가져오기': 'Import', '스토리랩에서 시작하기': 'Start in Story Lab',
   '스토리보드로 이동': 'Go to Storyboard', '스토리보드 열기': 'Open Storyboard',
   '제목 수정': 'Edit title', '에피소드 보류': 'Hold episode', '이어서 작업': 'Resume work',
   '스토리 승인': 'Approve story', '보류': 'Hold', '보류 해제': 'Resume', '삭제 취소 (복원)': 'Undo delete (restore)', '고급 설정': 'Advanced settings', '자세히 보기': 'Details', '수정본 재승인': 'Re-approve edited version',
   '한국어 번역': 'Korean translation', '스토리 승인 →': 'Approve story →', '수정': 'Edit', '전체 현황 보기': 'Show full status',
   '에피소드 복제': 'Duplicate episode', '에피소드 보관': 'Archive episode', '보관 해제': 'Unarchive', '대본 버전 관리': 'Manage script versions', '에피소드 삭제': 'Delete episode',
   '이 버전 삭제': 'Delete this version', '삭제 취소 (복원)': 'Undo delete (restore)', '버전 삭제': 'Delete version', '휴지통으로 이동': 'Move to trash', '삭제한 버전 포함 모두 보기': 'Show all, including deleted', '복제': 'Duplicate',
-  '제품': 'Products', '애니메이션': 'Animation', '캐릭터': 'Characters', '엔딩 템플릿': 'Ending templates', '프롬프트 매니저': 'Prompt manager', 'AI 프롬프트 관리': 'Manage AI prompts', 'AI 연동': 'AI connections',
+  '홈': 'Home', '제품': 'Products', '애니메이션': 'Animation', '캐릭터': 'Characters', '엔딩 템플릿': 'Ending templates', '프롬프트 매니저': 'Prompt manager', 'AI 프롬프트 관리': 'Manage AI prompts', 'AI 연동': 'AI connections',
   '일반 · 비용': 'General · Cost', '사용량 · 한도': 'Usage · Limits', '음성 생성': 'Generate voice', '효과음 추가': 'Add sound effect', '음성 확인 (HeyGen 목록 조회)': 'Check voices (HeyGen list)',
   '목록으로': 'Back to list', '휴지통': 'Trash', '휴지통 보기': 'View trash', '휴지통 닫기': 'Close trash', '복제': 'Duplicate', '새 버전': 'New version',
 };

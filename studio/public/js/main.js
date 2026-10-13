@@ -20,7 +20,7 @@ import { episodeHeader } from './views/episode-actions.js';
 
 // [key, ko, en, view, inRail]   Dashboard → Products → Story Lab → Script → Storyboard → Video Studio → Review → Publishing → Settings
 export const NAV = [
-  ['overview', '대시보드', 'Dashboard', overview, true],
+  ['overview', '홈', 'Home', overview, true],
   ['products', '제품 스튜디오', 'Product Studio', products, true],
   ['storylab', '스토리 랩', 'Story Lab', storylab, true],
   ['episodes', '에피소드', 'Episodes', episodes, true],
@@ -52,7 +52,7 @@ const hrefFor = (key) => '#/' + key + (PRODUCT_VIEWS.includes(key) ? (state.prod
 function drawShell() {
   const rail = document.getElementById('rail');
   rail.replaceChildren(
-    h('div', { class: 'brand' }, h('div', { class: 'brand-mark', html: '<svg viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>' }), h('div', null, h('b', null, 'Reels Factory'), h('span', null, 'Studio · Jack & Diane'))),
+    h('a', { class: 'brand', href: '#/overview', 'aria-label': 'Reels Factory 홈', 'data-brand-home': '' }, h('div', { class: 'brand-mark', html: '<svg viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>' }), h('div', null, h('b', null, 'Reels Factory'), h('span', null, 'Studio · Jack & Diane'))),
     ...NAV.filter((n) => n[4]).flatMap(([key, ko, en]) => [key === 'script' || key === 'settings' ? h('div', { class: 'nav-sep' }) : null, h('a', { class: 'nav-item', href: hrefFor(key), 'aria-current': active(key) ? 'page' : null }, icon(ICON[key] || key), h('span', null, h('span', { class: 'ko' }, ko), h('span', { class: 'en' }, en)))]).filter(Boolean),
     h('div', { class: 'rail-foot' }, state.summary ? modePill() : '', authFoot())
   );

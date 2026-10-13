@@ -262,6 +262,16 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/broll/:bid/status', async ({ p, body }) => { await S.sba.setBrollStatus(p.id, p.bid, body.status); return ep(p.id); });
   route('DELETE', '/api/episodes/:id/broll/:bid', async ({ p }) => { await S.sba.removeBroll(p.id, p.bid); return ep(p.id); });
   route('POST', '/api/episodes/:id/broll/:bid/image', async ({ p, raw, headers }) => { await S.sba.uploadBrollImage(p.id, p.bid, raw, decodeURIComponent(headers['x-filename'] || 'broll.png')); return ep(p.id); }, { upload: true });
+  // ---- Coupang Partners performance: imported reports only (no scraping, no invented numbers) ----
+  route('GET', '/api/performance', async ({ query }) => S.performance.summary({ from: query.from || '', to: query.to || '' }));
+  route('POST', '/api/performance/import', async ({ raw, headers, query }) => {
+    const mapping = query.mapping ? JSON.parse(query.mapping) : {};
+    const p = S.performance.preview({ buffer: raw, filename: decodeURIComponent(headers['x-filename'] || ''), mapping });
+    if (query.dryRun === '1') return Object.assign({}, p, { rows: p.rows.slice(0, 5), rowCount: p.rows.length, errors: p.errors.slice(0, 10), errorCount: p.errors.length, committed: false });
+    const id = S.performance.commit(p);
+    return Object.assign(S.performance.summary(), { importId: id, rowCount: p.rows.length, skipped: p.errors.length, committed: true });
+  }, { upload: true });
+  route('DELETE', '/api/performance/imports/:id', async ({ p }) => S.performance.removeImport(p.id));
   route('GET', '/api/episodes/:id/impact', async ({ p }) => S.episodeImpact(p.id));
   route('POST', '/api/episodes/:id/archive', async ({ p }) => S.archiveEpisode(p.id));
   route('POST', '/api/episodes/:id/unarchive', async ({ p }) => S.unarchiveEpisode(p.id));
