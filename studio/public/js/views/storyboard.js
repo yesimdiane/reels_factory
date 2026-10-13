@@ -124,7 +124,7 @@ function sceneCard(ep, sc, i, chars, go) {
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => copyText(promptEl.value, sc.id + ' 프롬프트를 복사했습니다') }, icon('copy'), 'Copy Prompt'),
         h('button', { class: 'btn sm ghost', type: 'button', disabled: !ep.derived.scriptApproved, onclick: () => aiPrompts(ep, sc) }, icon('play'), 'AI로 다시 만들기'),
         h('button', { class: 'btn sm ghost', type: 'button', onclick: async () => { if (!sc.prompt || !sc.prompt.edited || await confirmDialog({ title: '수정한 프롬프트를 덮어쓸까요?', body: '이 장면의 프롬프트를 템플릿으로 다시 만듭니다. 이전 버전은 기록에 남습니다.', tone: 'clay' })) { delete state.draft[key]; act(() => api.post(`/api/episodes/${ep.id}/storyboard/prompts`, { sceneIds: [sc.id], force: true }), { ok: '프롬프트를 다시 만들었습니다' }); } } }, '템플릿으로 만들기 (무료)')))),
-    panel(ep, sc, 'motion', '애니메이션 (기본 0.5초 · 필요 시 0.1초)', mot ? `${mot.beats.length}비트 · r${mot.rev}` : '아직 없음', motionPanel(ep, sc)),
+    panel(ep, sc, 'motion', '애니메이션 (기본 0.5초 · 음성 0.3초)', mot ? `${mot.beats.length}비트 · r${mot.rev}` : '아직 없음', motionPanel(ep, sc)),
     panel(ep, sc, 'cuts', '컷 · B-roll', `컷 ${cuts} · B-roll ${bro}`, cutsPanel(ep, sc)),
     panel(ep, sc, 'advanced', '고급 설정', '', h('div', { class: 'stack', style: 'gap:10px' },
       h('div', { class: 'field' }, h('label', null, '시각 설명'), h('textarea', { rows: 3, oninput: (e) => (d.visual = e.target.value) }, d.visual)),
@@ -176,8 +176,8 @@ function motionPanel(ep, sc) {
   const draw = () => {
     list.replaceChildren(...draft.beats.map((b, k) => h('div', { class: 'beat-row card flat', 'data-beat': k },
       h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center' },
-        h('label', { class: 'small' }, '시작', h('input', { type: 'number', step: 0.1, min: 0, max: sc.durationSec, value: b.t0, style: 'width:70px', 'data-beat-t0': '', oninput: (e) => (b.t0 = Number(e.target.value)) })),
-        h('label', { class: 'small' }, '끝', h('input', { type: 'number', step: 0.1, min: 0.1, max: sc.durationSec, value: b.t1, style: 'width:70px', 'data-beat-t1': '', oninput: (e) => (b.t1 = Number(e.target.value)) })), 's',
+        h('label', { class: 'small' }, '시작', h('input', { type: 'number', step: 0.3, min: 0, max: sc.durationSec, value: b.t0, style: 'width:70px', 'data-beat-t0': '', oninput: (e) => (b.t0 = Number(e.target.value)) })),
+        h('label', { class: 'small' }, '끝', h('input', { type: 'number', step: 0.3, min: 0.1, max: sc.durationSec, value: b.t1, style: 'width:70px', 'data-beat-t1': '', oninput: (e) => (b.t1 = Number(e.target.value)) })), 's',
         h('select', { 'aria-label': '캐릭터', 'data-beat-char': '', onchange: (e) => { b.characterId = e.target.value; b.character = (castOpts.find((c) => c.id === e.target.value) || {}).name || b.character; } }, castOpts.map((c) => h('option', { value: c.id, selected: (b.characterId || (castOpts.find((x) => x.name === b.character) || {}).id) === c.id }, c.name))),
         h('button', { class: 'btn icon danger', type: 'button', 'aria-label': '비트 삭제', onclick: () => { draft.beats.splice(k, 1); draw(); } }, icon('trash'))),
       h('div', { class: 'grid two', style: 'gap:6px' }, [['emotion', '감정 (필수)'], ['body', '몸 동작'], ['gaze', '시선'], ['expression', '표정 (눈썹·눈꺼풀·입)'], ['camera', '카메라 (필요할 때만)']].map(([f, l]) => h('label', { class: 'field' }, h('span', { class: 'small' }, l), h('input', { type: 'text', value: b[f] || '', 'data-beat-field': f, oninput: (e) => (b[f] = e.target.value) })))))));
@@ -185,7 +185,7 @@ function motionPanel(ep, sc) {
   };
   draw();
   return h('div', { class: 'stack', style: 'gap:10px' },
-    h('div', { class: 'small muted' }, `장면 길이 ${sc.durationSec}초 · 기본 0.5초, 오디오 종료 시 0.1초까지. 자연스러운 정지·유지 구간을 남겨 두세요. 저장하면 영상 프롬프트 끝에 타임라인이 붙습니다.`),
+    h('div', { class: 'small muted' }, `장면 길이 ${sc.durationSec}초 · 기본 0.5초, 음성 종료 시 0.3초 단위로 조정. 기존 시간도 유지됩니다. 자연스러운 정지·유지 구간을 남겨 두세요. 저장하면 영상 프롬프트 끝에 타임라인이 붙습니다.`),
     list, err,
     h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
       h('button', { class: 'btn sm ghost', type: 'button', 'data-motion-add': sc.id, onclick: () => { const last = draft.beats[draft.beats.length - 1]; const t0 = last ? Math.min(last.t1, sc.durationSec - 0.5) : 0; draft.beats.push({ t0, t1: Math.min(sc.durationSec, t0 + 0.5), characterId: (castOpts[0] || {}).id || '', character: charNames[0] || '', emotion: '', body: '', gaze: '', expression: '', camera: '' }); draw(); } }, icon('plus'), '비트 추가'),
