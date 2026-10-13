@@ -8,6 +8,7 @@ import { api } from '../api.js';
 import { imageDevCard } from './image-dev.js';
 import { translateControl } from './translate-box.js';
 import { openCutEditor } from './cut-editor.js';
+import { charRefsPanelBody, charRefsBadge } from './scene-charrefs.js';
 import { pageHead, noEpisode, lockedNotice, productRefStrip, makeStartImages } from './common.js';
 
 const PLACE = { position: [['', '—'], ['left', '왼쪽'], ['center', '가운데'], ['right', '오른쪽'], ['foreground', '앞쪽'], ['background', '뒤쪽']], scale: [['', '—'], ['small', '작게'], ['medium', '보통'], ['large', '크게']], orientation: [['', '—'], ['front', '정면'], ['side', '옆면'], ['angled', '비스듬히'], ['top', '위에서'], ['back', '뒷면']], visibility: [['', '—'], ['partial', '일부만'], ['full', '전체'], ['hero', '주인공처럼']] };
@@ -104,7 +105,9 @@ function sceneCard(ep, sc, i, chars, go) {
   const negEl = h('textarea', { rows: 2, 'aria-label': '네거티브 프롬프트', oninput: (e) => (d.negative = e.target.value) }, d.negative);
 
   // ---- panels ----
+  { const u = uiState(); const k = `sb:${ep.id}:${sc.id}:charrefs`; if (u.open[k] === undefined) u.open[k] = true; } // visible by default
   const panels = [
+    panel(ep, sc, 'charrefs', '캐릭터 참조 이미지', charRefsBadge(sc), charRefsPanelBody(ep, sc)),
     panel(ep, sc, 'product', '제품 등장', d.showsProduct ? 'ON' : 'OFF', h('div', { class: 'stack', style: 'gap:10px' }, toggle, placeBox)),
     panel(ep, sc, 'prompt', '이미지 · 영상 프롬프트', sc.prompt ? `r${sc.prompt.rev || 1}${sc.prompt.edited ? ' · 수정됨' : ''}` : '아직 없음', h('div', { class: 'stack', style: 'gap:8px' },
       sc.prompt ? h('div', { class: 'row', style: 'gap:6px' }, chip(sc.prompt.source === 'gemini' ? 'Gemini 생성' : '템플릿', sc.prompt.source === 'gemini' ? 'done' : 'mock'), sc.prompt.edited ? chip('직접 수정함', 'attention') : null, (sc.prompt.history || []).length ? chip(`이전 버전 ${(sc.prompt.history || []).length}개`, '') : null) : null,

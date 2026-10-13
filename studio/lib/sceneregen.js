@@ -9,7 +9,7 @@ const { StudioError, nowIso, sha256, canonical } = require('./util');
 const { checkTitleKo, validateScript, wordBudget } = require('./episode');
 const F = require('./formula');
 
-function createSceneRegen({ store, storylab, router, universes, lib, saveScene, assertNotHeld, log = () => {} }) {
+function createSceneRegen({ store, storylab, router, universes, lib, charRefs, saveScene, assertNotHeld, log = () => {} }) {
   const running = new Set(); // `${episode}:${scene}` — one regeneration at a time per scene
 
   function sceneOf(ep, sid) {
@@ -55,6 +55,7 @@ function createSceneRegen({ store, storylab, router, universes, lib, saveScene, 
       'ACTION: ' + String(instruction.action || '').trim(),
       '',
       universes.castPrompt(rc, { stage: 'script' }),
+      charRefs ? charRefs.textNote(ep, sc.characters) : '',
       '--- RULES ---',
       `Keep durationSec = ${sc.durationSec}. Dialogue must fit inside it: at most 2 lines, at most 9 words per line, about ${budget} English words in total at most. A silent reaction beat is fine.`,
       sc.showsProduct ? 'The product IS shown in this scene: keep its real shape, logo and colour; use only the verified facts.' : 'The product does NOT appear in this scene.',

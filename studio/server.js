@@ -320,6 +320,9 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   // ---- storyboard ----
   route('POST', '/api/episodes/:id/storyboard/prompts', async ({ p, body }) => S.rebuildPrompts(p.id, body.sceneIds, { force: !!body.force, mode: body.mode === 'gemini' ? 'gemini' : 'template', confirmAi: body.confirmAi === true }));
   route('PUT', '/api/episodes/:id/scenes/:sid/prompt', async ({ p, body }) => S.savePrompt(p.id, p.sid, body));
+  route('GET', '/api/episodes/:id/scenes/:sid/character-refs', async ({ p }) => { const e = S.store.episodes.get(p.id); const sc = e.scenes.find((x) => x.id === p.sid); if (!sc) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다.', { status: 404 }); return { refs: S.charRefs.forScene(e, sc), validation: S.charRefs.validate(e, [sc]) }; });
+  route('PUT', '/api/episodes/:id/scenes/:sid/character-refs/:cid', async ({ p, body }) => { S.assertNotHeld(p.id); return { refs: await S.charRefs.setSceneRef(p.id, p.sid, p.cid, String(body.refId || '')) }; });
+  route('DELETE', '/api/episodes/:id/scenes/:sid/character-refs/:cid', async ({ p }) => { S.assertNotHeld(p.id); return { refs: await S.charRefs.clearSceneRef(p.id, p.sid, p.cid) }; });
   route('PUT', '/api/episodes/:id/scenes/:sid/start-image', async ({ p, body }) => S.setStartImage(p.id, p.sid, body));
   route('PUT', '/api/episodes/:id/scenes/:sid/title', async ({ p, body }) => S.setSceneTitle(p.id, p.sid, body.title_ko));
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame', async ({ p, raw, headers }) => S.uploadStartFrame(p.id, p.sid, raw, decodeURIComponent(headers['x-filename'] || 'frame.png')), { upload: true });

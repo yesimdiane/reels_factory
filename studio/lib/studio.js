@@ -24,6 +24,7 @@ const { createEndingTemplates } = require('./endingtemplates');
 const F = require('./formula');
 const SF = require('./scriptformula');
 const { createStartImages } = require('./startimages');
+const { createCharRefs } = require('./charrefs');
 const { createProjects } = require('./projects');
 const { createTranslator } = require('./translate');
 const cuts = require('./cuts');
@@ -61,10 +62,11 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const endings = createEndingTemplates({ store, seedDir: SEED_DIR });
   const episodeIds = createEpisodeIds({ store, products });
   const scriptgen = createScriptGen({ store, products, storylab, episodeIds, prompts, presets, endings, router, lib: () => store.characters.load(), universes: () => universes });
-  const sceneRegen = createSceneRegen({ store, storylab, router, universes, lib: () => store.characters.load(), saveScene: (...a) => saveScene(...a), assertNotHeld: (...a) => assertNotHeld(...a), log });
+  const sceneRegen = createSceneRegen({ store, storylab, router, universes, lib: () => store.characters.load(), charRefs: { textNote: (...a) => charRefs.textNote(...a) }, saveScene: (...a) => saveScene(...a), assertNotHeld: (...a) => assertNotHeld(...a), log });
   const translator = createTranslator({ store, router });
   const cutPresets = createCutPresets({ store });
-  const startImages = createStartImages({ store, products, router, lib: () => store.characters.load(), log });
+  const charRefs = createCharRefs({ store, lib: () => store.characters.load(), router });
+  const startImages = createStartImages({ store, products, router, lib: () => store.characters.load(), charRefs, log });
   const integrations = createIntegrations({ store, vault: keys, runtime, router, usage, cfg, fetchFn, muapiFactory, log });
 
   // Video provider resolved per call: switching mode/key in Settings applies immediately. Live needs request AND key; otherwise MOCK (shown in the UI).
@@ -80,7 +82,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const performance = createPerformance({ store });
   const manychat = createManychat({ store, vault: keys, fetchFn, log });
   const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load(), products });
-  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: sba.composePrompt });
+  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: sba.composePrompt, charRefs });
   const promptSvc = createPromptService({
     store, cfg, geminiFactory, log,
     available: () => router.routeFor('storyboardPrompts').provider !== 'mock' && !!keys.get(router.routeFor('storyboardPrompts').provider),
@@ -209,6 +211,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         castWarnings: ep.prompts[s.id] ? lintCast(ep.prompts[s.id].video, s, L) : [],
         usesSheet: promptSvc.usesSheetFor(s, L),
         productImages: s.showsProduct ? productStudioImages : [],
+        charRefs: charRefs.forScene(ep, s),
+        charRefsStale: charRefs.frameStale(ep, s),
         startImageInfo: img.error ? { error: img.error } : { label: img.label, generated: !!img.generated, approved: img.approved, placeholder: img.placeholder, url: img.characterId ? `/media/ref/${img.characterId}/${img.refId}` : `/media/startframe/${id}/${s.id}` },
         clips: { approvedVersion: clips.approvedVersion, versions: clips.versions.map((v) => Object.assign({}, v, { url: `/media/clip/${id}/${s.id}/${v.v}` })) },
         line: ep.lines.filter((l) => l.sceneId === s.id).map((l) => l.id),
@@ -405,6 +409,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   /** Normal path: an episode starts from an APPROVED story concept (Product → Story Lab → episode). */
   async function createEpisodeFromConcept({ productId, conceptId, id, newVersion = false, requestId = '', approveEndingCast = false }) {
     const epId = await scriptgen.createEpisodeFromConcept(productId, conceptId, { id, newVersion, requestId, approveEndingCast });
+    await charRefs.snapshot(epId);
     store.episodes.audit(epId, 'episode.from_concept', { productId, conceptId, newVersion: !!newVersion });
     return epId;
   }
@@ -1280,7 +1285,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
 
   return {
-    exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    exportName, cfg, store, video, gen, startImages, charRefs, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,

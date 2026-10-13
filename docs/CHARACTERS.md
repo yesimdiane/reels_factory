@@ -24,3 +24,16 @@
 
 ## 비용 안전
 프로필·유니버스·출연진 저장은 AI/유료 호출이 없습니다. 스토리 생성은 기존처럼 예상 비용 확인과 유료 확인이 필요하며(견적에 출연진 표시), 대본 승인 전 이미지·영상·음성 생성 게이트는 바뀌지 않았습니다.
+
+## Mandatory character references in the Storyboard
+
+The approved Character Library images are the single source of visual identity for every scene.
+
+- **Default reference** = the character's first *approved, non-placeholder* image. Placeholder or AI-substitute images are never shown or used when an approved image exists; if none exists, generation stops.
+- **Attached per scene**: only the characters in that scene. At project creation the chosen asset ids are stored in `ep.cast.refAssets` (`characterId:refId`). A scene-specific choice is stored in `ep.sceneRefs[sceneId][characterId]`, so it survives refresh, editing, reordering, regeneration and reopening (and future cloud rendering — only ids/hashes are stored; files stay in the library, nothing is duplicated).
+- **Storyboard → 캐릭터 참조 이미지** (open by default): thumbnail, name, asset id, status (승인됨 / 승인 필요 / 임시 이미지 / 참조 없음 / 파일 없음), **원본 보기**, **참조 변경** (choose another approved image for this scene only; the library original is never modified). A generated start frame made from other references is flagged as out of date.
+- **Validation before any visual generation** (`studio/lib/charrefs.js`): references exist, are approved, the files are readable, and the image provider accepts reference images. Otherwise: `Character reference missing: Jack. Please upload or select a reference image.` — nothing is billed and no substitute is generated.
+- **What the image model receives**: the real image bytes (multimodal inline data) of the scene's characters, labelled with the asset id, plus per-character instructions ("Use the attached Jack character image (jack:ref_x) as the authoritative visual reference … change only expression, pose, clothing condition, camera angle and environment") and the approved appearance text. Product reference images are added only when the scene shows the product.
+- **Text-only models** (story/script/scene rewrite) get written appearance only, labelled "this text model has NOT been shown the reference images". Images are never claimed as inspected by a text model.
+- **Regenerating one scene's image** reloads that scene's references, leaves other scenes and the library files unchanged. Video (image-to-video) uses the approved start frame built from these references; in live mode the video gate also requires the references.
+- **Cost**: choosing/viewing references is free. Image/video generation keeps its gates: script approval, cost estimate and confirmation.
