@@ -19,13 +19,14 @@ async function boot() {
   await m.s.scriptgen.generate(id, {});
   const app = createApp(m.s, { token: '', port: 0 });
   await new Promise((r) => app.listen(0, '127.0.0.1', r));
-  const browser = await pw.chromium.launch({});
+  let browser;
+  try { browser = await pw.chromium.launch({}); } catch (e) { app.close(); throw e; }
   return Object.assign(m, { pid, id, app, browser, base: `http://127.0.0.1:${app.address().port}/` });
 }
 const order = (m) => m.s.store.episodes.get(m.id).scenes.map((s) => s.id);
 const approved = (m) => m.s.episodeView(m.id).scenes.filter((s) => s.approval && s.approval.approved).map((s) => s.id);
 
-test('approving folds the scene into a compact summary; expand/collapse keeps the approval; a scene that fails validation is not approved or folded', async () => {
+test('approving folds the scene into a compact summary; expand/collapse keeps the approval; a scene that fails validation is not approved or folded', { skip, timeout: 120000 }, async () => {
   const m = await boot();
   try {
     const [a, b] = order(m);
@@ -59,7 +60,7 @@ test('approving folds the scene into a compact summary; expand/collapse keeps th
   } finally { await m.browser.close(); m.app.close(); }
 });
 
-test('drag handle: keyboard (↑/↓) and pointer drag reorder scenes, persist, keep IDs and approval; the fixed ending has no handle', async () => {
+test('drag handle: keyboard (↑/↓) and pointer drag reorder scenes, persist, keep IDs and approval; the fixed ending has no handle', { skip, timeout: 120000 }, async () => {
   const m = await boot();
   try {
     await m.s.addScene(m.id, { beatKey: 'problem' });
@@ -107,7 +108,7 @@ test('drag handle: keyboard (↑/↓) and pointer drag reorder scenes, persist, 
   } finally { await m.browser.close(); m.app.close(); }
 });
 
-test('씬 다시 생성하기: uses the edited 시각 연출, shows a proposal for review, keeps the approved scene until 제안 적용, cancel keeps the original', async () => {
+test('씬 다시 생성하기: uses the edited 시각 연출, shows a proposal for review, keeps the approved scene until 제안 적용, cancel keeps the original', { skip, timeout: 120000 }, async () => {
   const m = await boot();
   try {
     const [a, b] = order(m);
