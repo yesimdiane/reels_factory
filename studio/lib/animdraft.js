@@ -42,6 +42,44 @@ function gestureFor(line) {
   return { body: 'nods once while speaking, small head movement', expression: 'brows rise on the key word, relaxed mouth' };
 }
 
+
+// Personality cues are limited to performance direction; they never override script dialogue.
+// Deliberately deterministic, free, and safe for scenes without Jack or Diane.
+const PERSONA = {
+  jack: {
+    question: { body: 'pauses, tilts his head and gives a restrained palm-up gesture', expression: 'one eyebrow lifts; skeptical side-eye' },
+    excited: { body: 'recoils a fraction, then leans closer to inspect', expression: 'eyes widen under raised brows; surprised half-smile' },
+    negative: { body: 'folds his arms briefly and shakes his head once', expression: 'dry, unimpressed look with lips pressed together' },
+    default: { body: 'makes a small, measured hand gesture', expression: 'subtle eyebrow movement and a dry half-smile' },
+    listen: { emotion: 'deadpan curiosity', body: 'brief stillness, then a delayed head tilt', expression: 'one eyebrow rises after a beat; mouth remains closed' }
+  },
+  diane: {
+    question: { body: 'leans forward and opens both hands toward the listener', expression: 'bright, inquisitive eyes and raised eyebrows' },
+    excited: { body: 'bursts forward with an enthusiastic presenting gesture', expression: 'eyes sparkle, eyebrows rise high, delighted open smile' },
+    negative: { body: 'waves one hand emphatically and shakes her head', expression: 'expressive brows, firm mouth and a playful glare' },
+    default: { body: 'gestures energetically while presenting the idea', expression: 'animated eyebrows and an engaged smile' },
+    listen: { emotion: 'playful anticipation', body: 'leans in, holding an eager response for a beat', expression: 'expectant smile, eyes following the speaker' }
+  }
+};
+function personaOf(cid, name) {
+  const key = [cid, name].map((v) => String(v || '').toLowerCase()).join(' ');
+  if (/\bjack\b/.test(key)) return PERSONA.jack;
+  if (/\bdiane\b/.test(key)) return PERSONA.diane;
+  return null;
+}
+function dialogueKind(line) {
+  const t = String(line.en || '');
+  if (/\b(don't|do not|never|no|not|nobody)\b/i.test(t)) return 'negative';
+  if (/!|\b(baby+y+|wow|amazing|look at this|check this out|love it)\b/i.test(t)) return 'excited';
+  if (/\?\s*$/.test(t)) return 'question';
+  return 'default';
+}
+function listenerCue(cid, name, index) {
+  const persona = personaOf(cid, name);
+  if (persona) return persona.listen;
+  return { emotion: index % 2 ? 'amused' : 'sceptical interest', body: 'reacts with a brief head movement after listening', expression: 'eyebrows flicker and lips settle into a considered expression' };
+}
+
 /** "0.0–1.5 s: …" segments from visual text, or null. */
 function timedSegments(text, dur) {
   const re = /(\d+(?:\.\d+)?)\s*(?:–|—|-|~|to)\s*(\d+(?:\.\d+)?)\s*s?\s*[:：]\s*([\s\S]*?)(?=(?:\d+(?:\.\d+)?\s*(?:–|—|-|~|to)\s*\d+(?:\.\d+)?\s*s?\s*[:：])|$)/gi;
@@ -115,11 +153,15 @@ function draftBeats(ep, scene, characters) {
     const t0 = Math.min(cursor, dur - STEP);
     const t1 = Math.min(dur, limit, Math.max(t0 + STEP, snap(t0 + speakSec(l))));
     if (t1 - t0 < STEP) return;
-    const g = gestureFor(l);
+    const persona = personaOf(cid, nameOf(cid));
+    const g = persona ? persona[dialogueKind(l)] : gestureFor(l);
     const cue = cuesFor(l.en) || sceneCue || { emotion: 'engaged' };
     const tgt = other(cid);
     push({ t0, t1, characterId: cid, character: nameOf(cid), emotion: cue.emotion, body: g.body, gaze: tgt ? `toward ${nameOf(tgt)}` : 'toward the camera', expression: g.expression + '; mouth shapes the line', camera: '', _speak: true });
-    if (tgt) push({ t0, t1, characterId: tgt, character: nameOf(tgt), emotion: n % 2 ? 'amused' : 'sceptical interest', body: 'listens, eyes following the speaker, small reactive head movement', gaze: `toward ${nameOf(cid)}`, expression: 'brow flickers, lips press then relax', camera: '', _listen: true });
+    if (tgt) {
+      const react = listenerCue(tgt, nameOf(tgt), n);
+      push({ t0, t1, characterId: tgt, character: nameOf(tgt), emotion: react.emotion, body: react.body, gaze: `toward ${nameOf(cid)}`, expression: react.expression, camera: '', _listen: true });
+    }
     cursor = t1;
   });
 
