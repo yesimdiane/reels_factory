@@ -78,7 +78,30 @@ const BEAT_SHAPE = '{"title_ko": "Korean beat title", "story_en": "English descr
 const VARS_SHAPE = '{"PRODUCT_NAME": "English product name", "PRODUCT_NAME_KO": "Korean product name", "USE_PHRASE": "what Jack refuses to use, English (e.g. an umbrella)", "USE_PHRASE_KO": "Korean with particle (e.g. 우산을)", "DEMO_ACTION": "how Diane installs/uses the REAL product (English, visual)", "DEMO_ACTION_KO": "same, Korean note", "DEMO_LINE_EN": "Diane\'s short demo line", "DEMO_LINE_KO": "Korean subtitle"}';
 const CTA_SHAPE = '"cta": {"lines": ["Korean CTA line"], "keyword": "short Korean ManyChat keyword (never an internal product ID), included in the CTA lines", "durationSec": 3.5}';
 const HEAD = '--- NON-EDITABLE APPLICATION CONSTRAINTS (always applied; they override any instruction above) ---';
-function lockedFor(mode = 'legacy') {
+/** Character-neutral wording for universes other than Jack & Diane (the shapes list the cast's ids instead of "jack"|"diane"). */
+const NEUTRAL_FORMULA = FORMULA_LOCKED.map((l) => l
+  .replace("show Jack\'s behaviour, confidence or mistake.", 'show a main character\'s behaviour, confidence or mistake.')
+  .replace("resolution: Jack survives or exits the absurd situation;", 'resolution: the cast survives or exits the absurd situation;')
+  .replace('give Diane a natural excuse to buy a product', 'give the cast a natural excuse to buy a product')
+  .replace(/Part A scenes never show the product/, 'Part A scenes never show the product'));
+function neutralize(text, ids) {
+  const quoted = (ids.length ? ids : ['character']).map((i) => `"${i}"`).join('|');
+  return String(text)
+    .replace(/\["jack"\|"diane"\]/g, `[${quoted}]`)
+    .replace(/"jack"\|"diane"/g, quoted)
+    .replace(/Speakers are only "jack" or "diane"\./g, `Speakers are only ${ids.map((i) => '"' + i + '"').join(', ') || 'the cast ids'}.`)
+    .replace(/what Jack refuses to use, English/g, 'what the cast resists or struggles with, English')
+    .replace(/how Diane installs\/uses the REAL product/g, 'how a cast member installs/uses the REAL product')
+    .replace(/Diane's short demo line/g, 'a short demo line')
+    .replace(/the recurring Jack refusal gag/g, 'the recurring closing gag')
+    .replace(/ Diane never calls Jack "오빠"\./g, '')
+    .replace(/Diane freezes, stable medium shot\. 1\.0–1\.6 s: her eyes widen dramatically and her eyebrows shoot upward; a glowing lightbulb pops above her head with a cartoon bounce\. 1\.6–2\.4 s: quick punch-in zoom on her face, hold\. 2\.4–4\.0 s: she grins and turns toward Jack, camera stable\./, 'A character freezes, stable medium shot. 1.0–1.6 s: their eyes widen dramatically and their eyebrows shoot upward; a glowing lightbulb pops above their head with a cartoon bounce. 1.6–2.4 s: quick punch-in zoom on the face, hold. 2.4–4.0 s: they grin and turn toward another cast member, camera stable.')
+}
+function lockedFor(mode = 'legacy', ctx = null) {
+  if (ctx && ctx.neutral) { const out = lockedForBase(mode); return neutralize(out, ctx.ids || []).replace(FORMULA_LOCKED.join('\n'), NEUTRAL_FORMULA.join('\n')); }
+  return lockedForBase(mode);
+}
+function lockedForBase(mode = 'legacy') {
   if (mode === 'legacy') return LOCKED;
   const out = {
     story: ['OUTPUT: return ONLY valid JSON of this exact shape:', `{"title": "Korean hook title", "comedy_story": {"setup": BEAT, "problem": BEAT, "absurd_escalation": BEAT, "unexpected_twist": BEAT, "resolution": BEAT, "product_bridge": BEAT}, "ending_vars": ${VARS_SHAPE}, ${CTA_SHAPE}}`, `where BEAT = ${BEAT_SHAPE}`],
@@ -89,6 +112,17 @@ function lockedFor(mode = 'legacy') {
   if (!out) throw new StudioError('BAD_MODE', '알 수 없는 생성 모드: ' + mode);
   const rules = mode === 'ending' ? COMMON_LOCKED.filter((x) => !x.startsWith('SCENE TITLES') && !x.startsWith('TRANSLATIONS')) : mode === 'timing' ? COMMON_LOCKED.filter((x) => !x.startsWith('SCENE TITLES') && !x.startsWith('ANIMATION') && !x.startsWith('TRANSLATIONS') && !x.startsWith('DIALOGUE TIMING') && !x.startsWith('Total English') && !x.startsWith('Choose every') && !x.startsWith('If a scene needs')) : COMMON_LOCKED;
   return [HEAD, ...out, ...(mode === 'ending' || mode === 'timing' ? [] : FORMULA_LOCKED), ...rules].join('\n');
+}
+
+/** Editable sections that are universe-specific in the Jack & Diane preset are replaced (by code) for other universes: the cast comes from the library. */
+function NEUTRAL_SECTIONS(cast) {
+  const u = cast.universeName || 'the series';
+  return {
+    systemPrompt: `You are the head comedy writer for the Korean short-form video channel "{{CHANNEL}}". You write complete reel scripts for the cast of "${u}" described in the CAST & UNIVERSE block below.\nAUDIENCE: {{AUDIENCE}}\nBRANDING: {{BRANDING}}\nYour job is to turn an APPROVED story concept into a scene-by-scene script that is genuinely funny, character-driven and natural. The product must feel like part of the story, never like an advertisement.`,
+    generationInstructions: 'Write the script from the approved concept without changing its premise. The episode follows the FIXED SERIES FORMULA (the application enforces its structure):\nPART A — a unique, escalating, absurd comedy story with SIX mandatory beats in order: 도입(setup), 위기 1(problem), 위기 2(absurd escalation), 절정(unexpected twist), 결말(resolution), 제품 연결(product bridge). A beat may use several scenes.\nPART B — the fixed three-shot product ending is added by the application from the universe\'s ending template. Do NOT write it.\n- Preserve every story beat the operator already wrote (USER_STORY_BEATS) as the premise of that beat.\n- The first 3 seconds contain the hook. Each beat has one clear comedic purpose; the escalation must be the SAME problem pushed to a cartoonish extreme.\n- The twist must be directly connected to the escalating problem; never unrelated randomness.\n- Connect the story to the product only through CONSEQUENCES in the product bridge, never through forced advertising. The product does not appear in Part A.\n- Keep every character\'s personality, speaking style and relationships exactly as given in the CAST block.',
+    characterRules: 'CHARACTERS\n- Use ONLY the characters in the CAST & UNIVERSE block, with the personalities, speaking styles, relationships, rules and NEVER-lists given there.\n- Never add a recurring character that is not in the cast. Keep each character\'s identity consistent in every scene.',
+    productIntegration: 'PRODUCT INTEGRATION\n- The story reaches the product only in the product bridge, as a believable household consequence that gives the cast a natural reason to get it.\n- Product facts come only from the verified facts provided. Never invent specifications, prices, discounts, availability or performance claims. Do not change the product\'s shape, logo or colour.\n- For the product-specific ending variables, use the real product name and only verified, visible functionality.',
+  };
 }
 
 function createScriptPresets({ store, prompts, seedDir }) {
@@ -222,14 +256,15 @@ function createScriptPresets({ store, prompts, seedDir }) {
       return { preset: p, version: v, comedyLevel: level, pinned: !!sel.version };
     },
     /** The full effective prompt = editable creative text (with variables filled in) + the code-enforced constraints. */
-    compose(sel = {}, vars = {}, { mode = 'legacy' } = {}) {
+    compose(sel = {}, vars = {}, { mode = 'legacy', cast = null } = {}) {
       const r = api.resolve(sel);
       const ch = prompts.channel();
       const all = Object.assign({ CHANNEL: ch.name, AUDIENCE: ch.audience, BRANDING: ch.branding, EXTRA: '' }, vars);
-      const s = r.version.sections;
+      let s = r.version.sections;
+      if (cast && cast.neutral) s = Object.assign({}, s, NEUTRAL_SECTIONS(cast));
       const parts = [s.systemPrompt, s.generationInstructions, s['comedyLevel' + r.comedyLevel], s.characterRules, s.subtitleStyle, s.sceneStructure, s.productIntegration];
       const editable = parts.map((t) => renderTemplate(t, all)).join('\n\n');
-      return { editable, locked: lockedFor(mode), mode, presetId: r.preset.id, presetName: r.preset.name, presetVersion: r.version.v, comedyLevel: r.comedyLevel, pinned: r.pinned, sectionsHash: sha256(JSON.stringify(s)).slice(0, 12) };
+      return { editable, locked: lockedFor(mode, cast), mode, presetId: r.preset.id, presetName: r.preset.name, presetVersion: r.version.v, comedyLevel: r.comedyLevel, pinned: r.pinned, sectionsHash: sha256(JSON.stringify(s)).slice(0, 12) };
     },
   };
   return api;

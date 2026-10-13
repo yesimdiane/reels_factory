@@ -124,10 +124,13 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
     const L = lib();
     // Creative text comes from the selected preset version; the constraints below it are enforced by code (presets.LOCKED).
     const sel = Object.assign(structured ? { comedyLevel: 3 } : {}, ep.promptPreset || {}, selOverride || {}); // the fixed formula defaults to comedy intensity 3
-    const pc = presets.compose(sel, { EXTRA: '' }, { mode: structured ? act.mode : 'legacy' });
+    const ids = castIdList(ep);
+    const rc = U().resolveCast({ universeId: (ep.cast && ep.cast.universeId) || 'jackdiane', characterIds: ids, guest: ep.cast && ep.cast.guest, narrator: ep.cast && ep.cast.narrator });
+    const neutral = !!(rc.universe && rc.universe.id !== 'jackdiane');
+    const pc = presets.compose(sel, { EXTRA: '' }, { mode: structured ? act.mode : 'legacy', cast: { neutral, ids, universeName: rc.universe && rc.universe.name } });
     let legacyOverride = null;
     try { legacyOverride = prompts.compose('script', {}).providerOverride; } catch (_) { /* none */ }
-    const chars = L.characters.map((c) => `- ${c.id}: ${c.name} — ${c.promptBlock}${c.forbiddenWords && c.forbiddenWords.length ? ' (never says: ' + c.forbiddenWords.join(', ') + ')' : ''}`);
+    const chars = L.characters.filter((c) => ids.includes(c.id)).map((c) => `- ${c.id}: ${c.name} — ${c.promptBlock}${c.forbiddenWords && c.forbiddenWords.length ? ' (never says: ' + c.forbiddenWords.join(', ') + ')' : ''}`);
     const data = [
       '--- INPUT DATA (authoritative) ---',
       'CONCEPT_ID: ' + concept.id + ' (revision ' + concept.revision + ')',
@@ -137,7 +140,7 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
       ...(concept.maxDurationSec ? ['MAX_DURATION_SEC: ' + concept.maxDurationSec] : []),
       ...['hook', 'situation', 'plot', 'productRole', 'characterUsage', 'visualComedy', 'payoff', 'viewerAppeal', 'ctaDirection'].filter((k) => concept[k]).map((k) => `CONCEPT_${k.toUpperCase()}: ${concept[k]}`),
       ...(concept.estimatedScenes ? ['ESTIMATED_SCENES: ' + concept.estimatedScenes] : []),
-      'LANGUAGE: spoken dialogue in ENGLISH, subtitles in KOREAN. Diane never calls Jack "오빠".',
+      neutral ? `LANGUAGE: spoken dialogue in ${rc.universe.language === 'ko' ? 'KOREAN' : 'ENGLISH'}, subtitles in KOREAN.` : 'LANGUAGE: spoken dialogue in ENGLISH, subtitles in KOREAN. Diane never calls Jack "오빠".',
       ...(concept.estimatedDurationSec ? ['ESTIMATED_DURATION_SEC: ' + concept.estimatedDurationSec] : []),
       'PRODUCT_NAME: ' + ep.product.name,
       'VERIFIED_PRODUCT_FACTS (use ONLY these):',
@@ -145,6 +148,8 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
       'FORBIDDEN_CLAIMS: ' + (ep.product.forbiddenClaims.join(', ') || 'none'),
       'CHARACTERS (speaker/characters ids must be one of these):',
       ...chars,
+      '',
+      U().castPrompt(rc, { stage: 'script' }),
       ...(structured ? formulaData(ep, act) : []),
     ].join('\n');
     const extraText = [structured && act.instruction ? 'ACTION: ' + act.instruction : '', extra ? 'ADDITIONAL INSTRUCTION FOR THIS RUN (operator):\n' + String(extra).slice(0, 2000) : ''].filter(Boolean).join('\n\n');
@@ -153,10 +158,10 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
     return { composed, prompt: full, parts: { editable: pc.editable + (extraText ? '\n\n' + extraText : ''), data, locked: pc.locked }, meta: { mode: structured ? act.mode : 'legacy', action: structured ? (action || 'story') : null, presetId: pc.presetId, presetName: pc.presetName, presetVersion: pc.presetVersion, comedyLevel: pc.comedyLevel, pinned: pc.pinned, promptHash: sha256(full).slice(0, 12) } };
   }
 
-  function normalize(raw) {
+  function normalize(raw, ep) {
     if (!raw || typeof raw !== 'object') throw new StudioError('SCRIPT_REJECTED', 'AI가 대본 JSON을 반환하지 않았습니다.', { status: 422 });
     const L = lib();
-    const ids = new Set(L.characters.map((c) => c.id));
+    const ids = ep ? charIds(ep) : new Set(L.characters.map((c) => c.id));
     const scenes = (Array.isArray(raw.scenes) ? raw.scenes : []).map((s, i) => ({
       id: String(s.id || 'S' + (i + 1)), title_ko: String(s.title_ko || '').trim(), title: String(s.title_ko || '').trim(), beat: Number(s.beat) || i + 1, durationSec: Number(s.durationSec) || 4,
       characters: (Array.isArray(s.characters) ? s.characters : []).map(String).filter((c) => ids.has(c)), showsProduct: !!s.showsProduct,
@@ -184,7 +189,7 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
     const { composed, prompt } = buildPrompt(ep0, concept, extra);
     const ov = override || composed.providerOverride || undefined;
     const res = await router.run('scriptWriting', { prompt, json: true, maxTokens: 6000, confirm, override: ov, dedupeKey: epId });
-    const s = normalize(res.json);
+    const s = normalize(res.json, ep0);
     const source = { conceptId: concept.id, conceptRevision: concept.revision, productId: concept.productId, provider: res.provider, model: res.model, mock: !!res.mock, promptKey: 'script-preset', promptVersion: composed.versions.script, promptVersions: composed.versions, presetId: composed.preset.presetId, presetName: composed.preset.presetName, presetVersion: composed.preset.presetVersion, comedyLevel: composed.preset.comedyLevel, promptHash: sha256(prompt).slice(0, 12), titleKo: true, generatedAt: nowIso(), by };
     await store.episodes.update(epId, (ep) => {
       T.cachePairs(ep, T.pairsFromScriptJson(res.json), { provider: res.provider, model: res.model, mock: !!res.mock }); // Korean translations arrive with the script: "번역 보기" needs no second call
@@ -207,7 +212,9 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
 
 
   // ---------- fixed formula: story / single beat / product-specific ending ----------
-  const charIds = () => new Set(lib().characters.map((c) => c.id));
+  /** The characters a script may use: the episode's cast (selected in Story Lab) — never the whole library. Legacy episodes keep their own list. */
+  const castIdList = (ep) => { const all = lib().characters.map((c) => c.id); const own = ((ep && ep.characters) || []).filter((id) => all.includes(id)); return own.length ? own : all; };
+  const charIds = (ep) => new Set(castIdList(ep));
   const ACTION_LABEL = { story: '코미디 스토리 다시 만들기', escalation: '위기 2(과장) 개선', twist: '절정(반전) 강화', bridge: '제품 연결 개선', ending: '제품별 엔딩 대사 다시 만들기' };
 
   /**
@@ -228,9 +235,9 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
     const res = await router.run('scriptWriting', { prompt: q0.prompt, json: true, maxTokens: action === 'story' ? 8000 : 3000, confirm, override: override || q0.composed.providerOverride || undefined, dedupeKey: epId + ':' + action });
     // validate EVERYTHING before touching the episode (a bad answer changes nothing; the call is in the usage log)
     let story = null; let beat = null; let vars = {};
-    if (action === 'story') { story = SF.normalizeStory(res.json, charIds()); vars = story.vars; }
+    if (action === 'story') { story = SF.normalizeStory(res.json, charIds(ep0)); vars = story.vars; }
     else if (action === 'ending') { vars = SF.normalizeVars(res.json && res.json.ending_vars); if (!Object.keys(vars).length) throw new StudioError('SCRIPT_REJECTED', 'AI 응답에 ending_vars가 없습니다. 저장하지 않았습니다.', { status: 422 }); }
-    else beat = SF.normalizeBeat(res.json && res.json.beat, keys[0], charIds());
+    else beat = SF.normalizeBeat(res.json && res.json.beat, keys[0], charIds(ep0));
     const meta = q0.meta;
     const source = { conceptId: concept.id, conceptRevision: concept.revision, productId: concept.productId, provider: res.provider, model: res.model, mock: !!res.mock, promptKey: 'script-preset', promptVersion: meta.presetVersion, promptVersions: { script: meta.presetVersion }, presetId: meta.presetId, presetName: meta.presetName, presetVersion: meta.presetVersion, comedyLevel: meta.comedyLevel, promptHash: meta.promptHash, titleKo: true, formula: 1, action, generatedAt: nowIso(), by };
     await store.episodes.update(epId, (ep) => {
@@ -428,7 +435,7 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
     try {
       if (F.isStructured(ep0)) {
         // formula episode: build the whole script on a COPY (Part A from the test + the selected ending); nothing is saved
-        const st = SF.normalizeStory(res.json, charIds());
+        const st = SF.normalizeStory(res.json, charIds(ep0));
         const copy = JSON.parse(JSON.stringify(ep0));
         SF.replacePartA(copy, st.beats);
         Object.keys(st.vars).forEach((k) => { if (!(copy.ending.manualVars || []).includes(k)) copy.ending.vars[k] = st.vars[k]; });
@@ -438,7 +445,7 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
         rec.draft = { title: st.title || copy.title, scenes: copy.scenes, lines: copy.lines, cta: copy.cta, beats: copy.comedy_story, ending: copy.product_ending, formula: true };
         rec.validation = validateScript(copy, lib());
       } else {
-      const s = normalize(res.json);
+      const s = normalize(res.json, ep0);
       const probe = Object.assign({}, ep0, { title: s.title || ep0.title, beats: s.beats, scenes: s.scenes, lines: s.lines, cta: s.cta, publishing: Object.assign({}, ep0.publishing, { keyword: s.cta.keyword }), scriptSource: { titleKo: true } });
       rec.draft = s;
       rec.validation = validateScript(probe, lib());
