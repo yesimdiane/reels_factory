@@ -33,7 +33,7 @@ async function setup(opts) {
   const { s } = make({ ai: a });
   const pid = await readyProduct(s);
   routePaid(s);
-  const lab = await s.storylab.generate(pid, { count: 3, confirm: CONFIRM });
+  const lab = await s.storylab.generate(pid, { category: 'all', confirm: CONFIRM });
   await s.storylab.approve(pid, lab.concepts[0].id);
   const id = await s.createEpisodeFromConcept({ productId: pid, conceptId: lab.concepts[0].id });
   await s.scriptgen.generate(id, { confirm: CONFIRM });

@@ -16,7 +16,7 @@ async function episode(a) {
   const m = make({ ai: a });
   const pid = await readyProduct(m.s);
   routePaid(m.s);
-  const lab = await m.s.storylab.generate(pid, { count: 3, confirm: CONFIRM });
+  const lab = await m.s.storylab.generate(pid, { category: 'all', confirm: CONFIRM });
   await m.s.storylab.approve(pid, lab.concepts[0].id);
   const id = await m.s.createEpisodeFromConcept({ productId: pid, conceptId: lab.concepts[0].id });
   return Object.assign(m, { id, pid });

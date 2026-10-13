@@ -149,8 +149,8 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
 
   // ---- Story Lab ----
   route('GET', '/api/storylab/:pid', async ({ p }) => S.storylab.list(p.pid));
-  route('POST', '/api/storylab/:pid/estimate', async ({ p, body }) => S.storylab.estimate(p.pid, body));
-  route('POST', '/api/storylab/:pid/generate', async ({ p, body }) => S.storylab.generate(p.pid, { count: body.count, extra: body.extra, confirm: body.confirm }));
+  route('POST', '/api/storylab/:pid/estimate', async ({ p, body }) => S.storylab.estimate(p.pid, { category: body.category, count: body.count, extra: body.extra }));
+  route('POST', '/api/storylab/:pid/generate', async ({ p, body }) => S.storylab.generate(p.pid, { category: body.category, count: body.count, extra: body.extra, confirm: body.confirm }));
   route('POST', '/api/storylab/:pid/concepts/:cid/regenerate', async ({ p, body }) => S.storylab.regenerate(p.pid, p.cid, { feedback: body.feedback, confirm: body.confirm }));
   route('PUT', '/api/storylab/:pid/concepts/:cid', async ({ p, body }) => S.storylab.edit(p.pid, p.cid, body));
   route('POST', '/api/storylab/:pid/concepts/:cid/approve', async ({ p }) => S.storylab.approve(p.pid, p.cid));

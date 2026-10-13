@@ -431,3 +431,14 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .scene-actions-bar.inline .bar-buttons { flex: 0 0 auto; }
 .scene-actions-bar.inline .btn { flex: 0 0 auto; min-height: 40px; font-size: 14px; }
 .scene-list .scene-card { scroll-margin-top: 64px; }
+
+/* Story Lab category selector */
+.cat-picker { display: grid; gap: 6px; }
+.cat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.cat-opt { appearance: none; text-align: left; display: grid; gap: 3px; padding: 10px 12px; min-height: 44px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--paper); color: var(--espresso); cursor: pointer; font: inherit; }
+.cat-opt.on { border-color: var(--sage-deep); box-shadow: 0 0 0 2px var(--sage-wash); background: #fff; }
+.cat-name { font-weight: 700; font-size: 14px; }
+.cat-en { font-weight: 500; font-size: 12px; opacity: .7; }
+.cat-brief { font-size: 12.5px; line-height: 1.35; color: var(--espresso-2); }
+.cat-goal { font-size: 11.5px; opacity: .75; }
+@media (max-width: 640px) { .cat-grid { grid-template-columns: 1fr; } }
