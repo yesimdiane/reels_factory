@@ -59,6 +59,12 @@ function validateScene(ep, lib, sid, whole) {
   if (!String(s.visual || '').trim()) E('SCENE_VISUAL', `${sid}: 시각 연출이 비어 있습니다. 이미지 제작에 쓰이므로 꼭 필요합니다.`, 'visual');
   if (!sceneTitle(s)) { if (!errors.some((e) => e.field === 'title_ko')) E('SCENE_TITLE', `${sid}: 한국어 장면 제목이 없습니다.`, 'title_ko'); }
   if (!(s.characters || []).length) warnings.push({ code: 'SCENE_CAST', message: `${sid}: 등장 캐릭터가 선택되지 않았습니다.`, sceneId: sid, field: 'characters' });
+  // Animation is planned second by second: "0.0–1.2 s: ..." segments covering the scene (advice, never blocking; the fixed ending is template text).
+  if (s.part !== 'B' && String(s.visual || '').trim()) {
+    const tl = timeline(s.visual);
+    if (!tl.segments) warnings.push({ code: 'SCENE_NO_TIMELINE', message: `${sid}: 애니메이션을 초 단위로 계획해 주세요 (예: "0.0–1.2 s: …  1.2–2.5 s: …"). 영상 모델이 장면 길이 안에서 정확히 움직일 수 있습니다.`, sceneId: sid, field: 'visual' });
+    else if (Math.abs(tl.end - Number(s.durationSec)) > 0.6) warnings.push({ code: 'SCENE_TIMELINE_LENGTH', message: `${sid}: 애니메이션 타임라인이 ${tl.end}초에서 끝나는데 장면은 ${s.durationSec}초입니다.`, sceneId: sid, field: 'visual' });
+  }
   // Story information of the beat this scene belongs to (Part A: the beat's story line; formula episodes only).
   if (F.isStructured(ep) && s.part === 'A') {
     const b = (ep.comedy_story || {})[s.beatKey] || {};
@@ -70,6 +76,14 @@ function validateScene(ep, lib, sid, whole) {
   // A scene shown with the product needs at least one verified feature on the product to be truthful about.
   if (s.showsProduct && !((ep.product && ep.product.verifiedFeatures) || []).length) warnings.push({ code: 'SCENE_NO_VERIFIED_FEATURE', message: `${sid}: 제품이 나오지만 확인된 기능이 등록되어 있지 않습니다.`, sceneId: sid, field: 'showsProduct' });
   return { errors, warnings, ok: errors.length === 0 };
+}
+
+/** Reads "0.0–1.2 s:" style segments from a direction text: { segments, end }. */
+function timeline(text) {
+  const re = /(\d+(?:\.\d+)?)\s*[–\-~]\s*(\d+(?:\.\d+)?)\s*(?:s|sec|초)\b/gi;
+  let m; let n = 0; let end = 0;
+  while ((m = re.exec(String(text || '')))) { n += 1; end = Math.max(end, Number(m[2])); }
+  return { segments: n, end };
 }
 
 const hasContent = (ep, sid) => { const s = sceneOf(ep, sid) || {}; return linesOf(ep, sid).length > 0 || !!String(s.visual || '').trim() || !!String(s.action || '').trim() || !!sceneTitle(s); };
@@ -186,4 +200,4 @@ function migrateSceneApprovals(ep, lib) {
   return true;
 }
 
-module.exports = { STATUS_LABEL, sceneContent, sceneFingerprint, sceneSnapshot, isSceneApproved, validateScene, sceneState, projectReadiness, approveScene, revokeScene, approvedSet, noteEdits, migrateSceneApprovals };
+module.exports = { timeline, STATUS_LABEL, sceneContent, sceneFingerprint, sceneSnapshot, isSceneApproved, validateScene, sceneState, projectReadiness, approveScene, revokeScene, approvedSet, noteEdits, migrateSceneApprovals };

@@ -31,6 +31,18 @@ function mockTiming(prompt) {
   return { scenes: targets.map((t) => ({ id: t.id, lines: t.lines.slice(0, Math.max(1, Math.min(2, t.lines.length))).map((l) => ({ id: l.id, speaker: l.speaker, en: l.en.split(/\s+/).slice(0, Math.max(2, Math.min(5, Math.floor(t.wordBudget / 2) || 2))).join(' '), ko: l.ko.split(/\s+/).slice(0, 3).join(' ') })) })) };
 }
 
+/** Sample Korean translations (clearly marked) so the mock path also has "번역 보기" data from generation. */
+function addSampleKo(json) {
+  const ko = (t) => '[샘플 번역] ' + t;
+  const scene = (s) => { if (!s) return; ['visual', 'action', 'placement'].forEach((k) => { if (s[k] && !s[k + '_ko']) s[k + '_ko'] = ko(s[k]); }); };
+  const beat = (b) => { if (!b) return; if (b.story_en && !b.story_ko) b.story_ko = ko(b.story_en); if (b.visual && !b.visual_ko) b.visual_ko = ko(b.visual); (b.scenes || []).forEach(scene); };
+  if (!json || typeof json !== 'object') return json;
+  (json.scenes || []).forEach(scene);
+  if (json.comedy_story) Object.values(json.comedy_story).forEach(beat);
+  if (json.beat) beat(json.beat);
+  return json;
+}
+
 function createMockText() {
   const calls = [];
   return {
@@ -54,10 +66,10 @@ function createMockText() {
       }
       if (task === 'scriptWriting' && /TRANSLATE_TO:/.test(prompt)) { const to = /TRANSLATE_TO:\s*(\w+)/.exec(prompt)[1]; const src = /<<<TEXT\n([\s\S]*?)\nTEXT>>>/.exec(prompt)[1]; return { text: '', json: { translation: (to === 'Korean' ? '[샘플 번역 — AI 미연결] ' : '[Sample translation — AI not connected] ') + src }, usage: { inputTokens: null, outputTokens: null } }; }
       if (task === 'scriptWriting' && /TIMING_TARGETS/.test(prompt)) return { text: '', json: mockTiming(prompt), usage: { inputTokens: null, outputTokens: null } };
-      if (task === 'scriptWriting' && /"comedy_story": \{"setup"|\{"ending_vars"|\{"beat": BEAT/.test(prompt)) return { text: '', json: mockFormula(prompt), usage: { inputTokens: null, outputTokens: null } };
+      if (task === 'scriptWriting' && /"comedy_story": \{"setup"|\{"ending_vars"|\{"beat": BEAT/.test(prompt)) return { text: '', json: addSampleKo(mockFormula(prompt)), usage: { inputTokens: null, outputTokens: null } };
       if (task === 'scriptWriting') {
         const c = (/CONCEPT_TITLE:\s*(.+)/.exec(prompt) || [, '샘플'])[1].trim();
-        return { text: '', json: { title: c, beats: ['상황 제시', '문제 확대', '제품 발견', '반전'], scenes: [{ id: 'S1', title_ko: '문제에 빠진 남편', title: '문제에 빠진 남편', beat: 1, durationSec: 5, characters: ['jack'], showsProduct: false, visual: 'Jack faces the household problem at the entryway.', action: 'Jack sighs.', narration: '' }, { id: 'S2', title_ko: '아내의 신문물 자랑', title: '아내의 신문물 자랑', beat: 2, durationSec: 5, characters: ['diane', 'jack'], showsProduct: true, visual: 'Diane shows the product to Jack.', action: 'Diane points at the product.', narration: '' }], lines: [{ id: 'L1', sceneId: 'S2', speaker: 'diane', en: 'Look what I found!', ko: '내가 뭘 찾았게!' }], cta: { lines: ['댓글에 ‘링크’ 남기면 링크 드림!'], keyword: '링크', durationSec: 3.5 } }, usage: { inputTokens: null, outputTokens: null } };
+        return { text: '', json: addSampleKo({ title: c, beats: ['상황 제시', '문제 확대', '제품 발견', '반전'], scenes: [{ id: 'S1', title_ko: '문제에 빠진 남편', title: '문제에 빠진 남편', beat: 1, durationSec: 5, characters: ['jack'], showsProduct: false, visual: 'Jack faces the household problem at the entryway.', action: 'Jack sighs.', narration: '' }, { id: 'S2', title_ko: '아내의 신문물 자랑', title: '아내의 신문물 자랑', beat: 2, durationSec: 5, characters: ['diane', 'jack'], showsProduct: true, visual: 'Diane shows the product to Jack.', action: 'Diane points at the product.', narration: '' }], lines: [{ id: 'L1', sceneId: 'S2', speaker: 'diane', en: 'Look what I found!', ko: '내가 뭘 찾았게!' }], cta: { lines: ['댓글에 ‘링크’ 남기면 링크 드림!'], keyword: '링크', durationSec: 3.5 } }), usage: { inputTokens: null, outputTokens: null } };
       }
       return { text: 'MOCK', json: json ? {} : undefined, usage: { inputTokens: null, outputTokens: null } };
     },

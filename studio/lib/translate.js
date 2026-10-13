@@ -5,15 +5,44 @@
 const { StudioError, nowIso, sha256 } = require('./util');
 
 const MAX_CHARS = 4000;
-const MAX_CACHE = 400;
+const MAX_CACHE = 1200;
 const HANGUL = /[가-힣]/;
 const LANG = { ko: 'Korean', en: 'English' };
 
 /** The language a text should be translated INTO: Korean text → English, anything else → Korean. */
 const targetFor = (text) => (HANGUL.test(String(text || '')) ? 'en' : 'ko');
 
+const keyOf = (text, to) => sha256(to + '\n' + String(text).trim());
+
+/**
+ * Korean translations that arrive WITH the generated script (visual_ko / action_ko / placement_ko, story_ko, …):
+ * [{ en, ko }] pairs read from the raw AI JSON (legacy flat script, whole story, or one beat). Cached like any other translation,
+ * so "번역 보기" is free for generated text. Editing the English text later makes a new text → a new (paid, confirmed) translation.
+ */
+function pairsFromScriptJson(raw) {
+  const pairs = [];
+  const add = (en, ko) => { const a = String(en == null ? '' : en).trim(); const b = String(ko == null ? '' : ko).trim(); if (a && b) pairs.push({ en: a, ko: b }); };
+  const scene = (s) => { if (!s) return; add(s.visual, s.visual_ko); add(s.action, s.action_ko); add(s.placement, s.placement_ko); };
+  const beat = (b) => { if (!b) return; add(b.story_en, b.story_ko); add(b.visual, b.visual_ko); (Array.isArray(b.scenes) ? b.scenes : []).forEach(scene); };
+  if (!raw || typeof raw !== 'object') return pairs;
+  (Array.isArray(raw.scenes) ? raw.scenes : []).forEach(scene);
+  if (raw.comedy_story && typeof raw.comedy_story === 'object') Object.values(raw.comedy_story).forEach(beat);
+  if (raw.beat) beat(raw.beat);
+  return pairs;
+}
+/** Writes pairs into ep.translations (call inside store.episodes.update). */
+function cachePairs(ep, pairs, meta = {}) {
+  if (!pairs.length) return 0;
+  ep.translations = ep.translations || {};
+  const at = nowIso();
+  pairs.forEach((p) => { ep.translations[keyOf(p.en, 'ko')] = { text: p.ko, to: 'ko', at, provider: meta.provider || '', model: meta.model || '', mock: !!meta.mock, fromGeneration: true }; });
+  const keys = Object.keys(ep.translations);
+  if (keys.length > MAX_CACHE) keys.sort((a, b) => ep.translations[a].at.localeCompare(ep.translations[b].at)).slice(0, keys.length - MAX_CACHE).forEach((k) => delete ep.translations[k]);
+  return pairs.length;
+}
+
 function createTranslator({ store, router }) {
-  const key = (text, to) => sha256(to + '\n' + text);
+  const key = keyOf;
   function clean(text, to) {
     const t = String(text == null ? '' : text).trim();
     if (!t) throw new StudioError('EMPTY_TEXT', '번역할 내용이 없습니다.', { status: 422 });
@@ -59,4 +88,4 @@ function createTranslator({ store, router }) {
   return { estimate, translate, targetFor };
 }
 
-module.exports = { createTranslator, targetFor };
+module.exports = { createTranslator, targetFor, pairsFromScriptJson, cachePairs, keyOf };

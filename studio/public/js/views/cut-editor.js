@@ -45,9 +45,37 @@ export async function openCutEditor(ep, sceneId) {
   };
 
   function timeline() {
-    const bar = h('div', { class: 'cut-timeline', title: `장면 ${dur}초` });
-    list.forEach((i, k) => bar.append(h('button', { type: 'button', class: 'cut-seg' + (k === sel ? ' sel' : ''), style: `left:${(i.startSec / dur) * 100}%;width:${Math.max(2, (i.durationSec / dur) * 100)}%`, title: `${i.label} ${i.startSec}–${r1(i.startSec + i.durationSec)}초`, onclick: () => { sel = k; draw(); } }, i.id || 'NEW')));
-    return h('div', { class: 'stack', style: 'gap:4px' }, h('div', { class: 'row between small muted' }, h('span', null, `장면 길이 ${dur}초 — 컷은 원래 장면의 일부를 바꿔 끼우며 장면을 늘리지 않습니다`), h('span', null, '0초 ─ ' + dur + '초')), bar);
+    const bar = h('div', { class: 'cut-timeline', title: `장면 ${dur}초 — 컷을 끌어서 옮기고, 양 끝을 끌어서 길이를 바꾸세요` });
+    const snap = (v) => Math.round(v * 10) / 10;
+    const neighbours = (k) => { const others = list.map((x, n) => ({ x, n })).filter((o) => o.n !== k).sort((a, b) => a.x.startSec - b.x.startSec); const me = list[k]; const prev = others.filter((o) => o.x.startSec + o.x.durationSec <= me.startSec + 0.001).pop(); const next = others.find((o) => o.x.startSec >= me.startSec + me.durationSec - 0.001); return { min: prev ? prev.x.startSec + prev.x.durationSec : 0, max: next ? next.x.startSec : dur }; };
+    const place = (seg, i) => { seg.style.left = (i.startSec / dur) * 100 + '%'; seg.style.width = Math.max(2, (i.durationSec / dur) * 100) + '%'; seg.title = `${i.label} ${i.startSec}–${r1(i.startSec + i.durationSec)}초`; };
+    list.forEach((i, k) => {
+      const seg = h('div', { class: 'cut-seg' + (k === sel ? ' sel' : ''), role: 'button', tabindex: 0, 'data-cut-seg': i.id || 'NEW', style: 'touch-action:none' }, h('span', { class: 'cut-handle left', 'data-handle': 'left' }), h('span', { class: 'cut-seg-label' }, i.id || 'NEW'), h('span', { class: 'cut-handle right', 'data-handle': 'right' }));
+      place(seg, i);
+      let drag = null;
+      seg.addEventListener('pointerdown', (e) => {
+        const bw = bar.getBoundingClientRect().width;
+        drag = { mode: e.target.dataset.handle || 'move', x0: e.clientX, start: i.startSec, dur: i.durationSec, bw, moved: false, nb: neighbours(k) };
+        seg.setPointerCapture(e.pointerId);
+      });
+      seg.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        const dt = ((e.clientX - drag.x0) / drag.bw) * dur;
+        if (Math.abs(e.clientX - drag.x0) > 3) drag.moved = true;
+        if (!drag.moved) return;
+        const { min, max } = drag.nb;
+        if (drag.mode === 'move') i.startSec = snap(clamp(drag.start + dt, min, Math.max(min, max - drag.dur)));
+        else if (drag.mode === 'right') i.durationSec = snap(clamp(drag.dur + dt, cfg.limits.minDur, Math.min(cfg.limits.maxDur, max - drag.start)));
+        else { const end = drag.start + drag.dur; const ns = snap(clamp(drag.start + dt, Math.max(min, end - cfg.limits.maxDur), end - cfg.limits.minDur)); i.startSec = ns; i.durationSec = snap(end - ns); }
+        place(seg, i);
+      });
+      const finish = () => { if (!drag) return; const moved = drag.moved; drag = null; sel = k; if (moved || sel !== k) { /* values changed */ } draw(); };
+      seg.addEventListener('pointerup', finish);
+      seg.addEventListener('pointercancel', finish);
+      seg.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sel = k; draw(); } if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); const { min, max } = neighbours(k); i.startSec = snap(clamp(i.startSec + (e.key === 'ArrowLeft' ? -0.1 : 0.1), min, Math.max(min, max - i.durationSec))); sel = k; draw(); } });
+      bar.append(seg);
+    });
+    return h('div', { class: 'stack', style: 'gap:4px' }, h('div', { class: 'row between small muted' }, h('span', null, `장면 길이 ${dur}초 — 컷은 원래 장면의 일부를 바꿔 끼우며 장면을 늘리지 않습니다. 끌어서 옮기고 양 끝을 끌어 길이를 바꿉니다.`), h('span', null, '0초 ─ ' + dur + '초')), bar);
   }
 
   function editor(i) {

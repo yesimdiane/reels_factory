@@ -25,13 +25,13 @@ async function setup() {
 test('the script prompt always demands vivid, multi-sentence animation direction (camera, exaggerated motion, expressions)', () => {
   for (const mode of ['story', 'beat', 'legacy']) {
     const t = presets.lockedFor(mode);
-    assert.match(t, /ANIMATION DIRECTION/, mode);
+    assert.match(t, /ANIMATION TIMELINE/, mode);
     assert.match(t, /camera/i);
     assert.match(t, /squash-and-stretch/);
     assert.match(t, /eyebrows/);
-    assert.match(t, /never a one-line summary/);
+    assert.match(t, /never as a one-line summary/);
   }
-  assert.doesNotMatch(presets.lockedFor('timing'), /ANIMATION DIRECTION/, 'the timing fix prompt does not carry it');
+  assert.doesNotMatch(presets.lockedFor('timing'), /ANIMATION TIMELINE/, 'the timing fix prompt does not carry it');
 });
 
 test('translation target: Korean text → English, everything else → Korean', () => {
