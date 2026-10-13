@@ -52,6 +52,7 @@ function createMockText() {
         ];
         return { text: '', json: { concepts: base.slice(0, Math.max(3, n)).map((b, i) => ({ title: `[샘플] ${b[0]}`, hook: `${product}: ${b[1]}`, situation: b[2], productRole: `${product}를 확인된 기능 범위에서만 보여줍니다.`, characterUsage: i === 2 ? 'Diane과 Jack 모두 등장' : i === 1 ? 'Diane 중심, Jack 반응' : 'Jack 중심, Diane 개입', plot: `[샘플] ${b[2]} → Jack과 Diane의 티키타카 → 제품 등장 → 반전 마무리 (약 ${38 + i * 2}초)`, visualComedy: '[샘플] 과장된 표정 클로즈업과 리액션 컷', payoff: '반전 대사로 마무리', viewerAppeal: '공감 가는 집안 상황', ctaDirection: '댓글 키워드로 링크 안내', estimatedDurationSec: 38 + i * 2, estimatedScenes: 6 + i })) }, usage: { inputTokens: null, outputTokens: null } };
       }
+      if (task === 'scriptWriting' && /TRANSLATE_TO:/.test(prompt)) { const to = /TRANSLATE_TO:\s*(\w+)/.exec(prompt)[1]; const src = /<<<TEXT\n([\s\S]*?)\nTEXT>>>/.exec(prompt)[1]; return { text: '', json: { translation: (to === 'Korean' ? '[샘플 번역 — AI 미연결] ' : '[Sample translation — AI not connected] ') + src }, usage: { inputTokens: null, outputTokens: null } }; }
       if (task === 'scriptWriting' && /TIMING_TARGETS/.test(prompt)) return { text: '', json: mockTiming(prompt), usage: { inputTokens: null, outputTokens: null } };
       if (task === 'scriptWriting' && /"comedy_story": \{"setup"|\{"ending_vars"|\{"beat": BEAT/.test(prompt)) return { text: '', json: mockFormula(prompt), usage: { inputTokens: null, outputTokens: null } };
       if (task === 'scriptWriting') {

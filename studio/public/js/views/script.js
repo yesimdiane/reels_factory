@@ -6,6 +6,9 @@ import { presetPanel } from './script-prompt.js';
 import { formulaLayout } from './script-formula.js';
 import { timingCard } from './script-timing.js';
 import { errorIndex, attach, summary as errorSummary } from './script-validate.js';
+import { withTranslate } from './translate-box.js';
+import { structureMap } from './structure-map.js';
+import { openCutEditor } from './cut-editor.js';
 import { projectPanel, sceneFooter, sceneTools, statusChip } from './script-project.js';
 
 // Mirror of the server's estimate (display only; the server validates).
@@ -65,6 +68,7 @@ export function script() {
   wrap.append(conceptPanel(ep, d));
   if (ep.derived.concept.linked) wrap.append(presetPanel(ep));
   wrap.append(timingCard(ep, { d, dirty, redrawAll: () => import('../state.js').then(({ hooks }) => hooks.rerender()) }));
+  wrap.append(structureMap(ep, { dirty: () => d.dirty }));
   wrap.append(sceneNav(ep, 'script-scene-', { badges: true }));
   if (ep.derived.scriptChangedSinceApproval) wrap.append(h('div', { class: 'banner warn' }, h('div', null, h('b', null, '승인 후 대본이 수정되었습니다'), '유료 생성·음성·렌더가 잠겼습니다. 다시 확인하고 승인하세요.')));
 
@@ -95,9 +99,11 @@ export function script() {
       meter.className = 'chip ' + (need > sc.durationSec + 0.05 ? 'attention' : '');
     };
     const drawLines = () => {
-      lineWrap.replaceChildren(...d.lines.map((l, li) => ({ l, li })).filter((x) => x.l.sceneId === sc.id).map(({ l, li }) => lineRow(l, li)));
+      lineWrap.replaceChildren(...d.lines.map((l, li) => ({ l, li })).filter((x) => x.l.sceneId === sc.id).map(({ l, li }) => lineRow(l, li)), narrationRow());
       refreshMeter();
     };
+    // Narration belongs to the dialogue category: a Korean narration line of the scene (optional; stored as the scene's narration, not synthesized).
+    const narrationRow = () => { const nf = withTranslate(h('div', { class: 'field', style: 'grid-column: span 2' }, h('label', null, '나레이션 (선택, 한국어)'), h('textarea', { rows: 2, lang: 'ko', placeholder: '필요할 때만 입력하세요', oninput: (e) => { sc.narration = e.target.value; dirty(); } }, sc.narration || '')), ep, () => sc.narration); nf.querySelector('textarea').setAttribute('data-rf', `S:${sc.id}:narration`); return h('div', { class: 'line narration-row' }, h('div', { class: 'speaker' }, h('span', { class: 'chip' }, '🎙 나레이션')), nf, h('span')); };
     const lineRow = (l, li) => {
       const err = index.errors.filter((e) => e.lineId === l.id);
       const est = h('div', { class: 'small muted' });
@@ -126,12 +132,12 @@ export function script() {
         h('div', { class: 'row' }, meter, h('label', { class: 'row small muted', style: 'gap:6px' }, '길이', attach(index, h('input', { type: 'number', min: 1, max: 15, step: 0.5, style: 'width:76px', value: sc.durationSec, oninput: (e) => { sc.durationSec = Number(e.target.value); refreshMeter(); dirty(); } }), `S:${sc.id}:durationSec`), '초'),
           lockedB(sc) ? null : h('button', { class: 'btn icon ghost', title: '장면 위로', onclick: () => { if (si && (!ep.formula.structured || d.scenes[si - 1].beatKey === sc.beatKey)) { [d.scenes[si - 1], d.scenes[si]] = [d.scenes[si], d.scenes[si - 1]]; dirty(); redrawAll(); } } }, icon('up')),
           lockedB(sc) ? h('span', { class: 'chip done', title: '엔딩 구조는 잠겨 있습니다' }, '🔒') : h('button', { class: 'btn icon danger', title: '장면 삭제', onclick: async () => { if (await confirmDialog({ title: `${sc.id} 장면을 삭제할까요?`, body: '이 장면의 대사도 함께 삭제됩니다. 이미 만든 클립 파일은 지워지지 않습니다.', tone: 'clay', confirm: '삭제' })) { d.scenes.splice(si, 1); d.lines = d.lines.filter((l) => l.sceneId !== sc.id); dirty(); redrawAll(); } } }, icon('trash')))),
-      h('details', { open: ['visual', 'action', 'narration', 'placement', 'showsProduct'].some((f) => (index.byKey[`S:${sc.id}:${f}`] || []).length) }, h('summary', { class: 'small muted', style: 'cursor:pointer' }, '장면 연출 · 캐릭터 행동 · 내레이션 · 제품 배치 (필수: 시각 연출)'),
+      h('details', { open: ['visual', 'action', 'placement', 'showsProduct'].some((f) => (index.byKey[`S:${sc.id}:${f}`] || []).length) }, h('summary', { class: 'small muted', style: 'cursor:pointer' }, '장면 연출 · 캐릭터 행동 · 제품 배치 (필수: 시각 연출)'),
         h('div', { class: 'grid two', style: 'margin-top:8px' },
-          sceneField('시각 연출 (필수)', sc, 'visual', dirty, index), sceneField('캐릭터 행동 (선택)', sc, 'action', dirty, index), sceneField('내레이션 (선택, 한국어)', sc, 'narration', dirty, index), sceneField('제품 배치 (선택)', sc, 'placement', dirty, index)),
+          sceneField('시각 연출 · 애니메이션 (필수, English)', sc, 'visual', dirty, index, ep), sceneField('캐릭터 행동 (선택, English)', sc, 'action', dirty, index, ep), sceneField('제품 배치 (선택)', sc, 'placement', dirty, index, ep)),
         h('label', { class: 'row small', style: 'gap:6px;margin-top:6px' }, h('input', { type: 'checkbox', checked: !!sc.showsProduct, onchange: (e) => { sc.showsProduct = e.target.checked; dirty(); } }), '이 장면에 제품이 보임')),
       lineWrap,
-      h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', onclick: () => { d.lines.push({ id: '', sceneId: sc.id, speaker: chars[0].id, en: '', ko: '' }); dirty(); drawLines(); } }, icon('plus'), '대사 추가'), (ep.suggestions || []).map((sg, i) => sg.sceneId === sc.id && h('button', { class: 'btn sm ghost', title: 'PR #19 초안에서 가져온 제안 대사', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/suggestions/${i}/add`), { ok: '제안 대사를 추가했습니다' }) }, 'PR #19 제안: “' + sg.en.slice(0, 28) + (sg.en.length > 28 ? '…' : '') + '”'))),
+      h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', onclick: () => { d.lines.push({ id: '', sceneId: sc.id, speaker: chars[0].id, en: '', ko: '' }); dirty(); drawLines(); } }, icon('plus'), '대사 추가'), h('button', { class: 'btn sm ghost', 'data-add-cut': sc.id, title: '이 장면의 영상을 잘라 클로즈업·리액션 컷을 넣습니다 (요금 없음)', onclick: () => { if (d.dirty) return toast('저장하지 않은 변경이 있습니다. 먼저 저장한 뒤 컷을 편집하세요.', { error: true }); openCutEditor(ep, sc.id); } }, icon('plus'), '컷 추가'), cutChips(ep, sc), (ep.suggestions || []).map((sg, i) => sg.sceneId === sc.id && h('button', { class: 'btn sm ghost', title: 'PR #19 초안에서 가져온 제안 대사', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/suggestions/${i}/add`), { ok: '제안 대사를 추가했습니다' }) }, 'PR #19 제안: “' + sg.en.slice(0, 28) + (sg.en.length > 28 ? '…' : '') + '”'))),
       sceneTools(ep, sc),
       sceneFooter(ep, sc, d));
     blocks.push({ sc, block });
@@ -162,8 +168,8 @@ export function script() {
   return wrap;
 }
 
-function sceneField(label, sc, key, dirty, index) {
-  return attach(index, h('div', { class: 'field' }, h('label', null, label), h('textarea', { rows: 2, oninput: (e) => { sc[key] = e.target.value; dirty(); } }, sc[key] || '')), `S:${sc.id}:${key}`);
+function sceneField(label, sc, key, dirty, index, ep) {
+  return withTranslate(attach(index, h('div', { class: 'field' }, h('label', null, label), h('textarea', { rows: key === 'visual' || key === 'action' ? 4 : 2, oninput: (e) => { sc[key] = e.target.value; dirty(); } }, sc[key] || '')), `S:${sc.id}:${key}`), ep, () => sc[key]);
 }
 
 /** Concept → script traceability + AI script generation (only from an approved concept). */
@@ -186,4 +192,11 @@ function conceptPanel(ep, d) {
     src ? h('div', { class: 'small muted' }, `생성: ${src.mock ? '샘플 응답' : src.provider + ' / ' + src.model} · ${src.presetId ? '프리셋 ' + src.presetName + ' v' + src.presetVersion + ' · 강도 ' + src.comedyLevel : '대본 프롬프트 v' + src.promptVersion} · 컨셉 r${src.conceptRevision} · ${new Date(src.generatedAt).toLocaleString('ko-KR')}`) : h('div', { class: 'small muted' }, '아직 AI 대본이 없습니다. 직접 작성하거나 아래 버튼으로 초안을 만드세요.'),
     route.provider === 'mock' ? h('div', { class: 'small', style: 'color:var(--clay)' }, '대본 AI가 연결되지 않아 샘플 대본이 만들어집니다 (Settings → AI 연동).') : null,
     h('div', { class: 'row' }, h('button', { class: 'btn', disabled: !c.approved, onclick: () => generate(ep.formula.structured ? ep.scenes.some((x) => x.part === 'A') : ep.lines.length > 0) }, ep.formula.structured ? (ep.scenes.some((x) => x.part === 'A') ? 'AI로 코미디 스토리 다시 만들기 (PART A)' : 'AI로 코미디 스토리 만들기 (PART A)') : (ep.lines.length ? 'AI로 대본 다시 만들기' : 'AI로 대본 만들기')), d.dirty ? h('span', { class: 'small', style: 'color:var(--clay)' }, '저장하지 않은 변경은 다시 만들면 사라집니다') : null));
+}
+
+/** Small chips of the scene's insert shots (click to edit). */
+function cutChips(ep, sc) {
+  const info = (ep.scenes.find((x) => x.id === sc.id) || {}).cutInfo;
+  if (!info || !info.inserts.length) return null;
+  return info.inserts.map((i) => h('button', { class: 'chip ' + (i.resolution && i.resolution.level === 'blur' ? 'err' : i.resolution && i.resolution.level === 'soft' ? 'attention' : ''), type: 'button', title: (i.motion ? i.motion.text : '') + (i.resolution && i.resolution.message ? ' ' + i.resolution.message : ''), onclick: () => { if (state.draft.script && state.draft.script.dirty) return toast('먼저 저장하세요.', { error: true }); openCutEditor(ep, sc.id); } }, `✂ ${i.id} ${i.label} ${i.startSec}–${Math.round((i.startSec + i.durationSec) * 10) / 10}초`));
 }

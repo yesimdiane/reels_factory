@@ -5,6 +5,7 @@ import { state, act } from '../state.js';
 import { api } from '../api.js';
 import { confirmPaid } from './common.js';
 import { attach } from './script-validate.js';
+import { withTranslate } from './translate-box.js';
 
 const ACTIONS = {
   story: ['코미디 스토리 다시 만들기', 'PART A 전체(여섯 단계)를 새로 씁니다. PART B 엔딩은 건드리지 않습니다.'],
@@ -61,7 +62,11 @@ export function formulaLayout({ ep, d, blocks, dirty, redrawAll, v, index }) {
   };
   const actionBtn = (action, cls = 'btn sm ghost') => h('button', { class: cls, title: ACTIONS[action][1], disabled: !ep.derived.concept.approved || (action !== 'story' && action !== 'ending' && !hasA), onclick: () => run(action) }, ACTIONS[action][0]);
 
-  const field = (label, value, on, { rows = 2, kind = '', lang, rf } = {}) => withKey(h('div', { class: 'field' }, h('label', null, label), rows === 1 ? h('input', { type: 'text', value, lang, maxLength: 24, oninput: (e) => { on(e.target.value); dirty(); } }) : h('textarea', { rows, lang, oninput: (e) => { on(e.target.value); dirty(); } }, value)), rf);
+  const field = (label, value, on, { rows = 2, kind = '', lang, rf } = {}) => {
+    const input = rows === 1 ? h('input', { type: 'text', value, lang, maxLength: 24, oninput: (e) => { on(e.target.value); dirty(); } }) : h('textarea', { rows, lang, oninput: (e) => { on(e.target.value); dirty(); } }, value);
+    const el = withKey(h('div', { class: 'field' }, h('label', null, label), input), rf);
+    return rows === 1 ? el : withTranslate(el, ep, () => input.value);
+  };
 
   // ---- PART A ----
   root.append(h('div', { class: 'row between', style: 'align-items:flex-end;flex-wrap:wrap;gap:8px' },

@@ -3,6 +3,7 @@
 'use strict';
 const { sha256, canonical } = require('./util');
 const { claimHits } = require('./claims');
+const { cutsFingerprint } = require('./cuts');
 
 const STEP_KEYS = ['product', 'concept', 'script', 'approval', 'storyboard', 'estimate', 'animation', 'clips', 'voice', 'render', 'review', 'publish'];
 const STEP_LABELS = {
@@ -209,7 +210,7 @@ function pipeline(ep, lib, ctx = {}) {
     const v = c && c.approvedVersion && c.versions.find((x) => x.v === c.approvedVersion);
     return !!(v && r.clipRefs && r.clipRefs[s.id] && r.clipRefs[s.id].sha256 === v.sha256);
   });
-  const renderFresh = !!(lastFinal && lastFinal.scriptHash === scriptFingerprint(ep) && clipsMatch(lastFinal));
+  const renderFresh = !!(lastFinal && lastFinal.scriptHash === scriptFingerprint(ep) && clipsMatch(lastFinal) && (lastFinal.cutsHash || '') === cutsFingerprint(ep));
   const finalOk = !!(ep.approvals && ep.approvals.final && lastFinal && ep.approvals.final.sha256 === lastFinal.sha256 && renderFresh);
   const pub = ep.publishing || {};
   const states = {

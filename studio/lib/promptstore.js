@@ -4,12 +4,12 @@
 const path = require('node:path');
 const { StudioError, nowIso, readJson, writeJsonAtomic } = require('./util');
 
-const KEYS = ['storyConcept', 'script', 'storyboard', 'characterConsistency', 'productAccuracy', 'ctaAffiliate'];
+const KEYS = ['storyConcept', 'script', 'storyboard', 'videoMaster', 'characterConsistency', 'productAccuracy', 'ctaAffiliate'];
 // Which supporting prompts are appended to each task (so one edit of e.g. productAccuracy affects every task).
 const COMPOSE = {
   storyConcept: ['storyConcept', 'characterConsistency', 'productAccuracy', 'ctaAffiliate'],
   script: ['script', 'characterConsistency', 'productAccuracy', 'ctaAffiliate'],
-  storyboard: ['storyboard', 'characterConsistency', 'productAccuracy'],
+  storyboard: ['storyboard', 'videoMaster', 'characterConsistency', 'productAccuracy'],
 };
 
 function renderTemplate(text, vars) {
@@ -27,6 +27,14 @@ function createPromptStore({ store, seedDir }) {
       KEYS.forEach((k) => {
         d.prompts[k] = { versions: [{ v: 1, text: s.prompts[k].text, at: nowIso(), by: 'default', note: '기본값', default: true }], current: 1, provider: '', model: '' };
       });
+      writeJsonAtomic(file, d);
+    }
+    // prompts added in later releases are added as their default (v1); nothing existing is changed
+    const missing = KEYS.filter((k) => !d.prompts[k]);
+    if (missing.length) {
+      const s = seed();
+      missing.forEach((k) => { d.prompts[k] = { versions: [{ v: 1, text: s.prompts[k].text, at: nowIso(), by: 'default', note: '기본값', default: true }], current: 1, provider: '', model: '' }; });
+      d.updatedAt = nowIso();
       writeJsonAtomic(file, d);
     }
     return d;

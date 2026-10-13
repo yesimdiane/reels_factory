@@ -312,3 +312,31 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .scene-version { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--card); font-size: 13px; }
 .sticky-bar.save-bar { position: fixed; right: 24px; bottom: 18px; left: auto; width: auto; max-width: calc(100vw - 48px); margin: 0; padding: 8px 10px 8px 18px; z-index: 40; }
 @media (max-width: 900px) { .sticky-bar.save-bar { right: 12px; bottom: 74px; } }
+.translation-panel { margin-top: 6px; padding: 10px 12px; border: 1px dashed var(--line-strong); border-radius: 12px; background: var(--paper); display: flex; flex-direction: column; gap: 6px; }
+.translation-panel[hidden] { display: none; }
+.translation-text { white-space: pre-wrap; font-size: 14px; line-height: 1.6; }
+.line.narration-row { background: #f7f3ea; border-style: dashed; }
+
+/* ---------- structure map: drag & drop scene order ---------- */
+.beat-columns { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.beat-columns.single { grid-template-columns: 1fr; }
+.beat-col { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.beat-title { font-size: 13px; }
+.drop-zone { min-height: 52px; padding: 6px; border: 1.5px dashed var(--line-strong); border-radius: 12px; background: var(--paper); display: flex; flex-direction: column; gap: 6px; transition: background .15s, border-color .15s; }
+.beat-columns.single .drop-zone { flex-direction: row; flex-wrap: wrap; }
+.drop-zone.over { background: var(--sage-wash); border-color: var(--sage-deep); }
+.scene-chip { display: inline-flex; align-items: center; gap: 4px; padding: 6px 9px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--card); font-size: 12.5px; cursor: grab; user-select: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scene-chip.approved { border-color: var(--sage); }
+.scene-chip.has-err { border-color: var(--rose); }
+.scene-chip.dragging { opacity: .45; }
+.ref-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line-strong); }
+@media (max-width: 1100px) { .beat-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ---------- insert shots (컷 추가) editor ---------- */
+.cut-timeline { position: relative; height: 30px; border-radius: 10px; background: repeating-linear-gradient(90deg, var(--paper), var(--paper) 9px, #efe7d8 9px, #efe7d8 10px); border: 1px solid var(--line-strong); }
+.cut-seg { position: absolute; top: 3px; bottom: 3px; border-radius: 7px; border: 1px solid var(--clay); background: var(--clay-wash); font-size: 11px; font-weight: 700; color: #8a4e2c; cursor: pointer; padding: 0 4px; overflow: hidden; }
+.cut-seg.sel { background: var(--clay); color: #fff; }
+.crop-src { position: relative; background: #d9cfbd center / cover no-repeat; border-radius: 12px; border: 1px solid var(--line-strong); overflow: hidden; cursor: crosshair; touch-action: none; }
+.crop-rect { position: absolute; border: 2px solid var(--clay); background: rgba(181, 118, 79, .15); box-shadow: 0 0 0 9999px rgba(58, 43, 34, .35); cursor: move; pointer-events: none; }
+.crop-res { background: #d9cfbd no-repeat; border-radius: 12px; border: 1px solid var(--line-strong); }
+.modal.wide .cut-editor { max-width: 900px; }
