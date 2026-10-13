@@ -7,6 +7,8 @@ import { formulaLayout } from './script-formula.js';
 import { timingCard } from './script-timing.js';
 import { errorIndex, attach, summary as errorSummary, jumpTo } from './script-validate.js';
 import { structureMap } from './structure-map.js';
+import { planStep, planReorder } from '../scene-order-core.js';
+import { announce } from './scene-dnd.js';
 import { projectPanel } from './script-project.js';
 import { sceneFocus, sceneNavigator, currentSceneId, setFocus, switchScene, addScene, saveAllDirty } from './script-focus.js';
 import { guardLeave } from './leave-guard.js';
@@ -42,6 +44,9 @@ export function script() {
     } catch (e) { toast(e.message, { error: true, recovery: e.recovery }); return false; }
   }
   const ctx = { index, chars, saveEpisode, onChangeOuter: null };
+  // reorder (drag handle / keyboard): plan with scene-order-core, save with the existing reorder endpoint; scene IDs and contents never change
+  ctx.moveScene = (sid0, delta) => reorderWith(ep, d, planStep(ep, sid0, delta), sid0);
+  ctx.dropScene = (sid0, toIndex) => reorderWith(ep, d, planReorder(ep, sid0, toIndex), sid0);
   const addSceneHere = (beatKey) => addScene(ep, d, ctx, beatKey);
   ctx.addScene = (afterSid) => addScene(ep, d, ctx, undefined, afterSid);
   const wide = WIDE.matches;
@@ -137,4 +142,21 @@ function assetStrip(ep) {
   return h('div', { class: 'asset-strip', 'data-asset-strip': '' },
     item('제품 사진', a.product.ready, '준비 완료', '필요'),
     ...a.characters.map((c) => h('span', { class: 'asset-chip ' + (c.referenceReady && c.voiceReady ? 'ok' : 'need'), 'data-asset': c.name }, h('b', null, c.name + ': '), c.referenceReady ? '캐릭터 데이터 완료' : '캐릭터 이미지 필요', ' / ', c.voiceReady ? '목소리 준비' : '목소리 API 필요')));
+}
+
+let ordering = false;
+/** Saves a planned scene move. One move at a time; unsaved text edits must be saved first (a reorder reloads the page state). */
+async function reorderWith(ep, d, plan, sid) {
+  if (plan.noop) return;
+  if (plan.error) return toast(plan.error.message, { error: true });
+  if (d.dirty || d.epDirty) return toast('저장하지 않은 변경이 있습니다. 먼저 저장한 뒤 순서를 바꾸세요.', { error: true });
+  if (ordering) return;
+  ordering = true;
+  try {
+    state.draft.script = null;
+    await act(() => api.post(`/api/episodes/${ep.id}/scenes/reorder`, plan.body), { ok: '장면 순서를 바꿨습니다 (대본 승인은 다시 필요합니다)' });
+    const pos = plan.order.indexOf(sid) + 1;
+    announce(`${sid} 씬이 ${pos}번째로 이동했습니다`);
+    requestAnimationFrame(() => { const hnd = document.querySelector(`[data-scene-handle="${sid}"]`); if (hnd) hnd.focus({ preventScroll: false }); });
+  } finally { ordering = false; }
 }

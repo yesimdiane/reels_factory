@@ -46,6 +46,7 @@ export const EN = {
   '연결 테스트': 'Test connection', '키 저장': 'Save key', '키 삭제': 'Delete key', 'LIVE 켜기': 'Turn LIVE on', 'MOCK으로 되돌리기': 'Back to MOCK', '실제(LIVE) 모드 켜기…': 'Turn LIVE mode on…',
   '지출 한도': 'Spend limit', '채널 설정': 'Channel settings', '캐릭터 라이브러리': 'Character library', '제목 저장': 'Save title', '프롬프트 복사': 'Copy prompt',
   // misc
+  '씬 다시 생성하기': 'Regenerate scene', '제안 적용': 'Apply proposal', '펼치기': 'Expand', '접기': 'Collapse',
   '캐릭터': 'Characters', '캐릭터 라이브러리': 'Character Library', '＋ 새 유니버스': 'New universe', '＋ 캐릭터 추가': 'Add character', '프로필 편집': 'Edit profile', '프로필 저장': 'Save profile', '유니버스 저장': 'Save universe', '활성화': 'Activate', '비활성화': 'Deactivate', '게스트 적용': 'Apply guest', '캐릭터 라이브러리 열기': 'Open Character Library', '엔딩 출연을 승인하고 만들기': 'Approve ending cast and create',
   '코드 저장': 'Save code',
   '클립보드에서 붙여넣기': 'Paste from clipboard', '사진 보관함 · 파일에서 선택': 'Choose from Photos / Files', '모두 지우기': 'Clear all', '자르기 적용': 'Apply crop', '초기화': 'Reset',

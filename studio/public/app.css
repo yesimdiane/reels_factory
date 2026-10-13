@@ -582,3 +582,14 @@ a.brand { text-decoration: none; color: inherit; }
 .cast-char.on .cast-pick { border-color: var(--sage-deep); background: var(--sage-wash); }
 .cast-cname { font-weight: 700; }
 .cast-add { border: 1.5px dashed var(--line-strong); border-radius: 14px; background: transparent; color: var(--muted); min-height: 88px; cursor: pointer; }
+
+/* Scene editor: drag handle, compact approved scene, drop line, regeneration review */
+.scene-handle { min-width: 44px; min-height: 44px; border: 1px dashed var(--line-strong); border-radius: 10px; background: var(--paper); color: var(--muted); cursor: grab; touch-action: none; letter-spacing: -2px; font-size: 18px; }
+.scene-handle:focus-visible { outline: 2px solid var(--sage-deep); outline-offset: 2px; }
+.scene-dragging { opacity: .55; box-shadow: 0 8px 24px rgba(60, 40, 20, .18); }
+body.scene-dragging-body { cursor: grabbing; user-select: none; -webkit-user-select: none; }
+.scene-drop-line { height: 4px; border-radius: 2px; background: var(--sage-deep); margin: -2px 0; box-shadow: 0 0 0 3px var(--sage-wash); }
+.scene-compact { gap: 6px; padding-top: 10px; padding-bottom: 12px; }
+.scene-compact .scene-title-compact { font-size: 16px; }
+.regen-compare { gap: 12px; }
+.regen-col { padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }

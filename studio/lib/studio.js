@@ -18,6 +18,7 @@ const { createStoryboardAssets } = require('./storyboardassets');
 const { createPerformance } = require('./performance');
 const { createManychat } = require('./manychat');
 const { createUniverseService } = require('./universes');
+const { createSceneRegen } = require('./sceneregen');
 const { createScriptPresets } = require('./scriptpresets');
 const { createEndingTemplates } = require('./endingtemplates');
 const F = require('./formula');
@@ -59,6 +60,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const endings = createEndingTemplates({ store, seedDir: SEED_DIR });
   const episodeIds = createEpisodeIds({ store, products });
   const scriptgen = createScriptGen({ store, products, storylab, episodeIds, prompts, presets, endings, router, lib: () => store.characters.load(), universes: () => universes });
+  const sceneRegen = createSceneRegen({ store, storylab, router, universes, lib: () => store.characters.load(), saveScene: (...a) => saveScene(...a), assertNotHeld: (...a) => assertNotHeld(...a), log });
   const translator = createTranslator({ store, router });
   const cutPresets = createCutPresets({ store });
   const startImages = createStartImages({ store, products, router, lib: () => store.characters.load(), log });
@@ -1272,7 +1274,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
 
   return {
-    exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
