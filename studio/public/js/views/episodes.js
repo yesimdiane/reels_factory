@@ -1,28 +1,37 @@
-import { h, chip, modal, fmtUsd, toast, confirmDialog } from '../ui.js';
+import { h, chip, modal, fmtUsd, toast } from '../ui.js';
 import { state, go, selectEpisode, act } from '../state.js';
 import { api } from '../api.js';
 import { pageHead, modeBanner, asyncBlock } from './common.js';
+import { episodeMenu } from './episode-actions.js';
 
 export function episodes() {
   const s = state.summary;
   const wrap = h('div', { class: 'stack', style: 'gap:22px' });
   wrap.append(pageHead('Episodes', '에피소드', '제품과 연결된 에피소드 라이브러리 — 초안, 제작 중, 게시 완료를 한곳에서 관리합니다.', h('button', { class: 'btn', onclick: newEpisode }, '+ 새 에피소드 (승인된 컨셉에서)')));
-  wrap.append(h('div', { class: 'grid three' }, s.episodes.map((e) => {
-    const done = e.steps.filter((x) => x.state === 'done').length;
-    const status = e.published ? ['게시 완료', 'done'] : e.finalApproved ? ['최종 승인', 'done'] : done > 2 ? ['제작 중', 'attention'] : ['초안', ''];
-    return h('article', { class: 'card', style: 'padding:0;overflow:hidden;display:grid;grid-template-columns:120px 1fr' },
-      h('div', { class: 'thumb', style: 'border-radius:0;border:0;border-right:1px solid var(--line)' }, e.thumb ? h('video', { src: e.thumb, muted: true, playsinline: true, preload: 'metadata' }) : h('div', { style: 'height:100%;display:grid;place-items:center;color:var(--muted);font-size:12px;text-align:center;padding:8px' }, '미리보기 없음')),
-      h('div', { class: 'stack', style: 'padding:16px;gap:8px' },
-        h('div', { class: 'row between' }, h('span', { class: 'eyebrow' }, e.id), chip(status[0], status[1])),
-        h('h3', { style: 'font-size:17px' }, e.title),
-        h('div', { class: 'small muted' }, e.productName),
-        e.concept && e.concept.linked ? h('div', { class: 'small' }, chip(e.concept.ok ? '컨셉 ' + e.concept.conceptId + ' r' + e.concept.revision : e.concept.state === 'script_stale' ? '컨셉 변경 · 대본 재생성 필요' : '컨셉 승인 필요', e.concept.ok ? 'done' : 'attention')) : e.concept && e.concept.legacy ? h('div', { class: 'small' }, chip('스토리 랩 이전', 'mock')) : null,
-        h('div', { class: 'mini-dots' }, e.steps.map((st) => h('i', { class: st.state, title: st.label }))),
-        h('div', { class: 'small muted' }, `${e.scenes}장면 · 약 ${Math.round(e.totalPlannedSec)}초 · 지출 ${fmtUsd(e.spentUsd)}`),
-        h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: async () => { await selectEpisode(e.id); go('overview'); } }, '열기'), h('button', { class: 'btn sm ghost', onclick: async () => { await selectEpisode(e.id); go('script'); } }, '대본'), h('button', { class: 'btn sm danger', type: 'button', 'data-delete-episode': e.id, title: '휴지통으로 옮깁니다 (파일은 지워지지 않고 복원할 수 있습니다)', onclick: () => deleteEpisode(e) }, '삭제'))));
-  })));
+  const active = s.episodes.filter((e) => !e.archived);
+  const archived = s.episodes.filter((e) => e.archived);
+  wrap.append(h('div', { class: 'grid three' }, active.map((e) => episodeCard(e))));
+  if (!active.length) wrap.append(h('div', { class: 'empty' }, h('p', null, archived.length ? '진행 중인 에피소드가 없습니다. 보관된 에피소드는 아래에서 볼 수 있습니다.' : '에피소드가 없습니다.')));
+  if (archived.length) wrap.append(h('details', { class: 'card', 'data-archived': '1' }, h('summary', { style: 'cursor:pointer;min-height:36px;display:flex;align-items:center;gap:8px' }, h('b', null, `보관됨 (${archived.length})`), h('span', { class: 'small muted' }, '삭제가 아닙니다 — 언제든 보관 해제할 수 있습니다')),
+    h('div', { class: 'grid three', style: 'margin-top:12px' }, archived.map((e) => episodeCard(e, { archivedView: true })))));
   wrap.append(trashBox());
   return wrap;
+}
+
+
+function episodeCard(e, { archivedView = false } = {}) {
+  const done = e.steps.filter((x) => x.state === 'done').length;
+  const status = e.published ? ['게시 완료', 'done'] : e.finalApproved ? ['최종 승인', 'done'] : done > 2 ? ['제작 중', 'attention'] : ['초안', ''];
+  return h('article', { class: 'card ep-card', 'data-episode': e.id, style: 'padding:0;overflow:hidden;display:grid;grid-template-columns:120px 1fr' },
+    h('div', { class: 'thumb', style: 'border-radius:0;border:0;border-right:1px solid var(--line)' }, e.thumb ? h('video', { src: e.thumb, muted: true, playsinline: true, preload: 'metadata' }) : h('div', { style: 'height:100%;display:grid;place-items:center;color:var(--muted);font-size:12px;text-align:center;padding:8px' }, '미리보기 없음')),
+    h('div', { class: 'stack', style: 'padding:16px;gap:8px' },
+      h('div', { class: 'row between' }, h('span', { class: 'eyebrow' }, e.id), h('div', { class: 'row', style: 'gap:6px' }, archivedView ? chip('보관됨', 'mock') : null, chip(status[0], status[1]))),
+      h('h3', { style: 'font-size:17px' }, e.title),
+      h('div', { class: 'small muted' }, e.productName),
+      e.concept && e.concept.linked ? h('div', { class: 'small' }, chip(e.concept.ok ? '컨셉 ' + e.concept.conceptId + ' r' + e.concept.revision : e.concept.state === 'script_stale' ? '컨셉 변경 · 대본 재생성 필요' : '컨셉 승인 필요', e.concept.ok ? 'done' : 'attention')) : e.concept && e.concept.legacy ? h('div', { class: 'small' }, chip('스토리 랩 이전', 'mock')) : null,
+      h('div', { class: 'mini-dots' }, e.steps.map((st) => h('i', { class: st.state, title: st.label }))),
+      h('div', { class: 'small muted' }, `${e.scenes}장면 · 약 ${Math.round(e.totalPlannedSec)}초 · 지출 ${fmtUsd(e.spentUsd)}`),
+      h('div', { class: 'row', style: 'flex-wrap:nowrap' }, h('button', { class: 'btn sm', onclick: async () => { await selectEpisode(e.id); go('overview'); } }, '열기'), h('button', { class: 'btn sm ghost', onclick: async () => { await selectEpisode(e.id); go('script'); } }, '대본'), h('span', { style: 'margin-left:auto' }, episodeMenu(e, { archivedView })))));
 }
 
 /** Episodes start from an APPROVED story concept (Product → Story Lab → Episode). */
@@ -45,22 +54,6 @@ async function newEpisode() {
 
 function field(label, type, ph, on) {
   return h('div', { class: 'field' }, h('label', null, label), h('input', { type, placeholder: ph, oninput: (e) => on(e.target.value) }));
-}
-
-/** 삭제 = 휴지통: the episode leaves every list but nothing is removed from disk; it can be restored. */
-async function deleteEpisode(e) {
-  const warn = e.published ? '이 에피소드는 이미 게시되었습니다.' : e.finalApproved ? '최종 승인까지 끝난 에피소드입니다.' : '';
-  const ok = await confirmDialog({ title: `"${e.title}" 에피소드를 삭제할까요?`, body: h('div', { class: 'stack small', style: 'gap:8px' },
-    warn ? h('div', { class: 'banner warn' }, h('div', null, warn)) : null,
-    h('div', null, '휴지통으로 옮깁니다. 목록에서 사라지지만 대본, 클립, 음성, 렌더, 승인 기록, 지출 기록은 지워지지 않고, 아래 "휴지통"에서 언제든 복원할 수 있습니다.'),
-    h('div', { class: 'muted' }, `${e.id} · ${e.scenes}장면 · 지출 ${fmtUsd(e.spentUsd)} (지출 기록은 한도 계산에 계속 포함됩니다)`)), confirm: '휴지통으로 이동', tone: 'clay' });
-  if (!ok) return;
-  try {
-    await api.del('/api/episodes/' + e.id, { confirmPublished: !!e.published });
-    if (state.episodeId === e.id) state.episodeId = '';
-    toast('휴지통으로 옮겼습니다');
-    await act(async () => null);
-  } catch (err) { toast(err.message, { error: true, recovery: err.recovery }); }
 }
 
 function trashBox() {

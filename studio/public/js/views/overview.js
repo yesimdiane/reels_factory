@@ -46,7 +46,7 @@ export function overview() {
     h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, '승인 대기'), chip(String(s.queue.length), s.queue.length ? 'attention' : 'done')),
       s.queue.length ? h('div', { class: 'list' }, s.queue.map((q) => h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, q.label), h('div', { class: 'small muted' }, q.episodeId + ' · ' + q.title)), h('button', { class: 'btn sm sage', onclick: () => { state.episodeId = q.episodeId; go(q.view, q.episodeId); } }, '검토')))) : h('div', { class: 'muted' }, '승인을 기다리는 항목이 없습니다.')),
     h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, '에피소드')),
-      h('div', { class: 'list' }, s.episodes.map((e) => h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, e.id + ' · ' + e.title), h('div', { class: 'small muted' }, e.productName + ' · ' + e.scenes + '장면 · 약 ' + Math.round(e.totalPlannedSec) + '초'), h('div', { class: 'mini-dots', style: 'margin-top:6px' }, e.steps.map((st) => h('i', { class: st.state, title: st.label })))), h('button', { class: 'btn sm ghost', onclick: () => selectEpisode(e.id) }, '열기')))))));
+      h('div', { class: 'list' }, s.episodes.filter((e) => !e.archived).map((e) => h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, e.id + ' · ' + e.title), h('div', { class: 'small muted' }, e.productName + ' · ' + e.scenes + '장면 · 약 ' + Math.round(e.totalPlannedSec) + '초'), h('div', { class: 'mini-dots', style: 'margin-top:6px' }, e.steps.map((st) => h('i', { class: st.state, title: st.label })))), h('button', { class: 'btn sm ghost', onclick: () => selectEpisode(e.id) }, '열기')))))));
   return wrap;
 }
 
