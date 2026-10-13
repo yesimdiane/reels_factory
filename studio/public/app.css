@@ -522,6 +522,20 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .beat-row { padding: 10px; display: grid; gap: 8px; }
 .broll-thumb { width: 96px; height: 96px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line-strong); }
 
+/* Home */
+a.brand { text-decoration: none; color: inherit; }
+.home-counters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.home-counter { appearance: none; text-align: left; display: grid; gap: 2px; padding: 12px 14px; min-height: 84px; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--paper); color: var(--espresso); font: inherit; cursor: pointer; touch-action: manipulation; }
+.home-counter.on { border-color: var(--espresso); background: #fff; box-shadow: 0 0 0 2px rgba(58, 43, 34, .12); }
+.home-counter.warn .home-n { color: var(--rose); }
+.home-n { font-family: var(--serif); font-size: 28px; font-weight: 600; line-height: 1.1; }
+.home-l { font-size: 12.5px; font-weight: 600; }
+.home-en { font-size: 10.5px; opacity: .6; }
+.home-item { text-decoration: none; color: inherit; display: flex; align-items: center; gap: 10px; min-height: 56px; }
+.perf-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.perf-stat { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.perf-v { font-family: var(--serif); font-size: 20px; font-weight: 600; }
+@media (max-width: 900px) { .home-counters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .home-counter:last-child { grid-column: 1 / -1; } .perf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* Product Studio: summary first, everything else folded */
 .prod-summary { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 16px; align-items: start; }
 .prod-main { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background: #fff; border: 1px solid var(--line-strong); border-radius: 14px; }

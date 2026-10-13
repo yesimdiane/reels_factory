@@ -8,13 +8,16 @@ export function overview() {
   const s = state.summary;
   const ep = state.episode;
   const wrap = h('div', { class: 'stack', style: 'gap:22px' });
-  wrap.append(pageHead('Overview', '오늘의 제작 현황', '진행 중인 에피소드, 승인 대기 항목, 예상 비용을 한눈에 봅니다.'));
+  wrap.append(pageHead('Home', '홈', '지금 처리해야 할 일부터 보여 드립니다.'));
   wrap.append(modeBanner(s));
-  wrap.append(workflowBoard(s, ep));
+  wrap.append(counters(s.home));
+  wrap.append(queue(s.home));
   wrap.append(currentPanel(s, ep));
-  const more = h('details', { class: 'card', 'data-more-status': '' }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '전체 현황 보기'), h('span', { class: 'small muted' }, '제작 현황 · 승인 대기 · 지출 · 에피소드 목록')));
+  wrap.append(performanceSection(s.home.performance));
+  const more = h('details', { class: 'card', 'data-more-status': '' }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '워크플로 · 전체 현황'), h('span', { class: 'small muted' }, '단계 보드 · 제작 현황 · 지출 · 에피소드 목록')));
   const inner = h('div', { class: 'stack', style: 'gap:22px;margin-top:14px' });
   more.append(inner);
+  inner.append(workflowBoard(s, ep));
   inner.append(labCard(s));
   if (!ep) { inner.append(noEpisode()); wrap.append(more); return wrap; }
   const step = nextStep(ep);
@@ -124,4 +127,57 @@ function currentPanel(s, ep) {
           try { await api.post(`/api/storylab/${pid}/concepts/${c.id}/approve`); toast('승인했습니다'); await act(async () => null); } catch (e) { toast(e.message, { error: true, recovery: e.recovery }); }
         } }, '스토리 승인 →')));
   });
+}
+
+
+// ---- Home: counters, stage queue, Coupang performance ----
+const COUNTERS = [['active', '진행 중인 에피소드', 'Active Episodes', ''], ['approvals', '내 승인 대기', 'My Approval Queue', 'approval'], ['running', 'AI 대기·실행 중', 'AI Waiting / Running', 'running'], ['failed', '실패한 작업', 'Failed Jobs', 'failed'], ['completed', '완료된 영상', 'Completed Videos', 'done']];
+const STATUS_KIND = { approval: 'attention', failed: 'err', running: 'processing', hold: 'mock', done: 'done', progress: '' };
+let queueFilter = '';
+function counters(home) {
+  return h('section', { class: 'home-counters', 'data-home-counters': '' }, COUNTERS.map(([k, ko, en, filter]) => h('button', { type: 'button', class: 'home-counter' + (queueFilter === filter && filter ? ' on' : '') + (k === 'failed' && home.counts.failed ? ' warn' : ''), 'data-counter': k, 'aria-pressed': queueFilter === filter && filter ? 'true' : 'false', onclick: () => { queueFilter = queueFilter === filter ? '' : filter; import('../state.js').then(({ hooks }) => hooks.rerender()); } },
+    h('span', { class: 'home-n' }, String(home.counts[k])), h('span', { class: 'home-l' }, ko), h('span', { class: 'home-en' }, en))));
+}
+function link(item) {
+  const productLevel = ['products', 'storylab'].includes(item.view);
+  return '#/' + item.view + '/' + (productLevel ? item.productId : item.id);
+}
+function queue(home) {
+  const groups = home.groups.map((g) => Object.assign({}, g, { items: g.items.filter((i) => !queueFilter || i.status === queueFilter) })).filter((g) => g.items.length);
+  if (!home.items.length) return h('section', { class: 'card', 'data-home-queue': 'empty' }, h('h2', null, '프로젝트 큐'), h('div', { class: 'empty' }, h('p', null, '아직 에피소드가 없습니다.'), h('a', { class: 'btn', href: '#/storylab' }, '스토리랩에서 시작하기')));
+  return h('section', { class: 'card stack', style: 'gap:10px', 'data-home-queue': '' },
+    h('div', { class: 'row between' }, h('h2', { style: 'margin:0' }, '프로젝트 큐'), queueFilter ? h('button', { class: 'btn sm ghost', type: 'button', onclick: () => { queueFilter = ''; import('../state.js').then(({ hooks }) => hooks.rerender()); } }, '필터 해제') : null),
+    groups.length ? groups.map((g) => h('details', { class: 'fold', open: true, 'data-queue-group': g.key }, h('summary', null, h('b', null, g.label), h('span', { class: 'small muted' }, `${g.items.length}개`)),
+      h('div', { class: 'list' }, g.items.map((i) => h('a', { class: 'item home-item', href: link(i), 'data-home-item': i.id, onclick: () => { state.episodeId = i.id; if (i.productId) state.productId = i.productId; } },
+        h('div', { class: 'grow' },
+          h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, h('span', { class: 'ep-code' }, i.code), chip(i.statusLabel, STATUS_KIND[i.status] || '')),
+          h('div', { class: 't' }, i.title),
+          h('div', { class: 'small muted' }, [i.productName, i.stage].filter(Boolean).join(' · ')),
+          h('div', { class: 'small', style: 'font-weight:600' }, '다음: ' + i.next)),
+        h('span', { class: 'small muted', 'aria-hidden': 'true' }, '›')))))) : h('div', { class: 'empty small' }, queueFilter ? '이 조건에 맞는 항목이 없습니다.' : '처리할 항목이 없습니다.'));
+}
+
+const won = (n) => (n == null ? '없음' : Math.round(n).toLocaleString('ko-KR') + '원');
+const cnt = (n) => (n == null ? '없음' : n.toLocaleString('ko-KR'));
+function performanceSection(perf) {
+  const t = perf.totals;
+  const when = perf.lastSync ? new Date(perf.lastSync).toLocaleString('ko-KR') : null;
+  const file = h('input', { type: 'file', accept: '.csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', style: 'display:none', 'data-perf-file': '', onchange: (e) => { const f = e.target.files[0]; if (f) importReport(f); e.target.value = ''; } });
+  return h('details', { class: 'card', 'data-performance': '', open: perf.hasData || undefined },
+    h('summary', { style: 'cursor:pointer;min-height:44px;display:flex;align-items:center;gap:8px;flex-wrap:wrap' }, h('b', null, '쿠팡 파트너스 성과'), perf.hasData ? chip(perf.stale ? '오래된 데이터' : '최근 가져옴', perf.stale ? 'attention' : 'done') : chip('데이터 없음', 'mock')),
+    h('div', { class: 'stack', style: 'gap:12px;margin-top:12px' },
+      h('div', { class: 'perf-grid' }, [['링크 클릭', cnt(t.clicks)], ['주문 · 전환', cnt(t.orders)], ['예상 수익', won(t.commissionEst)], ['확정 수익', won(t.commissionFinal)]].map(([l, v]) => h('div', { class: 'perf-stat', 'data-perf': l }, h('div', { class: 'small muted' }, l), h('div', { class: 'perf-v' }, v)))),
+      h('div', { class: 'small' }, perf.hasData ? `기간: ${perf.dateFrom} ~ ${perf.dateTo} (${perf.days}일) · 마지막 가져오기: ${when}${perf.ageDays != null ? ` (${perf.ageDays}일 전)` : ''}` : '기간: — · 마지막 가져오기: —'),
+      h('div', { class: 'small muted' }, perf.note),
+      h('div', { class: 'banner mock' }, h('div', null, h('b', null, '연동 상태: 미설정'), ' ' + perf.integration.note)),
+      h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', 'data-perf-import': '', onclick: () => file.click() }, icon('upload'), '보고서 가져오기 (CSV/XLSX)'), file),
+      perf.imports.length ? h('div', { class: 'small muted' }, '가져온 파일: ' + perf.imports.map((x) => `${x.filename || x.id} (${x.dateFrom}~${x.dateTo})`).join(' · ')) : null));
+}
+async function importReport(file) {
+  const url = '/api/performance/import';
+  let pv;
+  try { pv = await api.upload(url + '?dryRun=1', file); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
+  const ok = await confirmDialog({ title: '이 보고서를 가져올까요?', body: h('div', { class: 'stack small' }, h('div', null, `${file.name} · ${pv.rowCount}행 · ${pv.dateFrom} ~ ${pv.dateTo}`), h('div', null, '읽은 항목: ' + pv.present.join(', ')), pv.missingMetrics.length ? h('div', { class: 'muted' }, '보고서에 없는 항목(없음으로 표시됨): ' + pv.missingMetrics.join(', ')) : null, pv.errorCount ? h('div', { style: 'color:var(--clay)' }, `읽지 못한 행 ${pv.errorCount}개는 건너뜁니다.`) : null, h('div', { class: 'muted' }, '같은 날짜의 기존 값은 이 파일의 값으로 대체됩니다.')), confirm: '가져오기', tone: 'sage' });
+  if (!ok) return;
+  try { await api.upload(url, file); toast('가져왔습니다'); await act(async () => null); } catch (e) { toast(e.message, { error: true, recovery: e.recovery }); }
 }

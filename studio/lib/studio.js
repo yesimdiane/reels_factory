@@ -15,6 +15,7 @@ const { createStoryLab } = require('./storylab');
 const { createScriptGen } = require('./scriptgen');
 const { createEpisodeIds } = require('./episodeids');
 const { createStoryboardAssets } = require('./storyboardassets');
+const { createPerformance } = require('./performance');
 const { createScriptPresets } = require('./scriptpresets');
 const { createEndingTemplates } = require('./endingtemplates');
 const F = require('./formula');
@@ -68,6 +69,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return vcache.get(sig);
   };
   const video = provider || new Proxy({}, { get: (_t, prop) => currentVideo()[prop] });
+  const performance = createPerformance({ store });
   const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load(), products });
   const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: sba.composePrompt });
   const promptSvc = createPromptService({
@@ -286,6 +288,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       ai: { routing: integrations.overview().routing, usage: usage.summary(store.settings.get().ai.limits) },
       episodes: eps.map((e) => ({ id: e.id, displayId: e.displayId || e.id, uuid: e.uuid || '', productCode: e.productCode || '', episodeNumber: e.episodeNumber || null, category: e.category || (e.concept && e.concept.category) || '', productId: e.productId || '', concept: e.derived.concept, title: e.title, titleEn: e.titleEn, productName: e.product.name, steps: e.derived.steps, spentUsd: e.derived.spentUsd, limitUsd: e.derived.limitUsd, totalPlannedSec: e.derived.totalPlannedSec, scenes: e.scenes.length, thumb: firstClipThumb(e), published: !!(e.publishing && e.publishing.publishedAt), finalApproved: !!e.approvals.final, archived: !!e.archivedAt, onHold: !!e.holdAt, header: e.derived.header, updatedAt: e.updatedAt })),
       queue,
+      home: homeSummary(eps),
       totals: {
         episodes: eps.length,
         spentUsd: Math.round(eps.reduce((n, e) => n + e.derived.spentUsd, 0) * 1e6) / 1e6,
@@ -293,6 +296,55 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         published: eps.filter((e) => e.publishing && e.publishing.publishedAt).length,
         inProduction: eps.filter((e) => !(e.publishing && e.publishing.publishedAt)).length,
       },
+    };
+  }
+
+  // ---------- Home: what needs attention across the whole pipeline ----------
+  const STAGE_GROUP = { product: 'story', concept: 'story', script: 'script', approval: 'script', storyboard: 'storyboard', estimate: 'video', animation: 'video', clips: 'video', voice: 'video', render: 'video', review: 'review', publish: 'publish' };
+  const GROUPS = [['story', '스토리'], ['script', '대본'], ['storyboard', '스토리보드'], ['video', '비디오'], ['review', '최종 검토'], ['publish', '게시']];
+  const STEP_VIEW = { product: 'products', concept: 'storylab', script: 'script', approval: 'script', storyboard: 'storyboard', estimate: 'animation', animation: 'animation', clips: 'animation', voice: 'voice', render: 'render', review: 'review', publish: 'publishing' };
+  const NEXT_TEXT = { product: '제품·참조 이미지 준비', concept: '스토리 승인하기', script: '대본 완성하기', approval: '대본 승인하기', storyboard: '스토리보드 승인하기', estimate: '비용 확인하고 생성 승인', animation: '애니메이션 생성하기', clips: '클립 검토·승인', voice: '음성 생성하기', render: '렌더 시작하기', review: '최종 영상 승인하기', publish: '캡션·ManyChat 승인하기' };
+  /** One row per active episode (not archived / trashed): code, title, product, stage, status, next required action, deep link. */
+  function homeItem(e) {
+    const d = e.derived; const hd = d.header; const vs = d.videoStudio;
+    const published = !!(e.publishing && e.publishing.publishedAt);
+    const stepKey = hd.stage.key;
+    const view = stepKey === 'done' ? 'review' : STEP_VIEW[stepKey];
+    const group = stepKey === 'done' ? 'done' : STAGE_GROUP[stepKey];
+    const failed = vs ? vs.clips.failed.length : 0;
+    const running = (vs ? vs.clips.running.length : 0) + (vs && vs.render.running ? 1 : 0);
+    const awaiting = [];
+    if (!d.scriptApproved && d.validation.ok) awaiting.push('script');
+    else if (d.scriptApproved && !d.storyboardApproved) awaiting.push('storyboard');
+    if (e.scenes.some((s) => s.clips.versions.some((v) => v.status === 'pending_review'))) awaiting.push('clips');
+    if ((e.renders || []).some((r) => !r.preview) && !e.approvals.final && (d.steps.find((x) => x.key === 'render') || {}).state === 'done') awaiting.push('final');
+    if (e.approvals.final && !(e.publishing && e.publishing.approvedAt)) awaiting.push('caption');
+    let status = 'progress'; let statusLabel = '진행 중';
+    if (hd.onHold) { status = 'hold'; statusLabel = '보류 중'; }
+    else if (published) { status = 'done'; statusLabel = '게시 완료'; }
+    else if (failed) { status = 'failed'; statusLabel = `생성 실패 ${failed}`; }
+    else if (running) { status = 'running'; statusLabel = '생성·렌더 중'; }
+    else if (awaiting.length) { status = 'approval'; statusLabel = '내 승인 대기'; }
+    else if (stepKey === 'done') { status = 'done'; statusLabel = '완료'; }
+    const next = hd.onHold ? '보류 해제 후 계속' : vs && group === 'video' ? vs.next.label : stepKey === 'done' ? (published ? '완료' : '게시하기') : NEXT_TEXT[stepKey] || '';
+    return { id: e.id, code: hd.code, title: e.title, productName: hd.productName, productId: e.productId || '', stage: hd.stage.label, group, status, statusLabel, awaiting, next, view, finalApproved: !!e.approvals.final, published };
+  }
+  function homeSummary(eps) {
+    const live = eps.filter((e) => !e.archivedAt);
+    const items = live.map(homeItem);
+    const active = items.filter((i) => !i.published);
+    return {
+      counts: {
+        active: active.filter((i) => i.status !== 'hold').length,
+        approvals: items.reduce((n, i) => n + i.awaiting.length, 0),
+        running: items.filter((i) => i.status === 'running').length,
+        failed: items.filter((i) => i.status === 'failed').length,
+        completed: items.filter((i) => i.finalApproved).length,
+        onHold: items.filter((i) => i.status === 'hold').length,
+      },
+      groups: GROUPS.map(([key, label]) => ({ key, label, items: active.filter((i) => i.group === key) })).concat([{ key: 'done', label: '완료 · 게시 전', items: active.filter((i) => i.group === 'done') }]).filter((g) => g.items.length),
+      items,
+      performance: performance.summary(),
     };
   }
 
@@ -1211,7 +1263,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
 
   return {
     exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
-    summary, episodeView, episodeIds, sba, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
+    summary, episodeView, episodeIds, sba, performance, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
