@@ -521,3 +521,12 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .ref-pick img { width: 72px; height: 72px; object-fit: contain; display: block; border-radius: 8px; }
 .beat-row { padding: 10px; display: grid; gap: 8px; }
 .broll-thumb { width: 96px; height: 96px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line-strong); }
+
+/* Product Studio: summary first, everything else folded */
+.prod-summary { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 16px; align-items: start; }
+.prod-main { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background: #fff; border: 1px solid var(--line-strong); border-radius: 14px; }
+.prod-main.empty { display: flex; align-items: center; justify-content: center; text-align: center; color: var(--muted); font-size: 12px; padding: 8px; }
+.fold { border: 1px solid var(--line-strong); border-radius: 16px; background: var(--paper); padding: 4px 14px; }
+.fold > summary { cursor: pointer; min-height: 48px; display: flex; align-items: center; gap: 10px; }
+.fold[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+@media (max-width: 640px) { .prod-summary { grid-template-columns: 1fr; } .prod-main { max-width: 220px; } }

@@ -19,8 +19,9 @@ function list(wrap) {
   const items = state.summary.products || [];
   wrap.append(pageHead('Product Studio', '제품 스튜디오', '제품 URL 또는 직접 입력으로 시작합니다. 확인된 사실과 승인된 참조 이미지만 스토리 생성에 사용됩니다.', h('button', { class: 'btn', onclick: newProduct }, icon('plus'), '새 제품')));
   if (!items.length) wrap.append(h('div', { class: 'empty' }, h('h2', null, '제품이 없습니다'), h('p', null, '"새 제품"으로 쿠팡/기타 URL이나 제품 정보를 입력하세요.')));
-  wrap.append(h('div', { class: 'grid three' }, items.map((p) => h('article', { class: 'card stack', style: 'gap:10px' },
-    h('div', { class: 'row between' }, h('span', { class: 'eyebrow' }, p.id), chip(p.readiness.ok ? '스토리 준비 완료' : '준비 필요', p.readiness.ok ? 'done' : 'attention')),
+  wrap.append(h('div', { class: 'grid three' }, items.map((p) => h('article', { class: 'card stack', style: 'gap:10px', 'data-product-card': p.id },
+    p.mainImage ? h('img', { class: 'prod-main', src: p.mainImage.url, alt: p.name || '제품 대표 이미지', loading: 'lazy' }) : h('div', { class: 'prod-main empty' }, '대표 이미지 없음'),
+    h('div', { class: 'row between' }, h('span', { class: 'eyebrow' }, p.id + (p.code ? ' · ' + p.code : '')), chip(p.readiness.ok ? '스토리 준비 완료' : '준비 필요', p.readiness.ok ? 'done' : 'attention')),
     h('h3', null, p.name || '(이름 없음)'),
     h('div', { class: 'small muted' }, '이미지 ' + p.images + '장 · 참조 세트: ' + ({ none: '없음', approved: '승인됨', waived: '이미지 없이 진행(기록됨)', stale: '재승인 필요' }[p.reference] || p.reference)),
     p.readiness.ok ? null : h('div', { class: 'small', style: 'color:var(--clay)' }, '필요: ' + p.readiness.missing.join(', ')),
@@ -164,6 +165,25 @@ function draw(p) {
     if (reason) await run(() => api.post(`/api/products/${p.id}/references/waive`, { reason }), '기록했습니다');
   }
   void reload;
+  // ---- default view: summary first; everything else folded ----
+  const [head, , A, B, B2, C] = Array.from(wrap.children);
+  const fold = (title, badge, open, el) => h('details', { class: 'fold', open: open || undefined, 'data-fold': title }, h('summary', null, h('b', null, title), badge ? h('span', { class: 'small muted' }, badge) : null), el);
+  const refChip = ({ none: ['참조 미승인', 'attention'], approved: ['참조 승인됨', 'done'], stale: ['참조 재승인 필요', 'attention'], waived: ['이미지 없이 진행', 'mock'] })[p.reference.state];
+  const live = p.linkedEpisodes.filter((e) => !e.archived);
+  const summary = h('section', { class: 'card prod-summary', 'data-product-summary': p.id },
+    p.mainImage ? h('img', { class: 'prod-main', src: p.mainImage.url, alt: '대표 참조 이미지' }) : h('div', { class: 'prod-main empty' }, '대표 이미지 없음'),
+    h('div', { class: 'stack', style: 'gap:8px;min-width:0' },
+      h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, h('span', { class: 'ep-code' }, p.code || '코드 없음'), chip(...refChip), chip(p.readiness.ok ? '스토리 준비 완료' : '준비 필요', p.readiness.ok ? 'done' : 'attention')),
+      h('h2', { style: 'margin:0;overflow-wrap:anywhere' }, p.name || '제품'),
+      p.url ? h('a', { class: 'small', href: p.url, target: '_blank', rel: 'noopener', style: 'overflow-wrap:anywhere' }, p.url) : h('div', { class: 'small muted' }, '제품 링크 없음 (직접 입력)'),
+      h('div', { class: 'small' }, h('b', null, '연결된 에피소드: '), live.length ? live.map((e, i) => [i ? ', ' : '', h('a', { href: '#/script/' + e.id, onclick: () => { state.episodeId = e.id; } }, e.displayId || e.id)]) : '없음'),
+      p.readiness.ok ? null : h('div', { class: 'small', style: 'color:var(--clay)' }, '필요: ' + p.readiness.missing.join(', ')),
+      h('div', { class: 'row' }, h('button', { class: 'btn sage', type: 'button', 'data-create-story': p.id, disabled: !p.readiness.ok, title: p.readiness.ok ? '' : '필요: ' + p.readiness.missing.join(', '), onclick: () => { location.hash = '#/storylab/' + p.id; } }, '스토리 만들기 →'))));
+  wrap.replaceChildren(head, summary,
+    fold('제품 정보 · 사양 · 금지 표현', '확인된 사실만 스토리에 쓰입니다', false, A),
+    fold('참조 이미지', `${p.counts.uploaded}/${p.limits.uploads}장 업로드`, p.reference.state !== 'approved', B),
+    fold('AI 참조 이미지 생성 이력', '번호가 붙은 버전 · 추가 참조 최대 5장', false, B2),
+    C);
   return wrap;
 }
 
