@@ -272,6 +272,9 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('PUT', '/api/episodes/:id/category', async ({ p, body }) => S.setEpisodeCategory(p.id, body.category));
   // ---- storyboard assets: 0.5 s movement plan + B-roll library (no AI / video calls) ----
   route('PUT', '/api/episodes/:id/scenes/:sid/motion', async ({ p, body }) => { await S.sba.saveMotion(p.id, p.sid, { beats: body.beats, source: 'manual' }); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/motion/estimate', async ({ p }) => S.animplan.estimateAi(p.id, p.sid));
+  route('POST', '/api/episodes/:id/scenes/:sid/motion/generate', async ({ p, body }) => { S.assertNotHeld(p.id); if (body.mode === 'ai') await S.animplan.generateAi(p.id, p.sid, { replace: body.replace === true, confirm: body.confirm }); else await S.animplan.generateRules(p.id, p.sid, { replace: body.replace === true }); return ep(p.id); });
+  route('GET', '/api/episodes/:id/render-readiness', async ({ p }) => S.renderReadiness.check(S.store.episodes.get(p.id)));
   route('POST', '/api/episodes/:id/scenes/:sid/motion/draft', async ({ p }) => { await S.sba.draftMotion(p.id, p.sid); return ep(p.id); });
   route('GET', '/api/episodes/:id/broll', async ({ p }) => ({ broll: S.sba.brollView(S.store.episodes.get(p.id)) }));
   route('POST', '/api/episodes/:id/broll', async ({ p, body }) => { await S.sba.saveBroll(p.id, body || {}); return ep(p.id); });

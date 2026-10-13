@@ -1,6 +1,7 @@
 import { h, chip, icon, confirmDialog, fmtSec, toast } from '../ui.js';
 import { act, requireEpisode } from '../state.js';
 import { api } from '../api.js';
+import { readinessCard } from './render-readiness.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, issueList, lockedNotice, videoTabs } from './common.js';
 import { timelineBar } from './voice.js';
 
@@ -22,6 +23,7 @@ export function render() {
   wrap.append(pageHead('Render Studio', '렌더 스튜디오', '승인된 클립과 음성으로 9:16 영상을 만듭니다. 렌더는 항상 새 버전으로 저장되어 이전 영상을 덮어쓰지 않습니다.', episodePicker()));
   wrap.append(videoTabs('render'));
   wrap.append(pipelineBar(ep));
+  wrap.append(readinessCard(ep));
   if (!plan.canRender) wrap.append(lockedNotice('렌더하려면 아래 항목을 먼저 해결해야 합니다.'));
 
   const start = (preview) => async () => {

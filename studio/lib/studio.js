@@ -26,6 +26,8 @@ const SF = require('./scriptformula');
 const { createStartImages } = require('./startimages');
 const { createCharRefs } = require('./charrefs');
 const { createBrollImages } = require('./brollimages');
+const { createAnimPlan } = require('./animplan');
+const { createRenderReadiness } = require('./renderready');
 const { createProjects } = require('./projects');
 const { createTranslator } = require('./translate');
 const cuts = require('./cuts');
@@ -84,7 +86,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const manychat = createManychat({ store, vault: keys, fetchFn, log });
   const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load(), products });
   const brollImages = createBrollImages({ store, products, router, charRefs, sba, lib: () => store.characters.load() });
-  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: sba.composePrompt, charRefs });
+  const animplan = createAnimPlan({ store, router, sba, charRefs, lib: () => store.characters.load() });
+  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs });
   const promptSvc = createPromptService({
     store, cfg, geminiFactory, log,
     available: () => router.routeFor('storyboardPrompts').provider !== 'mock' && !!keys.get(router.routeFor('storyboardPrompts').provider),
@@ -99,6 +102,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const voiceCatalog = createVoiceCatalog({ store, vault: keys, cfg, runtime, fetchFn, log });
   runtime.setGoogleReady(() => voiceCatalog.googleReady());
   const voice = createVoiceService({ store, cfg, fetchFn, speechProvider, runtime, voices: voiceCatalog });
+  const renderReadiness = createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer: { plan: (id) => renderer.plan(id) }, providerMode: () => video.mode, getModel: () => modelById(store.models(), store.settings.get().defaultModelId) });
   const renderer = createRenderService({ store, cfg, voice, log, broll: { approved: (ep) => sba.approvedBroll(ep), file: (ep, b) => sba.brollFile(ep, b) } });
   const publishing = createPublishingService({ store });
   store.episodes.seedDemo();
@@ -173,6 +177,14 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     };
   }
 
+  /** Stored beats of older episodes have no sceneId/characterId: fill them from the scene's cast for display (nothing is written). */
+  function motionView(ep, sc) {
+    const m = ep.motion && ep.motion[sc.id];
+    if (!m) return null;
+    const L = store.characters.load().characters;
+    const cast = (sc.characters || []).map((id) => ({ id, name: (L.find((c) => c.id === id) || { name: id }).name }));
+    return Object.assign({}, m, { beats: (m.beats || []).map((b) => { const hit = cast.find((c) => c.id === b.characterId) || cast.find((c) => c.name.toLowerCase() === String(b.character || '').toLowerCase() || c.id === String(b.character || '').toLowerCase()); return Object.assign({ sceneId: sc.id }, b, { characterId: hit ? hit.id : (b.characterId || '') }); }) });
+  }
   function episodeView(id) {
     const ep = store.episodes.get(id);
     const L = lib();
@@ -207,7 +219,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         titleKoMissing: !s.title_ko,
         clipSec: clipSecFor(model, s.durationSec),
         prompt: ep.prompts[s.id] || null,
-        motion: (ep.motion && ep.motion[s.id]) || null,
+        motion: motionView(ep, s),
+        animQuality: animplan.quality(ep, s),
         broll: (ep.broll || []).filter((b) => b.sceneId === s.id && b.status !== 'removed'),
         promptWarnings: ep.prompts[s.id] ? lintPrompt(ep.prompts[s.id].video, ep) : [],
         castWarnings: ep.prompts[s.id] ? lintCast(ep.prompts[s.id].video, s, L) : [],
@@ -237,6 +250,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     const view = Object.assign({}, ep, {
       scenes: sceneViews,
       derived: {
+        renderReadiness: renderReadiness.check(ep),
         concept: conceptInfo,
         scriptHash: scriptFingerprint(ep),
         storyboardHash: storyboardFingerprint(ep),
@@ -564,6 +578,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     // Free, deterministic: scenes that have no prompt yet get one right away so the Storyboard is never empty.
     const missing = store.episodes.get(id).scenes.filter((s) => !store.episodes.get(id).prompts[s.id]).map((s) => s.id);
     if (missing.length) await promptSvc.generate(id, { sceneIds: missing, mode: 'template' });
+    // Free: every scene without animation gets a scene-specific beat plan from the approved script (existing beats are never touched).
+    await animplan.autoFill(id, by);
     return episodeView(id);
   }
 
@@ -1287,7 +1303,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
 
   return {
-    exportName, cfg, store, video, gen, startImages, charRefs, brollImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    exportName, cfg, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,

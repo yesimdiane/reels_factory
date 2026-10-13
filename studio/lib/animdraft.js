@@ -1,0 +1,150 @@
+// Scene-specific animation beats (0.5 s grid) from the approved script: dialogue, visual direction, action, emotion, camera cues, duration.
+// Deterministic and FREE (no AI call). Pure functions: nothing here touches the store or a provider.
+//   * timed visual text ("0.0–1.5 s: …") becomes the beats' time windows; untimed text is split over the scene
+//   * dialogue lines get a speaking beat (gesture/expression chosen from the line's content) and a reaction beat for the listener
+//   * camera words (whip-pan, push-in, zoom, close-up …) go to the camera field; a deliberate hold is a beat of its own, not filler
+//   * placeholder phrases ("neutral", "holds the opening pose", "settled", "static" …) are never produced; isGeneric() detects them
+'use strict';
+
+const STEP = 0.5;
+const r1 = (n) => Math.round(n * 1000) / 1000;
+const snap = (n) => Math.round(n / STEP) * STEP;
+
+const GENERIC = new Set(['neutral', 'holds the opening pose', 'looks at the camera', 'settled', 'static', 'holds the pose', 'steady', 'reaction', 'stays still', 'listening', 'mouth moves with the dialogue', 'slight forward lean while speaking', 'small head tilt while speaking', 'looks at the listener', 'looks at the speaker', 'slow push-in']);
+const isGenericText = (t) => { const v = String(t || '').trim().toLowerCase(); return !v || GENERIC.has(v); };
+/** A beat is a placeholder when fewer than two of emotion / body / gaze / expression say anything specific. */
+const isGeneric = (b) => ['emotion', 'body', 'gaze', 'expression'].filter((k) => !isGenericText(b && b[k])).length < 2;
+
+const EMOTIONS = [
+  [/smug|confident|confidently|proud|boast|brag|don't use|never use|grin/i, { emotion: 'smug confidence', expression: 'smug half-smile, one eyebrow raised', stance: 'stands tall with chin lifted' }],
+  [/surpris|gasp|shock|lightbulb|realiz|idea|sudden/i, { emotion: 'surprise turning into realisation', expression: 'eyes widen, brows shoot up, mouth opens', stance: 'freezes, then leans in' }],
+  [/angry|annoy|furious|irritat|scold/i, { emotion: 'annoyed', expression: 'brows pulled together, tight lips', stance: 'squares the shoulders' }],
+  [/rain|soaked|wet|cold|shiver|storm|monsoon|struggl/i, { emotion: 'dismay', expression: 'wincing, squinting against the rain', stance: 'hunches slightly' }],
+  [/happy|delight|joy|laugh|cheer|excited|thrilled/i, { emotion: 'delight', expression: 'wide smile, bright eyes', stance: 'bounces lightly on the spot' }],
+  [/embarrass|awkward|blush|sheepish/i, { emotion: 'embarrassment', expression: 'flushed cheeks, eyes glancing away', stance: 'shrinks a little' }],
+  [/worr|nervous|anxious|afraid|scared/i, { emotion: 'worry', expression: 'brows knit upward, lips pressed', stance: 'fidgets with both hands' }],
+  [/skeptic|doubt|suspic|unconvinced/i, { emotion: 'scepticism', expression: 'one brow arched, flat mouth', stance: 'folds the arms' }],
+];
+const CAMERA = /((?:quick|slow|slight|fast|gentle|smooth)\s+)?(whip[- ]?pan|push[- ]?in(?:\s+zoom)?|pull[- ]?out|zoom(?:s|ing)?(?: in| out)?|dolly|tilt(?:s)?(?: up| down)?|pan(?:s)?(?: left| right)?|close[- ]?up|medium shot|wide shot|over[- ]the[- ]shoulder|low angle|high angle|handheld|static shot|camera holds?)/i;
+const GAZE = /(?:looks?|glances?|stares?|turns? (?:his|her|their) head) (?:at|toward|towards|to)\s+([^.,;]+)/i;
+const EXIT = /(turn(?:s|ing)? away|walk(?:s|ing)? (?:off|away|into|out)|exit|leave|leaves|head(?:s|ing)? (?:off|out))/i;
+
+function cuesFor(text) {
+  for (const [re, v] of EMOTIONS) if (re.test(text)) return v;
+  return null;
+}
+function gestureFor(line) {
+  const t = String(line.en || '');
+  if (/\b(don't|do not|never|no|not|nobody)\b/i.test(t)) return { body: 'makes a dismissive hand gesture, chin lifts slightly', expression: 'one eyebrow raised, confident smirk' };
+  if (/\?\s*$/.test(t)) return { body: 'tilts the head and lifts a palm in a questioning gesture', expression: 'brows lift, eyes wide with curiosity' };
+  if (/!\s*$/.test(t)) return { body: 'leans in with an emphatic hand gesture', expression: 'brows lift, eyes bright, mouth wide on the stress words' };
+  if (/\b(look|see|here|this)\b/i.test(t)) return { body: 'points or presents with an open hand', expression: 'raised brows, engaged smile' };
+  return { body: 'nods once while speaking, small head movement', expression: 'brows rise on the key word, relaxed mouth' };
+}
+
+/** "0.0–1.5 s: …" segments from visual text, or null. */
+function timedSegments(text, dur) {
+  const re = /(\d+(?:\.\d+)?)\s*(?:–|—|-|~|to)\s*(\d+(?:\.\d+)?)\s*s?\s*[:：]\s*([\s\S]*?)(?=(?:\d+(?:\.\d+)?\s*(?:–|—|-|~|to)\s*\d+(?:\.\d+)?\s*s?\s*[:：])|$)/gi;
+  const out = [];
+  let m;
+  while ((m = re.exec(String(text || '')))) {
+    const t0 = Math.max(0, snap(Number(m[1]))); const t1 = Math.min(dur, snap(Number(m[2])));
+    const body = m[3].replace(/\s+/g, ' ').trim().replace(/[.;]\s*$/, '');
+    if (t1 > t0 && body) out.push({ t0, t1, text: body });
+  }
+  return out.length ? out : null;
+}
+function sentences(text) { return String(text || '').split(/(?<=[.!?])\s+|;\s+|,?\s+then\s+/i).map((x) => x.trim().replace(/[.]+$/, '')).filter(Boolean); }
+
+/** Splits [0,dur] into n windows on the 0.5 grid (the last takes the remainder). */
+function windows(dur, n) {
+  const total = Math.round(dur / STEP);
+  const k = Math.max(1, Math.min(n, total));
+  const out = []; let cur = 0;
+  for (let i = 0; i < k; i++) { const end = i === k - 1 ? total : cur + Math.max(1, Math.round((total - cur) / (k - i))); out.push({ t0: cur * STEP, t1: end * STEP }); cur = end; }
+  return out;
+}
+
+function draftBeats(ep, scene, characters) {
+  const dur = Number(scene.durationSec) || 4;
+  const cast = (scene.characters && scene.characters.length ? scene.characters : []).filter(Boolean);
+  const byId = (id) => characters.find((c) => c.id === id) || { id, name: id };
+  const nameOf = (cid) => byId(cid).name;
+  const mention = (text) => cast.find((cid) => new RegExp('\\b' + nameOf(cid) + '\\b', 'i').test(text)) || null;
+  const other = (cid) => (cast.length > 1 ? cast.find((c) => c !== cid) : null);
+  const lines = (ep.lines || []).filter((l) => l.sceneId === scene.id && l.en);
+  const sceneCue = cuesFor([scene.emotion, scene.action, scene.visual].filter(Boolean).join(' '));
+  const sceneCam = (String(scene.visual || '').match(CAMERA) || [])[0] || '';
+  const beats = [];
+  const push = (b) => { if (b.t1 - b.t0 >= STEP - 1e-6) beats.push(Object.assign({ sceneId: scene.id }, b, { t0: r1(b.t0), t1: r1(b.t1) })); };
+
+  // 1) structure: timed visual segments, else the ACTION clauses spread over the duration (the visual text then only supplies setting/camera)
+  let segs = timedSegments(scene.visual, dur);
+  if (!segs) {
+    const parts = sentences(scene.action || scene.visual).slice(0, 4);
+    segs = parts.length ? windows(dur, parts.length).map((w, i) => Object.assign(w, { text: parts[i] })) : [];
+  }
+  const exitFrom = segs.filter((sg) => EXIT.test(sg.text)).reduce((m, sg) => Math.min(m, sg.t0), dur);
+  let prev = lines[0] && cast.includes(lines[0].speaker) ? lines[0].speaker : cast[0];
+  segs.forEach((sg, i) => {
+    const named = mention(sg.text);
+    const cid = named || (/\b(she|her|he|his|they|their)\b/i.test(sg.text) && i > 0 ? prev : (i === 0 ? prev : cast[i % Math.max(1, cast.length)] || prev));
+    if (!cid) return;
+    prev = cid;
+    const cam = (sg.text.match(CAMERA) || [])[0] || '';
+    const cue = cuesFor(sg.text) || sceneCue || { emotion: 'composed attention', expression: 'attentive eyes, relaxed mouth', stance: 'stands naturally' };
+    let body = sg.text.replace(CAMERA, ' ').replace(new RegExp('^\\s*(?:to\\s+)?' + nameOf(cid) + '\\b(?:\\s+with)?\\s*', 'i'), '').replace(/\s{2,}/g, ' ').replace(/^[\s,:-]+|[\s,:-]+$/g, '');
+    const fragment = !body || body.length < 6 || (/^(in|on|at|stable|steady|quick|slow|slowly|then|and|with|as)\b/i.test(body) && body.split(/\s+/).length < 6);
+    if (fragment) body = i === 0 ? cue.stance : 'holds the moment, letting the previous beat land';
+    else if (/^(a|an|the)\b/i.test(body)) body = 'shows ' + body;
+    else if (/^as\s/i.test(body)) body = body.replace(/^as\s+(?:he|she|they)\s+/i, '');
+    const isExit = EXIT.test(sg.text);
+    if (i === 0 && sg.t0 === 0 && !isExit && cue.stance && !fragment) body = cue.stance + '; ' + body;
+    const gz = (sg.text.match(GAZE) || [])[1];
+    const tgt = other(cid);
+    push({ t0: sg.t0, t1: sg.t1, characterId: cid, character: nameOf(cid), emotion: cue.emotion, body: body.slice(0, 200), gaze: gz ? gz.trim() : isExit ? 'away from the camera, toward where they are heading' : tgt && lines.length ? `toward ${nameOf(tgt)}` : lines.length ? 'toward the camera' : 'at the action in the scene', expression: isExit ? 'faint satisfied smile' : cue.expression, camera: cam.toLowerCase() || (isExit ? 'camera holds as they exit' : i === 0 ? (sceneCam.toLowerCase() || 'medium shot') : ''), _exit: isExit });
+  });
+
+  // 2) dialogue: a speaking beat (gesture from the line's content) + a reaction beat for the listener, before any exit
+  const speakSec = (l) => Math.max(1, snap(String(l.en).trim().split(/\s+/).length / 2.7));
+  let cursor = Math.min(0.5, Math.max(0, dur - STEP));
+  lines.forEach((l, n) => {
+    const cid = cast.includes(l.speaker) ? l.speaker : cast[0];
+    if (!cid) return;
+    const limit = Math.max(cursor + STEP, exitFrom);
+    const t0 = Math.min(cursor, dur - STEP);
+    const t1 = Math.min(dur, limit, Math.max(t0 + STEP, snap(t0 + speakSec(l))));
+    if (t1 - t0 < STEP) return;
+    const g = gestureFor(l);
+    const cue = cuesFor(l.en) || sceneCue || { emotion: 'engaged' };
+    const tgt = other(cid);
+    push({ t0, t1, characterId: cid, character: nameOf(cid), emotion: cue.emotion, body: g.body, gaze: tgt ? `toward ${nameOf(tgt)}` : 'toward the camera', expression: g.expression + '; mouth shapes the line', camera: '', _speak: true });
+    if (tgt) push({ t0, t1, characterId: tgt, character: nameOf(tgt), emotion: n % 2 ? 'amused' : 'sceptical interest', body: 'listens, eyes following the speaker, small reactive head movement', gaze: `toward ${nameOf(cid)}`, expression: 'brow flickers, lips press then relax', camera: '', _listen: true });
+    cursor = t1;
+  });
+
+  // 3) resolve overlaps per character: speaking > exit > other structure; trimmed beats keep their text, drop only when < 0.5 s remain
+  const rank = (b) => (b._speak ? 3 : b._exit ? 2 : b._listen ? 0 : 1);
+  const out = [];
+  Array.from(new Set(beats.map((b) => b.characterId))).forEach((cid) => {
+    const mine = beats.filter((b) => b.characterId === cid).sort((a, b) => rank(b) - rank(a) || a.t0 - b.t0);
+    const kept = [];
+    mine.forEach((b) => {
+      let cur = { t0: b.t0, t1: b.t1 };
+      let pieces = [cur];
+      kept.forEach((k) => { pieces = pieces.flatMap((p) => { if (k.t1 <= p.t0 + 1e-6 || k.t0 >= p.t1 - 1e-6) return [p]; const o = []; if (k.t0 - p.t0 >= STEP - 1e-6) o.push({ t0: p.t0, t1: k.t0 }); if (p.t1 - k.t1 >= STEP - 1e-6) o.push({ t0: k.t1, t1: p.t1 }); return o; }); });
+      pieces.slice(0, 1).forEach((p) => kept.push(Object.assign({}, b, p)));
+    });
+    kept.forEach((k) => out.push(k));
+  });
+
+  // 4) a deliberate closing hold when nothing covers the end of the scene
+  const last = out.reduce((m, b) => Math.max(m, b.t1), 0);
+  if (last < dur - 1e-6 && out.length) {
+    const tail = out.slice().sort((a, b) => a.t1 - b.t1).pop();
+    out.push({ sceneId: scene.id, t0: r1(last), t1: r1(dur), characterId: tail.characterId, character: tail.character, emotion: tail.emotion, body: 'holds the final pose deliberately, letting the moment land', gaze: tail.gaze, expression: 'a held, knowing look', camera: 'camera holds' });
+  }
+  return out.map((b) => { const { _speak, _exit, _listen, ...keep } = b; return keep; }).sort((a, b) => a.t0 - b.t0 || String(a.characterId).localeCompare(String(b.characterId)));
+}
+
+module.exports = { draftBeats, isGeneric, isGenericText, timedSegments, GENERIC, STEP };
