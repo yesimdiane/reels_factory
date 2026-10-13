@@ -47,6 +47,7 @@ export const EN = {
   '지출 한도': 'Spend limit', '채널 설정': 'Channel settings', '캐릭터 라이브러리': 'Character library', '제목 저장': 'Save title', '프롬프트 복사': 'Copy prompt',
   // misc
   '보고서 가져오기 (CSV/XLSX)': 'Import report (CSV/XLSX)', '필터 해제': 'Clear filter', '가져오기': 'Import', '스토리랩에서 시작하기': 'Start in Story Lab',
+  '스토리 만들기 →': 'Create story →',
   '스토리보드로 이동': 'Go to Storyboard', '스토리보드 열기': 'Open Storyboard',
   '제목 수정': 'Edit title', '에피소드 보류': 'Hold episode', '이어서 작업': 'Resume work',
   '스토리 승인': 'Approve story', '보류': 'Hold', '보류 해제': 'Resume', '삭제 취소 (복원)': 'Undo delete (restore)', '고급 설정': 'Advanced settings', '자세히 보기': 'Details', '수정본 재승인': 'Re-approve edited version',

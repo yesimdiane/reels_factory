@@ -536,3 +536,11 @@ a.brand { text-decoration: none; color: inherit; }
 .perf-stat { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .perf-v { font-family: var(--serif); font-size: 20px; font-weight: 600; }
 @media (max-width: 900px) { .home-counters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .home-counter:last-child { grid-column: 1 / -1; } .perf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* Product Studio: summary first, everything else folded */
+.prod-summary { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 16px; align-items: start; }
+.prod-main { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background: #fff; border: 1px solid var(--line-strong); border-radius: 14px; }
+.prod-main.empty { display: flex; align-items: center; justify-content: center; text-align: center; color: var(--muted); font-size: 12px; padding: 8px; }
+.fold { border: 1px solid var(--line-strong); border-radius: 16px; background: var(--paper); padding: 4px 14px; }
+.fold > summary { cursor: pointer; min-height: 48px; display: flex; align-items: center; gap: 10px; }
+.fold[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+@media (max-width: 640px) { .prod-summary { grid-template-columns: 1fr; } .prod-main { max-width: 220px; } }
