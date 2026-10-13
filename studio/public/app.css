@@ -312,3 +312,17 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .scene-version { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--card); font-size: 13px; }
 .sticky-bar.save-bar { position: fixed; right: 24px; bottom: 18px; left: auto; width: auto; max-width: calc(100vw - 48px); margin: 0; padding: 8px 10px 8px 18px; z-index: 40; }
 @media (max-width: 900px) { .sticky-bar.save-bar { right: 12px; bottom: 74px; } }
+
+/* ---------- compact panel row (Script Studio): three small boxes, header click opens details ---------- */
+.panel-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.panel-row > * { min-width: 0; }
+.panel-row .card { padding: 12px 14px; gap: 6px; }
+.panel-row .card .card-head { cursor: pointer; align-items: center; margin-bottom: 0; flex-wrap: wrap; }
+.panel-row .card .card-head::after { content: '▾'; color: var(--muted); }
+.panel-row .card.open .card-head::after { content: '▴'; }
+.panel-row .card h3 { font-size: 14.5px; }
+.panel-row .card:not(.open) > :not(.card-head) { display: none !important; }
+.panel-row .card.open { grid-column: 1 / -1; }
+.panel-row .card.open .card-head { margin-bottom: 8px; }
+@media (max-width: 1100px) { .panel-row { grid-template-columns: 1fr; } }
+.panel-row .card:not(.open) .card-head a { display: none; }

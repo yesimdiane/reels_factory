@@ -109,7 +109,7 @@ export function presetPanel(ep) {
       if (r) { showTest(r); await act(async () => null); }
     };
     return h('div', { class: 'card stack', style: 'gap:10px' },
-      h('div', { class: 'card-head' }, h('div', null, h('div', { class: 'eyebrow' }, 'AI 프롬프트'), h('h3', { style: 'margin:0' }, '대본 생성에 쓸 프롬프트')), h('a', { class: 'small', href: '#/settings', onclick: () => { state.settingsTab = 'scriptprompts'; } }, '프롬프트 편집 (설정 → AI 프롬프트 관리)')),
+      h('div', { class: 'card-head' }, h('div', null, h('div', { class: 'eyebrow' }, 'AI 프롬프트'), h('h3', { style: 'margin:0' }, '대본 생성에 쓸 프롬프트')), chip(`${preset.name} · 강도 ${sel.comedyLevel}`, ''), h('a', { class: 'small', href: '#/settings', onclick: () => { state.settingsTab = 'scriptprompts'; } }, '프롬프트 편집 (설정 → AI 프롬프트 관리)')),
       src ? h('div', { class: 'small' }, h('b', null, '현재 대본을 만든 프롬프트: '), src.presetId ? `${src.presetName} v${src.presetVersion} · 코미디 강도 ${src.comedyLevel} · 해시 ${src.promptHash}` : `이전 방식(프롬프트 매니저 script v${src.promptVersion})`) : h('div', { class: 'small muted' }, '아직 AI로 만든 대본이 없습니다.'),
       h('div', { class: 'row', style: 'flex-wrap:wrap;gap:10px' },
         h('label', { class: 'row small', style: 'gap:6px' }, '프리셋', h('select', { 'aria-label': '프리셋', style: 'width:auto', onchange: (e) => save({ presetId: e.target.value }) }, list.presets.map((p) => h('option', { value: p.id, selected: p.id === sel.presetId }, p.name)))),
