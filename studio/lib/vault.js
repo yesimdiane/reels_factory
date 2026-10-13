@@ -8,8 +8,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { StudioError, nowIso, readJson, writeJsonAtomic } = require('./util');
 
-const PROVIDERS = ['gemini', 'openai', 'anthropic', 'muapi', 'heygen', 'manychat'];
-const ENV_NAMES = { gemini: 'GEMINI_API_KEY', openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', muapi: 'MUAPI_API_KEY', heygen: 'HEYGEN_API_KEY', manychat: 'MANYCHAT_API_TOKEN' };
+const PROVIDERS = ['gemini', 'openai', 'anthropic', 'muapi', 'heygen', 'manychat', 'googletts', 'googletts_sa'];
+const ENV_NAMES = { gemini: 'GEMINI_API_KEY', openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', muapi: 'MUAPI_API_KEY', heygen: 'HEYGEN_API_KEY', manychat: 'MANYCHAT_API_TOKEN', googletts: 'GOOGLE_TTS_API_KEY', googletts_sa: 'GOOGLE_TTS_SERVICE_ACCOUNT_JSON' };
 
 function deriveKey(secret, salt) {
   return crypto.scryptSync(String(secret), Buffer.from(salt, 'base64'), 32);
@@ -64,10 +64,11 @@ function createVault({ dir, masterKey = '', env = {}, requireMasterKey = false, 
   return {
     keySource,
     providers: PROVIDERS,
-    set(provider, secret) {
+    /** `multiline` is for structured secrets (a service-account JSON key): whitespace is allowed there, the length floor stays. */
+    set(provider, secret, { multiline = false } = {}) {
       check(provider);
       const s = String(secret || '').trim();
-      if (s.length < 8 || /\s/.test(s)) throw new StudioError('BAD_KEY', 'API 키 형식이 올바르지 않습니다(공백 없이 8자 이상).');
+      if (s.length < 8 || (!multiline && /\s/.test(s))) throw new StudioError('BAD_KEY', 'API 키 형식이 올바르지 않습니다(공백 없이 8자 이상).');
       const d = data();
       d.secrets[provider] = Object.assign(enc(s), { last4: s.slice(-4), length: s.length, updatedAt: nowIso() });
       writeJsonAtomic(file, d);

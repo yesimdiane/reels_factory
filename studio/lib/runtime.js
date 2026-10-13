@@ -19,13 +19,15 @@ function createRuntime({ cfg, vault, store }) {
     if (cfg.studioMode === 'live') return 'live';
     return prov('heygen').mode === 'live' ? 'live' : 'mock';
   }
+  let googleReady = () => false; // set by the voice catalog (Google Cloud TTS credentials present on the server)
   return {
     muapiKey,
     heygenKey,
     muapiRequested: requestedMuapi,
     voiceRequested: requestedVoice,
     muapiMode: () => (requestedMuapi() === 'live' && muapiKey() ? 'live' : 'mock'),
-    voiceMode: () => (requestedVoice() === 'live' && heygenKey() ? 'live' : 'mock'),
+    voiceMode: () => (requestedVoice() === 'live' && (heygenKey() || googleReady()) ? 'live' : 'mock'),
+    setGoogleReady: (fn) => { googleReady = fn; },
     key: (name) => vault.get(name),
   };
 }

@@ -33,6 +33,7 @@ const { createIntegrations } = require('./integrations');
 const { createVideoProvider } = require('./providers');
 const { createGenerationService } = require('./generation');
 const { createVoiceService } = require('./voice');
+const { createVoiceCatalog } = require('./voicecatalog');
 const { createRenderService } = require('./render');
 const { createPromptService } = require('./promptgen');
 const { createPublishingService, checklist: publishChecklist, validate: validatePublishing } = require('./publishing');
@@ -91,7 +92,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       return { model: r.model || 'mock', provider: r.provider, generateJson: async ({ prompt, images }) => (await router.run('storyboardPrompts', { prompt, images: images.map((i) => ({ mimeType: i.mimeType, data: i.data, label: i.label })), json: true, maxTokens: 8000, confirm: { paid: true, unknownCost: true } })).json };
     },
   });
-  const voice = createVoiceService({ store, cfg, fetchFn, speechProvider, runtime });
+  const voiceCatalog = createVoiceCatalog({ store, vault: keys, cfg, runtime, fetchFn, log });
+  runtime.setGoogleReady(() => voiceCatalog.googleReady());
+  const voice = createVoiceService({ store, cfg, fetchFn, speechProvider, runtime, voices: voiceCatalog });
   const renderer = createRenderService({ store, cfg, voice, log, broll: { approved: (ep) => sba.approvedBroll(ep), file: (ep, b) => sba.brollFile(ep, b) } });
   const publishing = createPublishingService({ store });
   store.episodes.seedDemo();
@@ -125,6 +128,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   function characterView(c) {
     return Object.assign({}, c, {
       references: c.references.map((r) => Object.assign({}, r, { url: `/media/ref/${c.id}/${r.id}` })),
+      voiceInfo: voiceCatalog.status(c),
       voiceStatus: !c.voice.heygenVoiceId ? (c.voice.heygenIdentityId ? 'identity-only' : 'unset') : c.voice.verified ? 'verified' : 'unverified',
     });
   }
@@ -137,8 +141,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     const keyOk = !!runtime.heygenKey();
     const chars = lib().characters.filter((c) => (ep.characters || []).includes(c.id)).map((c) => {
       const referenceReady = c.references.some((r) => r.approved);
-      const voiceReady = !!c.voice.heygenVoiceId && keyOk;
-      return { id: c.id, name: c.name, referenceReady, voiceReady, voiceNote: voiceReady ? '목소리 준비' : '목소리 API 필요' };
+      const vs = voiceCatalog.status(c);
+      const voiceReady = vs.ready && (vs.provider === 'google' || keyOk);
+      return { id: c.id, name: c.name, referenceReady, voiceReady, voiceNote: voiceReady ? '목소리 준비' : vs.state === 'missing' ? '목소리 미지정' : vs.state === 'not_connected' || vs.state === 'unsynced' ? '목소리 API 필요' : vs.state === 'unavailable' ? '목소리 사용 불가' : '목소리 API 필요', voice: { state: vs.state, provider: vs.provider, providerLabel: vs.providerLabel, name: vs.name, voiceId: vs.voiceId, message: vs.message, action: vs.action || '' } };
     });
     return { product: { ready: productReady, count: productCount }, characters: chars };
   }
@@ -295,6 +300,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       models: store.models(),
       characters: lib().characters.map(characterView),
       universes: universes.overview(),
+      voices: voiceCatalog.overview(),
       style: lib().style,
       products: products.list(),
       storylab: storylabSummary(),
@@ -1274,7 +1280,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
 
   return {
-    exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,

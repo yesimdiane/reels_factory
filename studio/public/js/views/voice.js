@@ -2,6 +2,7 @@ import { h, chip, icon, confirmDialog, fmtSec, fmtUsd, toast } from '../ui.js';
 import { state, act, requireEpisode } from '../state.js';
 import { api } from '../api.js';
 import { timingTable } from './script-timing.js';
+import { voicePicker } from './voice-connections.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, issueList, charAvatar, lockedNotice, videoTabs } from './common.js';
 
 export function voice() {
@@ -60,11 +61,10 @@ function charVoiceCard(c) {
   return h('div', { class: 'card' },
     h('div', { class: 'row between', style: 'margin-bottom:12px' }, h('div', { class: 'row' }, charAvatar(c, true), h('div', null, h('h3', null, c.name + ' · ' + c.nameKo), h('div', { class: 'small muted' }, c.role + ' · English'))), chip(status[0], status[1])),
     h('div', { class: 'stack', style: 'gap:10px' },
-      h('div', { class: 'field' }, h('label', null, 'HeyGen Voice ID'), h('input', { type: 'text', class: 'mono', value: f.voiceId, placeholder: '클론한 음성의 Voice ID', oninput: (e) => (f.voiceId = e.target.value) })),
+      voicePicker(c),
       h('div', { class: 'field' }, h('label', null, 'HeyGen Identity ID (참고용)'), h('input', { type: 'text', class: 'mono', value: f.identityId, oninput: (e) => (f.identityId = e.target.value) }), h('div', { class: 'small muted' }, 'Identity ID는 Voice ID가 아닙니다. 음성 생성에는 쓰이지 않으며, 같은 값으로 간주하지 않습니다.')),
       h('div', { class: 'field' }, h('label', null, '말 속도 ' + f.speed + '×'), h('input', { type: 'range', min: 0.7, max: 1.3, step: 0.05, value: f.speed, oninput: (e) => { f.speed = Number(e.target.value); e.target.previousSibling.textContent = '말 속도 ' + f.speed + '×'; } })),
       v.verified ? h('div', { class: 'small muted' }, `HeyGen 목록에서 확인: ${v.verifiedName || ''} ${v.verifiedLanguage ? '(' + v.verifiedLanguage + ')' : ''}`) : null,
       h('div', { class: 'row' },
-        h('button', { class: 'btn sm', onclick: () => act(async () => { await api.put('/api/characters/' + c.id, { voice: { heygenVoiceId: f.voiceId, heygenIdentityId: f.identityId, speed: f.speed } }); return null; }, { ok: c.name + ' 음성 설정을 저장했습니다' }) }, '저장'),
-        h('button', { class: 'btn sm ghost', onclick: async () => { try { await api.put('/api/characters/' + c.id, { voice: { heygenVoiceId: f.voiceId, heygenIdentityId: f.identityId, speed: f.speed } }); await api.post(`/api/characters/${c.id}/voice/verify`); toast('HeyGen 목록에서 음성을 확인했습니다'); } catch (e) { toast(e.message, { error: true, recovery: e.recovery }); } await act(async () => null); } }, '음성 확인 (HeyGen 목록 조회)'))));
+        h('button', { class: 'btn sm', onclick: () => act(async () => { await api.put('/api/characters/' + c.id, { voice: { heygenVoiceId: f.voiceId, heygenIdentityId: f.identityId, speed: f.speed } }); return null; }, { ok: c.name + ' 음성 설정을 저장했습니다' }) }, '저장'))));
 }

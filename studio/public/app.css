@@ -593,3 +593,9 @@ body.scene-dragging-body { cursor: grabbing; user-select: none; -webkit-user-sel
 .scene-compact .scene-title-compact { font-size: 16px; }
 .regen-compare { gap: 12px; }
 .regen-col { padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+
+/* Voice connections / voice picker */
+[data-voice-library] .tbl-wrap { overflow-x: auto; }
+[data-voice-picker] { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+[data-voice-picker] select, [data-voice-picker] input[type=search], [data-voice-library] select, [data-voice-library] input[type=search] { min-height: 36px; max-width: 100%; }
+.asset-chip a { color: inherit; text-decoration: underline; }

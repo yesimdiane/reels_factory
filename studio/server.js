@@ -384,6 +384,19 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/publishing/published', async ({ p, body }) => { await S.publishing.markPublished(p.id, body.postUrl); return ep(p.id); });
 
   // ---- characters / settings ----
+  // ---- voice providers (Google Cloud TTS / HeyGen): connect once, sync the voice list, reuse everywhere. Secrets never leave the server. ----
+  route('GET', '/api/voices', async () => S.voiceCatalog.overview());
+  route('GET', '/api/voices/list', async ({ query }) => S.voiceCatalog.list({ provider: query.provider, language: query.language, q: query.q, type: query.type, limit: query.limit, offset: query.offset }));
+  route('PUT', '/api/voices/google/credentials', async ({ body }) => S.voiceCatalog.setGoogleCredentials(body));
+  route('PUT', '/api/voices/heygen/key', async ({ body }) => S.voiceCatalog.setHeygenKey(body.key));
+  route('POST', '/api/voices/preview/estimate', async ({ body }) => S.voiceCatalog.previewEstimate(body.provider, body.voiceId, body.text));
+  route('POST', '/api/voices/preview', async ({ body }) => { const r = await S.voiceCatalog.preview(body.provider, body.voiceId, { text: body.text, confirm: body.confirm }); return { estimate: r.estimate, cached: !!r.cached, mock: !!r.mock, url: r.url || '/media/voicepreview/' + require('node:path').basename(r.file) }; });
+  route('GET', '/media/voicepreview/:name', async ({ p }) => { if (!/^[a-f0-9]{24}\.wav$/.test(p.name)) throw new StudioError('NOT_FOUND', '미리듣기를 찾을 수 없습니다.', { status: 404 }); return { file: require('node:path').join(S.voiceCatalog.previewDir(), p.name) }; });
+  route('POST', '/api/voices/:provider/test', async ({ p }) => S.voiceCatalog.test(p.provider));
+  route('POST', '/api/voices/:provider/sync', async ({ p }) => S.voiceCatalog.sync(p.provider));
+  route('DELETE', '/api/voices/:provider', async ({ p }) => S.voiceCatalog.disconnect(p.provider));
+  route('PUT', '/api/characters/:id/voice', async ({ p, body }) => { S.voiceCatalog.assign(p.id, { provider: body.provider, voiceId: body.voiceId }); return S.characterView(S.store.characters.get(p.id)); });
+  route('DELETE', '/api/characters/:id/voice', async ({ p, body }) => { S.voiceCatalog.clear(p.id, body && body.provider); return S.characterView(S.store.characters.get(p.id)); });
   route('PUT', '/api/characters/:id/references/:rid', async ({ p, body }) => { S.store.characters.setReferenceKind(p.id, p.rid, body.isSheet !== false); return S.characterView(S.store.characters.get(p.id)); });
   route('PUT', '/api/characters/:id', async ({ p, body }) => S.updateCharacter(p.id, body));
   route('POST', '/api/characters/:id/references', async ({ p, raw, headers, query }) => {
