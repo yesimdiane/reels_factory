@@ -12,6 +12,8 @@ const { buildTimeline } = require('./timeline');
 const { checkFfmpeg, probe, run } = require('../../renderer/lib/ffmpeg');
 const { findFont, FontMissingError } = require('../../renderer/lib/fonts');
 const { ts, esc } = require('../../renderer/lib/ass');
+const { sceneInsertChains, cutsFingerprint } = require('./cuts');
+const { isSceneApproved } = require('./sceneapproval');
 
 const PICTO = /(\p{Extended_Pictographic}|️|‍)/gu; // libass cannot draw emoji; they stay in the caption text
 const clean = (s) => String(s).replace(PICTO, '').replace(/\s+/g, ' ').trim();
@@ -103,6 +105,7 @@ function createRenderService({ store, cfg, voice, log = () => {} }) {
       const f = store.episodes.file(ep.id, v.file);
       if (!fs.existsSync(f)) return problems.push({ code: 'CLIP_MISSING', message: `${s.id}: 클립 파일이 없습니다.`, recovery: '클립을 다시 생성하거나 업로드하세요.' });
       if (sha256File(f) !== v.sha256) return problems.push({ code: 'CLIP_CHECKSUM', message: `${s.id}: 클립 파일이 승인된 파일과 다릅니다 (체크섬 불일치).`, recovery: '클립을 다시 승인하세요.' });
+      if ((s.inserts || []).length && !isSceneApproved(ep, s.id)) problems.push({ code: 'CUTS_NOT_APPROVED', message: `${s.id}: 컷(클로즈업) 편집이 승인되지 않았습니다. 컷을 바꾸면 씬을 다시 검토·승인해야 합니다.`, recovery: 'Script Studio에서 이 씬을 확인하고 "씬 승인"을 누르세요.' });
       clips[s.id] = { file: f, v: v.v, sha256: v.sha256, durationSec: v.durationSec, mock: !!v.mock };
     });
     const audio = {};
@@ -152,11 +155,17 @@ function createRenderService({ store, cfg, voice, log = () => {} }) {
       const args = ['-hide_banner', '-y'];
       tl.scenes.forEach((s) => args.push('-i', g.clips[s.id].file));
       args.push('-i', 'audio.wav');
-      const chains = tl.scenes.map((s, i) => {
+      let chains = [];
+      tl.scenes.forEach((s, i) => {
         const last = i === tl.scenes.length - 1;
         const dur = s.duration + (last ? tl.cta.duration : 0);
         const pad = Math.max(0, dur - g.clips[s.id].durationSec) + 0.05;
-        return `[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${fps},setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=${pad.toFixed(3)},trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`;
+        const sc = (ep.scenes || []).find((x) => x.id === s.id) || {};
+        const inserts = sc.inserts || [];
+        const baseLabel = inserts.length ? `b${i}` : `v${i}`;
+        chains.push(`[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${fps},setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=${pad.toFixed(3)},trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS[${baseLabel}]`);
+        // insert shots (close-ups) are cropped from the SAME clip at the SAME timestamps: scene length, dialogue and audio timing do not change
+        if (inserts.length) chains.push(...sceneInsertChains({ base: baseLabel, out: `v${i}`, inserts, W, H, fps, dur }).chains);
       });
       const fontsArg = cfg.fontsDir ? `:fontsdir=${cfg.fontsDir.replace(/([:\\'])/g, '\\$1')}` : '';
       chains.push(tl.scenes.map((_, i) => `[v${i}]`).join('') + `concat=n=${tl.scenes.length}:v=1:a=0[vc]`, `[vc]ass=subs.ass${fontsArg}[vout]`);
@@ -180,7 +189,7 @@ function createRenderService({ store, cfg, voice, log = () => {} }) {
         const rel = path.join('renders', 'v' + n + (preview ? '-preview' : '') + '.mp4');
         fs.mkdirSync(path.dirname(store.episodes.file(epId, rel)), { recursive: true });
         fs.copyFileSync(out, store.episodes.file(epId, rel));
-        const r = { v: n, file: rel, sha256: hash, size: fs.statSync(out).size, durationSec: Math.round(info.duration * 100) / 100, width: W, height: H, preview: !!preview, scriptHash: scriptFingerprint(e), clipRefs: Object.fromEntries(Object.entries(g.clips).map(([k, c]) => [k, { v: c.v, sha256: c.sha256 }])), hasMockClips: Object.values(g.clips).some((c) => c.mock), mockVoice: Object.values(g.audio).some((x) => x.mock), warnings: tl.warnings.map((w) => w.message), font: fontName, createdAt: nowIso(), by };
+        const r = { v: n, file: rel, sha256: hash, size: fs.statSync(out).size, durationSec: Math.round(info.duration * 100) / 100, width: W, height: H, preview: !!preview, scriptHash: scriptFingerprint(e), cutsHash: cutsFingerprint(e), clipRefs: Object.fromEntries(Object.entries(g.clips).map(([k, c]) => [k, { v: c.v, sha256: c.sha256 }])), hasMockClips: Object.values(g.clips).some((c) => c.mock), mockVoice: Object.values(g.audio).some((x) => x.mock), warnings: tl.warnings.map((w) => w.message), font: fontName, createdAt: nowIso(), by };
         e.renders.push(r);
         e.renderJob = { status: 'done', v: n, finishedAt: nowIso() };
         return r;

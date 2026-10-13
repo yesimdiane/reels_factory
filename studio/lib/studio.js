@@ -20,6 +20,9 @@ const SF = require('./scriptformula');
 const { createStartImages } = require('./startimages');
 const { createProjects } = require('./projects');
 const { createTranslator } = require('./translate');
+const cuts = require('./cuts');
+const { createCutPresets } = require('./cutpresets');
+const { run: runFfmpeg } = require('../../renderer/lib/ffmpeg');
 const { createIntegrations } = require('./integrations');
 const { createVideoProvider } = require('./providers');
 const { createGenerationService } = require('./generation');
@@ -48,6 +51,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const endings = createEndingTemplates({ store, seedDir: SEED_DIR });
   const scriptgen = createScriptGen({ store, products, storylab, prompts, presets, endings, router, lib: () => store.characters.load() });
   const translator = createTranslator({ store, router });
+  const cutPresets = createCutPresets({ store });
   const startImages = createStartImages({ store, products, router, lib: () => store.characters.load(), log });
   const integrations = createIntegrations({ store, vault: keys, runtime, router, usage, cfg, fetchFn, muapiFactory, log });
 
@@ -173,6 +177,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         clips: { approvedVersion: clips.approvedVersion, versions: clips.versions.map((v) => Object.assign({}, v, { url: `/media/clip/${id}/${s.id}/${v.v}` })) },
         line: ep.lines.filter((l) => l.sceneId === s.id).map((l) => l.id),
         approval: readiness.scenes.find((x) => x.sceneId === s.id),
+        cutInfo: cutInfoFor(ep, s),
         link: sceneLinks[s.id] || null,
       });
     });
@@ -500,6 +505,56 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return episodeView(id);
   }
 
+  // ---------- insert shots (컷 추가): crops of the scene's own approved clip; no AI / video call, no cost ----------
+  /** The picture the crops come from: the approved clip (else the newest one); before any clip exists only the start image can be previewed. */
+  function cutSource(ep, scene) {
+    const c = ep.clips[scene.id] || { versions: [], approvedVersion: null };
+    const v = c.versions.find((x) => x.v === c.approvedVersion) || c.versions[c.versions.length - 1];
+    if (v) return { kind: 'clip', approved: v.v === c.approvedVersion, v: v.v, width: v.width || 0, height: v.height || 0, durationSec: v.durationSec || 0 };
+    const img = gen.startImage(ep, scene);
+    if (!img.error && img.file && !img.characterId) return { kind: 'start_image', approved: !!img.approved, width: 0, height: 0, durationSec: 0 };
+    return { kind: 'none', approved: false, width: 0, height: 0, durationSec: 0 };
+  }
+  function cutInfoFor(ep, scene) {
+    const src = cutSource(ep, scene);
+    let inserts = []; let warnings = [];
+    try { ({ inserts, warnings } = cuts.normalizeInserts(scene.inserts || [], { durationSec: scene.durationSec, src, sceneId: scene.id })); } catch (e) { warnings = [{ code: e.code || 'INSERTS_INVALID', message: e.message }]; inserts = scene.inserts || []; }
+    return { source: src, inserts, warnings, effectNote: '컷은 카메라 크롭입니다. 새로운 눈·표정 움직임은 만들지 않습니다.' };
+  }
+  /** Replaces the scene's insert shots (the whole editable list). Versioned; the scene needs a new approval; the scene length never changes. */
+  async function saveInserts(id, sceneId, list, by = 'operator') {
+    const ep0 = store.episodes.get(id);
+    const sc0 = ep0.scenes.find((x) => x.id === sceneId);
+    if (!sc0) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다: ' + sceneId, { status: 404 });
+    const { inserts, warnings } = cuts.normalizeInserts(list, { durationSec: sc0.durationSec, src: cutSource(ep0, sc0), sceneId });
+    await store.episodes.update(id, (ep) => {
+      const sc = ep.scenes.find((x) => x.id === sceneId);
+      sc.inserts = inserts.map((i) => { const { resolution, motion, ...keep } = i; return keep; });
+    }, { snapshot: true, by, note: `컷 편집 (${sceneId})` });
+    store.episodes.audit(id, 'scene.inserts', { sceneId, count: inserts.length, by });
+    const v = episodeView(id);
+    v.cutWarnings = warnings;
+    return v;
+  }
+  /** A still frame of the approved clip (cached JPEG) for the crop preview. t is clamped to the clip; the start image is used before a clip exists. */
+  async function cutFrame(id, sceneId, t = 0) {
+    const ep = store.episodes.get(id);
+    const sc = ep.scenes.find((x) => x.id === sceneId);
+    if (!sc) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다.', { status: 404 });
+    const src = cutSource(ep, sc);
+    if (src.kind === 'start_image') return gen.startImage(ep, sc).file;
+    if (src.kind !== 'clip') throw new StudioError('NO_SOURCE', '이 장면에는 미리볼 클립이나 시작 이미지가 없습니다.', { status: 404 });
+    const ver = ep.clips[sceneId].versions.find((x) => x.v === src.v);
+    const clipFile = store.episodes.file(id, ver.file);
+    const at = Math.max(0, Math.min(Number(t) || 0, Math.max(0, (src.durationSec || 1) - 0.1)));
+    const out = store.cachePath('cutframes', `${ver.sha256.slice(0, 16)}-${at.toFixed(1)}.jpg`);
+    if (!fs.existsSync(out)) {
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      await runFfmpeg(cfg.ffmpeg.ffmpeg, ['-hide_banner', '-y', '-ss', at.toFixed(2), '-i', clipFile, '-frames:v', '1', '-q:v', '3', out], { cwd: path.dirname(out) });
+    }
+    return out;
+  }
+
   /**
    * Drag & drop reorder. Formula episodes: { beats: { setup: [ids], problem: [ids], ... } } moves Part A scenes within / between the six beats
    * (every beat keeps at least one scene; Part B, the fixed ending, can never be moved). Other episodes: { order: [ids] }.
@@ -761,7 +816,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   }
 
   return {
-    cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator,
+    cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,

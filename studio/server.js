@@ -237,6 +237,12 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/scenes/:sid/approve', async ({ p }) => { await S.projects.approveScene(p.id, p.sid); return ep(p.id); });
   route('POST', '/api/episodes/:id/scenes/:sid/revoke', async ({ p }) => { await S.projects.revokeScene(p.id, p.sid); return ep(p.id); });
   route('GET', '/api/episodes/:id/scenes/:sid/history', async ({ p }) => S.projects.sceneHistory(p.id, p.sid));
+  // ---- insert shots (컷 추가): crops of the approved clip; free ----
+  route('GET', '/api/cut-presets', async () => ({ builtIn: S.cutPresets.builtIn(), custom: S.cutPresets.list(), transitions: require('./lib/cuts').TRANSITIONS, limits: require('./lib/cuts').LIMITS }));
+  route('POST', '/api/cut-presets', async ({ body }) => S.cutPresets.save({ id: body.id, name: body.name, preset: body.preset, transition: body.transition, durationSec: body.durationSec, crop: body.crop }));
+  route('DELETE', '/api/cut-presets/:id', async ({ p }) => S.cutPresets.remove(p.id));
+  route('PUT', '/api/episodes/:id/scenes/:sid/inserts', async ({ p, body }) => S.saveInserts(p.id, p.sid, body.inserts));
+  route('GET', '/media/cutframe/:a/:b', async ({ p, query }) => ({ file: await S.cutFrame(p.a, p.b, query.t) }));
   route('POST', '/api/episodes/:id/scenes/reorder', async ({ p, body }) => S.reorderScenes(p.id, { beats: body.beats, order: body.order }));
   route('POST', '/api/episodes/:id/scenes/approve-ready', async ({ p }) => { const r = await S.projects.approveReady(p.id); const v = ep(p.id); v.approveResult = r; return v; });
   // ---- review translation (read-only aid; the English text stays the source of truth) ----

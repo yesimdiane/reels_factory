@@ -3,6 +3,7 @@ import { state, act, requireEpisode } from '../state.js';
 import { api } from '../api.js';
 import { imageDevCard } from './image-dev.js';
 import { translateControl } from './translate-box.js';
+import { openCutEditor } from './cut-editor.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, lockedNotice, charAvatar, productRefStrip, makeStartImages, sceneNav } from './common.js';
 
 export function storyboard() {
@@ -103,6 +104,7 @@ function sceneCard(ep, sc, i, chars) {
       h('hr', { class: 'divider', style: 'margin:4px 0' }),
       h('div', { class: 'field' }, h('div', { class: 'row between' }, h('label', null, 'Google Flow / Muapi 영상 프롬프트'), h('div', { class: 'row', style: 'gap:6px' },
         tr.btn,
+        h('button', { class: 'btn sm ghost', 'data-edit-cuts': sc.id, title: '이 장면의 영상을 잘라 클로즈업 컷을 넣습니다 (요금 없음)', onclick: () => openCutEditor(ep, sc.id) }, '컷 편집' + (sc.inserts && sc.inserts.length ? ` (${sc.inserts.length})` : '')),
         h('button', { class: 'btn sm ghost', onclick: () => copyText(promptEl.value, sc.id + ' 프롬프트를 복사했습니다') }, icon('copy'), 'Copy Prompt'),
         h('button', { class: 'btn sm ghost', disabled: !ep.derived.scriptApproved, onclick: () => aiPrompts(ep, sc) }, icon('play'), 'AI로 다시 만들기'),
         h('button', { class: 'btn sm ghost', onclick: async () => { if (!sc.prompt || !sc.prompt.edited || await confirmDialog({ title: '수정한 프롬프트를 덮어쓸까요?', body: '이 장면의 프롬프트를 템플릿으로 다시 만듭니다. 직접 수정한 내용은 사라집니다(버전 기록에는 남지 않습니다).', tone: 'clay', confirm: '다시 만들기' })) { delete state.draft[key]; await act(() => api.post(`/api/episodes/${ep.id}/storyboard/prompts`, { sceneIds: [sc.id], force: true }), { ok: '프롬프트를 다시 만들었습니다' }); } } }, icon('refresh'), '다시 만들기'),

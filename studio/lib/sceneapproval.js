@@ -7,6 +7,7 @@
 const { sha256, canonical, nowIso, StudioError } = require('./util');
 const { validateScript, sceneTitle } = require('./episode');
 const { claimHits } = require('./claims');
+const { insertsCore } = require('./cuts');
 const F = require('./formula');
 
 const STATUS_LABEL = { draft: '초안', needs_changes: '수정 필요', ready: '승인 가능', approved: '승인됨' };
@@ -17,8 +18,9 @@ const linesOf = (ep, sid) => (ep.lines || []).filter((l) => l.sceneId === sid);
 /** The part of a scene an approval is bound to. Korean titles and beat metadata are excluded (a title edit does not un-approve, like the script approval). */
 function sceneContent(ep, sid) {
   const s = sceneOf(ep, sid) || {};
+  const ins = insertsCore(s); // insert shots (close-ups) are part of the scene version; omitted when empty so older approvals keep their hash
   return {
-    scene: { id: s.id, part: s.part || '', beatKey: s.beatKey || '', durationSec: s.durationSec, characters: s.characters || [], showsProduct: !!s.showsProduct, visual: s.visual || '', action: s.action || '', narration: s.narration || '', placement: s.placement || '' },
+    scene: { id: s.id, part: s.part || '', beatKey: s.beatKey || '', durationSec: s.durationSec, characters: s.characters || [], showsProduct: !!s.showsProduct, visual: s.visual || '', action: s.action || '', narration: s.narration || '', placement: s.placement || '', ...(ins.length ? { inserts: ins } : {}) },
     lines: linesOf(ep, sid).map((l) => ({ id: l.id, speaker: l.speaker, en: l.en, ko: l.ko })),
   };
 }
