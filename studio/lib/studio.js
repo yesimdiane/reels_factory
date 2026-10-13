@@ -17,6 +17,7 @@ const { createEpisodeIds } = require('./episodeids');
 const { createStoryboardAssets } = require('./storyboardassets');
 const { createPerformance } = require('./performance');
 const { createManychat } = require('./manychat');
+const { createUniverseService } = require('./universes');
 const { createScriptPresets } = require('./scriptpresets');
 const { createEndingTemplates } = require('./endingtemplates');
 const F = require('./formula');
@@ -50,7 +51,10 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const prompts = createPromptStore({ store, seedDir: SEED_DIR });
   const router = createAiRouter({ store, vault: keys, usage, fetchFn, providerFactory: aiProviderFactory, log });
   const products = createProductService({ store, router, extractFn, downloadFn, log });
-  const storylab = createStoryLab({ store, products, prompts, router, log });
+  // eslint-disable-next-line prefer-const
+  let universes;
+  const storylab = createStoryLab({ store, products, prompts, router, universes: () => universes, log });
+  universes = createUniverseService({ store, episodes: () => store.episodes.list(), storylabCasts: () => storylab.allCasts() });
   const presets = createScriptPresets({ store, prompts, seedDir: SEED_DIR });
   const endings = createEndingTemplates({ store, seedDir: SEED_DIR });
   const episodeIds = createEpisodeIds({ store, products });
@@ -284,6 +288,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       settings: publicSettings(),
       models: store.models(),
       characters: lib().characters.map(characterView),
+      universes: universes.overview(),
       style: lib().style,
       products: products.list(),
       storylab: storylabSummary(),
@@ -1136,9 +1141,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
 
   // ---------- characters / settings ----------
   function updateCharacter(id, patch, by = 'operator') {
+    universes.editCharacter(id, patch); // profile fields (appearance, personality, relationships, rules, universe, ...)
     store.characters.update(id, (c) => {
-      ['look', 'promptBlock', 'catchphrase', 'catchphraseNote', 'role'].forEach((k) => patch[k] !== undefined && (c[k] = String(patch[k])));
-      if (Array.isArray(patch.personality)) c.personality = patch.personality.map(String);
       if (patch.voice) {
         const v = patch.voice;
         if (v.heygenVoiceId !== undefined && String(v.heygenVoiceId).trim() !== c.voice.heygenVoiceId) {
@@ -1264,7 +1268,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
 
   return {
-    exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,

@@ -101,7 +101,7 @@ test('concepts: storyline-only generation, rules are added by code, a response w
   assert.equal(lab.concepts.length, 3);
   const prompt = ai.calls[0].prompt;
   assert.match(prompt, /BABYYYY!!!!!!/);
-  assert.match(prompt, /NEVER calls Jack "오빠"/);
+  assert.match(prompt, /CAST & UNIVERSE/); assert.match(prompt, /never says "오빠"/); assert.match(prompt, /Never calls Jack "Oppa"/); // character rules now come from the library
   assert.match(prompt, /natural ENGLISH/);
   assert.match(prompt, /Do NOT decide how many scenes/);
   assert.doesNotMatch(prompt, /FIRST 3 SECONDS|estimatedScenes/, 'no hook / scene-count fields are requested any more');

@@ -36,14 +36,14 @@ const STORY_RULES = [
   'Every concept MUST include these JSON fields: category (drama | viral | info, matching CATEGORY_PLAN), title (short, English), storyline, title_ko, storyline_ko.',
   'Return exactly the concepts listed in CATEGORY_PLAN, no more and no fewer. Optionally add estimatedDurationSec (a number not above MAX_DURATION_SEC).',
   'LANGUAGE: title and storyline in natural ENGLISH; in the SAME response also give title_ko and storyline_ko: a natural, idiomatic KOREAN translation (not word-for-word).',
-  'CHARACTERS: Diane = Korean wife, long black hair, energetic, impulsive shopper (she may shout "BABYYYY!!!!!!" when excited, not in every story).',
-  'Jack = British husband, muscular/stocky, brown wavy hair, thick mustache, tattooed arms, affectionate dry humour. Diane NEVER calls Jack "오빠". Keep the approved 2D anime/webtoon character look.',
+  'CHARACTERS: use ONLY the cast in the CAST & UNIVERSE block (its personalities, relationships, rules and visual continuity are authoritative). Do not add recurring characters that are not selected.',
   'Concepts must be meaningfully different. Use ONLY the verified product facts; never invent specs, prices or availability.',
 ].join('\n');
 
-function createStoryLab({ store, products, prompts, router, log = () => {} }) {
+function createStoryLab({ store, products, prompts, router, universes: getUniverses = () => null, log = () => {} }) {
   const file = (pid) => store.path('storylab', pid + '.json');
   const read = (pid) => readJson(file(pid), { productId: pid, batches: [], concepts: [], seq: 0 });
+  const U = () => { const u = getUniverses(); if (!u) throw new StudioError('NO_UNIVERSES', '캐릭터 라이브러리를 사용할 수 없습니다.', { status: 500 }); return u; };
   const write = (pid, d) => writeJsonAtomic(file(pid), d);
   let queue = Promise.resolve();
   const serial = (fn) => { const run = queue.then(fn); queue = run.catch(() => {}); return run; };
@@ -62,8 +62,32 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
 
   function list(pid) {
     const d = read(pid);
-    return { productId: pid, concepts: d.concepts.map(view), batches: d.batches, fields: FIELD_LABEL, categories: cats.options() };
+    return { productId: pid, concepts: d.concepts.map(view), batches: d.batches, fields: FIELD_LABEL, categories: cats.options(), cast: castState(pid) };
   }
+
+  // ---------- cast (universe + characters) remembered per product ----------
+  /** The saved selection, resolved against the library (a product with no saved cast uses the Jack & Diane cast, as before). */
+  function castState(pid) {
+    const d = read(pid);
+    const r = U().resolveCast(d.cast);
+    return { cast: r.cast, saved: !!d.cast, universe: r.universe, characterIds: r.ids, errors: r.errors, warnings: r.warnings };
+  }
+  function saveCast(pid, cast) {
+    return serial(async () => {
+      const r = U().resolveCast(cast);
+      if (r.errors.length) throw new StudioError('CAST_INVALID', r.errors[0].message, { status: 400, details: r.errors });
+      const d = read(pid);
+      const { universeId, characterIds, guest, narrator } = r.cast;
+      d.cast = { universeId, characterIds, guest, narrator, savedAt: nowIso() };
+      write(pid, d);
+      return castState(pid);
+    });
+  }
+  /** Every saved selection (used to block deleting a universe/character that a project still uses). */
+  function allCasts() {
+    try { return fs.readdirSync(store.path('storylab')).filter((f) => f.endsWith('.json')).map((f) => (readJson(store.path('storylab', f), {}) || {}).cast).filter(Boolean); } catch (_) { return []; }
+  }
+  const castOf = (pid, given) => { const r = U().resolveCast(given || read(pid).cast); if (r.errors.length) throw new StudioError('CAST_INVALID', r.errors[0].message, { status: 400, details: r.errors, recovery: 'Story Lab의 "캐릭터 & 유니버스 선택"에서 출연진을 고르세요.' }); return r; };
 
   function clean(raw, product, { strictNew = true } = {}) {
     const out = {};
@@ -105,7 +129,8 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
   }
 
   /** Builds the generation request: verified facts only, approved reference images, character references. */
-  function build(pid, { count, extra, plan, maxSec = cats.DEFAULT_SEC }) {
+  function build(pid, { count, extra, plan, maxSec = cats.DEFAULT_SEC, cast }) {
+    const rc = castOf(pid, cast);
     plan = plan || Array(count).fill('drama');
     const b = products.bindingFor(pid);
     const p = b.product;
@@ -124,6 +149,8 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
       ...[...new Set(plan)].map((k) => cats.CATEGORIES[k].rule),
       'The attached product images are the APPROVED reference photos. Do not change the product\'s shape, logo or colour.',
       '',
+      U().castPrompt(rc, { stage: 'story' }),
+      '',
       STORY_RULES,
     ].join('\n');
     const refs = b.reference.imageIds || [];
@@ -132,11 +159,11 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
     // Character identity refs (approved sheets) — identity only. One per character, only if the text provider takes images.
     const L = store.characters.load();
     const charRefs = [];
-    L.characters.forEach((c) => {
+    L.characters.filter((c) => rc.ids.includes(c.id)).forEach((c) => {
       const r = c.references.find((x) => x.approved);
       if (r) { charRefs.push({ characterId: c.id, refId: r.id }); images.push({ label: `Character reference sheet for ${c.name} (ONE person, identity only, never a scene layout):`, mimeType: path.extname(r.file) === '.png' ? 'image/png' : path.extname(r.file) === '.webp' ? 'image/webp' : 'image/jpeg', data: fs.readFileSync(store.characters.refPath(c.id, r)).toString('base64') }); }
     });
-    return { product: p, binding: b, prompt: composed.text + '\n\n' + data, composed, images, refs, charRefs };
+    return { product: p, binding: b, prompt: composed.text + '\n\n' + data, composed, images, refs, charRefs, cast: rc.cast, castWarnings: rc.warnings };
   }
 
   /** What a request will generate (validated). Same rules as generate(): the UI summary, the estimate and the real call cannot disagree. */
@@ -144,10 +171,10 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
     const r = cats.resolveRequest(req);
     return Object.assign(r, { summary: cats.planText(r.plan) });
   }
-  function estimate(pid, { category, count, maxDurationSec, extra = '', override } = {}) {
+  function estimate(pid, { category, count, maxDurationSec, extra = '', override, cast } = {}) {
     const r = cats.resolveRequest({ category, count, maxDurationSec });
-    const q = build(pid, { count: r.count, extra, plan: r.plan, maxSec: r.maxDurationSec });
-    return Object.assign({}, router.estimate('storyConcepts', { inputChars: q.prompt.length, outputTokens: 1500 * r.count, images: q.images.length, override: override || q.composed.providerOverride }), { category: r.category, count: r.count, plan: r.plan, maxDurationSec: r.maxDurationSec, summary: cats.planText(r.plan) });
+    const q = build(pid, { count: r.count, extra, plan: r.plan, maxSec: r.maxDurationSec, cast });
+    return Object.assign({ cast: q.cast, castWarnings: q.castWarnings }, router.estimate('storyConcepts', { inputChars: q.prompt.length, outputTokens: 1500 * r.count, images: q.images.length, override: override || q.composed.providerOverride }), { category: r.category, count: r.count, plan: r.plan, maxDurationSec: r.maxDurationSec, summary: cats.planText(r.plan) });
   }
 
   const KO_FIELDS = ['title', 'storyline'];
@@ -186,9 +213,9 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
   }
 
   /** Generates the requested concepts (category required; 1–5 for one category, exactly 3 for "all"). Nothing is saved when validation fails (the call may still have been billed — it is in the usage log). */
-  async function generate(pid, { category, count, maxDurationSec, extra = '', confirm, override, by = 'operator' } = {}) {
+  async function generate(pid, { category, count, maxDurationSec, extra = '', confirm, override, cast, by = 'operator' } = {}) {
     const r = cats.resolveRequest({ category, count, maxDurationSec });
-    const q = build(pid, { count: r.count, extra, plan: r.plan, maxSec: r.maxDurationSec });
+    const q = build(pid, { count: r.count, extra, plan: r.plan, maxSec: r.maxDurationSec, cast });
     const ov = override || q.composed.providerOverride || undefined;
     const res = await router.run('storyConcepts', { system: undefined, prompt: q.prompt, images: q.images, json: true, maxTokens: 1500 * r.count, confirm, override: ov, dedupeKey: pid });
     const { items, problems } = validateBatch(res.json, q, r.plan, r.maxDurationSec);
@@ -197,10 +224,10 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
       const d = read(pid);
       const batchId = 'B' + String(d.batches.length + 1).padStart(2, '0');
       const source = { provider: res.provider, model: res.model, mock: !!res.mock, promptVersions: q.composed.versions, promptKey: 'storyConcept', promptVersion: q.composed.versions.storyConcept, referenceSetId: q.binding.reference.waived ? 'waived' : (q.product.referenceSet || {}).id, referenceImageIds: q.refs, characterRefs: q.charRefs, generatedAt: nowIso(), by };
-      d.batches.push({ id: batchId, at: nowIso(), count: items.length, category: r.category, plan: r.plan, maxDurationSec: r.maxDurationSec, source, extra: extra || '', estimate: res.estimate });
+      d.batches.push({ id: batchId, cast: q.cast, at: nowIso(), count: items.length, category: r.category, plan: r.plan, maxDurationSec: r.maxDurationSec, source, extra: extra || '', estimate: res.estimate });
       items.forEach((it) => {
         d.seq += 1;
-        d.concepts.push(Object.assign({ id: `${pid}-C${String(d.seq).padStart(3, '0')}`, productId: pid, batchId, status: 'candidate', revision: 1, edits: [], approval: null, rejection: null, createdAt: nowIso(), source, maxDurationSec: r.maxDurationSec }, it));
+        d.concepts.push(Object.assign({ id: `${pid}-C${String(d.seq).padStart(3, '0')}`, productId: pid, cast: q.cast, batchId, status: 'candidate', revision: 1, edits: [], approval: null, rejection: null, createdAt: nowIso(), source, maxDurationSec: r.maxDurationSec }, it));
       });
       write(pid, d);
       return list(pid);
@@ -215,7 +242,7 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
     const extra = `Replace the concept titled "${old.title}" with ONE new, meaningfully different concept (different situation and payoff). ${feedback ? 'Operator feedback: ' + feedback : ''}`;
     const cat = old.category || 'drama'; // concepts from before categories existed are regenerated as Drama
     const maxSec = old.maxDurationSec || cats.DEFAULT_SEC;
-    const q = build(pid, { count: 1, extra, plan: [cat], maxSec });
+    const q = build(pid, { count: 1, extra, plan: [cat], maxSec, cast: old.cast });
     const ov = override || q.composed.providerOverride || undefined;
     const res = await router.run('storyConcepts', { prompt: q.prompt, images: q.images, json: true, maxTokens: 1800, confirm, override: ov, dedupeKey: pid + cid });
     const raw = Array.isArray(res.json && res.json.concepts) ? res.json.concepts[0] : null;
@@ -229,7 +256,7 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
       o.status = 'superseded';
       d.seq += 1;
       const source = { provider: res.provider, model: res.model, mock: !!res.mock, promptVersions: q.composed.versions, promptKey: 'storyConcept', promptVersion: q.composed.versions.storyConcept, referenceSetId: (q.product.referenceSet || {}).id, referenceImageIds: q.refs, characterRefs: q.charRefs, generatedAt: nowIso() };
-      d.concepts.push(Object.assign({ id: `${pid}-C${String(d.seq).padStart(3, '0')}`, productId: pid, batchId: o.batchId, status: 'candidate', revision: 1, edits: [], approval: null, rejection: null, createdAt: nowIso(), source, replaces: cid, maxDurationSec: maxSec }, out));
+      d.concepts.push(Object.assign({ id: `${pid}-C${String(d.seq).padStart(3, '0')}`, productId: pid, cast: q.cast, batchId: o.batchId, status: 'candidate', revision: 1, edits: [], approval: null, rejection: null, createdAt: nowIso(), source, replaces: cid, maxDurationSec: maxSec }, out));
       write(pid, d);
       return list(pid);
     });
@@ -380,7 +407,7 @@ function createStoryLab({ store, products, prompts, router, log = () => {} }) {
   }
   const peek = (pid, cid) => { const c = read(pid).concepts.find((x) => x.id === cid); return c ? view(c) : null; };
 
-  return { list, generate, regenerate, edit, approve, revoke, reject, reopen, hold, resume, remove, restore, estimate, plan, storylineOf, requireApproved, peek, isApproved, FIELDS, FIELD_LABEL, similarity };
+  return { list, castState, saveCast, allCasts, generate, regenerate, edit, approve, revoke, reject, reopen, hold, resume, remove, restore, estimate, plan, storylineOf, requireApproved, peek, isApproved, FIELDS, FIELD_LABEL, similarity };
 }
 
 module.exports = { createStoryLab, FIELDS, NEW_FIELDS, STORY_RULES, similarity };

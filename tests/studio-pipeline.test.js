@@ -128,7 +128,7 @@ test('live mode: unknown price blocks; limit enforced; confirmed amount must mat
   s.saveSettings({ modelEstimates: { 'kling-master': { usdByDuration: { 5: 1, 10: 2 } } } });
   assert.ok(s.gen.estimate('EP01').blockers.some((b) => b.code === 'PLACEHOLDER_IMAGE'), 'demo placeholders can never be sent to a paid provider');
   // an operator uploads and approves "real" references (same bytes here; the point is the placeholder flag)
-  for (const c of s.summary().characters) {
+  for (const c of s.summary().characters.filter((x) => x.references.length)) {
     const ph = c.references[0];
     const buf = fs.readFileSync(s.mediaFile('ref', c.id, ph.id));
     store.characters.removeReference(c.id, ph.id);
