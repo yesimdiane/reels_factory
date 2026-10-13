@@ -278,6 +278,11 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/broll/suggest', async ({ p }) => { const made = await S.sba.suggestBroll(p.id); const v = ep(p.id); v.suggested = made.length; return v; });
   route('POST', '/api/episodes/:id/broll/:bid/status', async ({ p, body }) => { await S.sba.setBrollStatus(p.id, p.bid, body.status); return ep(p.id); });
   route('DELETE', '/api/episodes/:id/broll/:bid', async ({ p }) => { await S.sba.removeBroll(p.id, p.bid); return ep(p.id); });
+  route('GET', '/api/episodes/:id/broll/:bid/image/plan', async ({ p }) => S.brollImages.plan(p.id, p.bid));
+  route('PUT', '/api/episodes/:id/broll/:bid/image/prompt', async ({ p, body }) => S.brollImages.savePrompt(p.id, p.bid, body || {}));
+  route('DELETE', '/api/episodes/:id/broll/:bid/image/prompt', async ({ p }) => S.brollImages.resetPrompt(p.id, p.bid));
+  route('POST', '/api/episodes/:id/broll/:bid/image/estimate', async ({ p, body }) => S.brollImages.estimate(p.id, p.bid, { force: body.force === true, overwriteApproved: body.overwriteApproved === true }));
+  route('POST', '/api/episodes/:id/broll/:bid/image/generate', async ({ p, body }) => { S.assertNotHeld(p.id); await S.brollImages.generate(p.id, p.bid, { confirm: body.confirm, force: body.force === true, overwriteApproved: body.overwriteApproved === true }); return ep(p.id); });
   route('POST', '/api/episodes/:id/broll/:bid/image', async ({ p, raw, headers }) => { await S.sba.uploadBrollImage(p.id, p.bid, raw, decodeURIComponent(headers['x-filename'] || 'broll.png')); return ep(p.id); }, { upload: true });
   // ---- Coupang Partners performance: imported reports only (no scraping, no invented numbers) ----
   route('GET', '/api/performance', async ({ query }) => S.performance.summary({ from: query.from || '', to: query.to || '' }));

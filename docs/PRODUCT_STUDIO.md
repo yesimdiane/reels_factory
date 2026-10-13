@@ -17,3 +17,12 @@ Dashboard (오늘의 제작 현황 → "장면별 시작 이미지") and Storybo
 - **승인 보호:** 승인된 이미지(또는 승인된 참조 세트에 포함된 이미지)를 교체/삭제하려면 확인이 필요하고, 그러면 참조 세트를 다시 승인해야 합니다. 순서·대표 지정은 승인에 영향이 없습니다.
 - **AI 없음:** 업로드/붙여넣기/자르기는 AI 이미지 생성을 호출하지 않습니다 (테스트로 확인).
 - **알려진 한계:** 일부 브라우저는 `클립보드에서 붙여넣기` 버튼(Async Clipboard API)을 지원하지 않습니다. 이때는 Cmd/Ctrl+V 또는 파일 선택을 쓰세요. 실제 iPhone Safari에서의 붙여넣기 팝업은 직접 확인하지 못했습니다(Chromium 에뮬레이션만).
+
+## Storyboard: AI B-roll images
+
+B-roll suggestion → **AI 이미지 생성** → preview → edit prompt / regenerate → approve → video editor.
+
+- The dialog loads an editable draft prompt (B-roll shot, scene visual direction, composition, 9:16, style). Reference rules are appended automatically: real approved **character** images (close-ups/reactions, or when the shot names a cast member) and real **product** images (scenes that show the product) — each switchable per B-roll. Missing references show an actionable warning and block the call; nothing is substituted.
+- Paid image call only after: script approved, estimate shown, explicit click (+ unknown-cost checkbox if no price). Suggesting B-rolls never generates anything. Failures are recorded on the card and never retried automatically; *insufficient credits*, *rate limit*, *unsupported model* and *auth* are reported separately.
+- Result = a still saved as **검토 대기** (never auto-approved). Click the thumbnail for a larger preview; upload replaces; **거절**, **삭제**, **승인** (needs an actual image; saves the approved asset id `BRn:<hash>` with the B-roll and scene). Regenerating over an approved image needs an explicit "replace" confirmation, withdraws the approval and keeps the old file.
+- Approved stills are what the video editor layers (pan / zoom / crop / timing). No video is generated.
