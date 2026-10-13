@@ -109,6 +109,24 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     return ids.map((id) => sceneOf(ep, id));
   }
 
+  /**
+   * Free, local check of the chosen model against what this episode needs (aspect ratio, clip length, image-to-video, endpoint set).
+   * It cannot prove the remote endpoint works: 'verification' says how far the registry entry has been confirmed. In LIVE mode an
+   * incompatibility blocks the paid call; in mock mode it is shown as information.
+   */
+  function compatibility(model, scenes) {
+    const items = [];
+    const add = (code, ok, message) => items.push({ code, ok, message });
+    add('ENDPOINT', !!model.endpoint, model.endpoint ? `엔드포인트: ${model.endpoint}` : '이 모델에는 엔드포인트가 설정되어 있지 않습니다.');
+    add('ASPECT', !model.aspectRatios || model.aspectRatios.includes('9:16'), !model.aspectRatios || model.aspectRatios.includes('9:16') ? '세로 9:16 지원' : `이 모델은 9:16을 지원하지 않습니다 (지원: ${model.aspectRatios.join(', ')})`);
+    const maxClip = (model.durations && model.durations.length) ? Math.max(...model.durations) : null;
+    const bad = maxClip ? scenes.filter((s) => Number(s.durationSec) > maxClip + 1e-6) : [];
+    add('DURATION', bad.length === 0, bad.length ? `모델의 최대 클립 길이(${maxClip}초)보다 긴 장면: ${bad.map((s) => s.id + ' ' + s.durationSec + '초').join(', ')} — 장면을 나누거나 줄이세요` : '클립 길이 지원');
+    add('MODE', !model.mode || model.mode === 'image-to-video', !model.mode || model.mode === 'image-to-video' ? '이미지→영상 방식 (시작 이미지 사용)' : `이 앱은 이미지→영상만 사용합니다 (모델 방식: ${model.mode})`);
+    const verified = model.verification === 'verified';
+    return { items, ok: items.every((i) => i.ok), verification: model.verification || 'unknown', verified, note: verified ? '실제 호출로 확인된 모델입니다.' : '공식 문서의 예시 기준 항목입니다. 첫 실제 실행 전에 Muapi 플레이그라운드에서 엔드포인트와 파라미터를 확인하세요 (이 앱은 실제 호출 없이 검증할 수 없습니다).' };
+  }
+
   /** Free. Never touches the network. */
   function estimate(epId, { sceneIds, modelId } = {}) {
     const ep = store.episodes.get(epId);
@@ -118,8 +136,10 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     const est = estimateRun({ ep, scenes, model, settings, cfg, cached: cachedFor(ep, model) });
     const b = blockers(ep, scenes, model);
     if (provider.mode === 'live' && est.unknown) b.push({ code: 'ESTIMATE_UNKNOWN', message: '이 모델의 클립당 가격 추정치가 없습니다. Muapi는 가격표를 공개하지 않습니다.', recovery: 'Muapi 플레이그라운드의 모델 페이지에 표시된 가격을 Settings → 비용에 입력하세요.' });
+    const compat = compatibility(model, scenes);
+    if (provider.mode === 'live' && !compat.ok) compat.items.filter((i) => !i.ok).forEach((i) => b.push({ code: 'MODEL_INCOMPATIBLE', message: i.message, recovery: '다른 모델을 고르거나 장면 길이를 조정하세요. 유료 호출은 시작하지 않았습니다.' }));
     if (est.withinLimit === false) b.push({ code: 'OVER_LIMIT', message: `예상 비용 $${est.totalUsd}이(가) 릴스 한도 남은 금액 $${est.remainingUsd}을(를) 넘습니다.`, recovery: 'Settings에서 릴스당 한도를 올리거나 장면 수를 줄이세요.' });
-    return { mode: provider.mode, provider: provider.name, model: { id: model.id, label: model.label, verification: model.verification }, scenes: scenes.map((s) => s.id), ...est, blockers: b, canAuthorize: b.length === 0 };
+    return { mode: provider.mode, provider: provider.name, model: { id: model.id, label: model.label, verification: model.verification }, compat, scenes: scenes.map((s) => s.id), ...est, blockers: b, canAuthorize: b.length === 0 };
   }
 
   /** Free. The operator must pass the exact estimate they saw. */
@@ -439,7 +459,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     store.episodes.audit(epId, 'clip.' + decision, { sceneId, version, by });
   }
 
-  return { estimate, authorize, run, resume, dismissJob, addManualClip, review, startImage, provider };
+  return { estimate, authorize, run, resume, dismissJob, addManualClip, review, startImage, provider, compatibility };
 }
 
 module.exports = { createGenerationService };

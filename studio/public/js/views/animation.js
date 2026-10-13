@@ -1,6 +1,7 @@
 import { h, chip, icon, confirmDialog, fmtUsd, toast } from '../ui.js';
 import { state, act, requireEpisode, go } from '../state.js';
 import { api } from '../api.js';
+import { videoSummary } from './video-summary.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, modeBanner, issueList, lockedNotice, videoTabs, productRefStrip } from './common.js';
 
 const JOB_LABEL = { preparing: '준비 중', submitting: '제출 중', processing: '생성 중', completed: '완료', failed: '실패', uncertain: '확인 필요', polling_interrupted: '확인 중단', download_failed: '다운로드 실패', dismissed: '닫음' };
@@ -12,22 +13,20 @@ export function animation() {
   const wrap = h('div', { class: 'stack', style: 'gap:20px' });
   wrap.append(pageHead('Animation Studio', '애니메이션 스튜디오', '승인된 캐릭터 이미지로 장면별 9:16 클립을 만듭니다. 생성 전 예상 비용을 확인·승인하고, 만들어진 클립은 하나씩 검토해 승인합니다.', episodePicker()));
   wrap.append(videoTabs('animation'));
-  wrap.append(pipelineBar(ep));
-  { const strip = productRefStrip(ep); if (strip) wrap.append(strip); }
-  wrap.append(modeBanner(state.summary));
+  wrap.append(videoSummary(ep, { startVideo: (sceneIds) => startGeneration(ep, sceneIds) }));
   if (!ep.derived.storyboardApproved) wrap.append(lockedNotice('대본과 스토리보드가 승인되어야 생성을 시작할 수 있습니다.', 'storyboard', '스토리보드로 이동'));
 
   const g = (state.draft.gen = state.draft.gen || {});
   if (g.forEpisode !== ep.id) { g.forEpisode = ep.id; g.sceneIds = ep.scenes.filter((s) => !s.clips.approvedVersion).map((s) => s.id); g.modelId = state.summary.settings.defaultModelId; g.estimate = null; }
   const panel = h('div', { class: 'card' }, h('div', { class: 'muted' }, '비용을 계산하는 중…'));
-  wrap.append(panel);
+  wrap.append(h('details', { class: 'card', 'data-adv-prep': '' }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '생성 준비 · 모델 · 장면 선택'), h('span', { class: 'small muted' }, '고급')), panel));
   drawEstimate(ep, g, panel);
 
-  wrap.append(h('div', { class: 'card-head', style: 'margin-top:6px' }, h('h2', null, '클립 검토'), h('span', { class: 'small muted' }, '승인한 클립만 렌더에 쓰입니다. 파일은 승인 시점의 체크섬으로 고정됩니다.')));
-  wrap.append(h('div', { class: 'scene-grid' }, ep.scenes.map((sc) => clipCard(ep, sc, g))));
-
+  const pendingReview = ep.scenes.reduce((n, sc) => n + sc.clips.versions.filter((v) => v.status === 'pending_review').length, 0);
+  wrap.append(h('details', { class: 'card', 'data-clip-review': '', open: pendingReview > 0 || undefined }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '클립 검토'), pendingReview ? chip(`검토 대기 ${pendingReview}`, 'attention') : h('span', { class: 'small muted' }, '승인한 클립만 렌더에 쓰입니다')),
+    h('div', { class: 'scene-grid', style: 'margin-top:12px' }, ep.scenes.map((sc) => clipCard(ep, sc, g)))));
   const jobs = (ep.generation.jobs || []).slice().reverse();
-  wrap.append(h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, '생성 작업'), h('span', { class: 'small muted' }, '실패한 유료 작업은 자동으로 다시 실행되지 않습니다.')),
+  wrap.append(h('details', { class: 'card', 'data-job-history': '' }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '작업 내역'), h('span', { class: 'small muted' }, '실패한 유료 작업은 자동으로 다시 실행되지 않습니다.')),
     jobs.length ? h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['장면', '상태', '요청 ID', '비용 (예상 / 실제)', ''].map((x) => h('th', null, x)))), h('tbody', null, jobs.map((j) => h('tr', null,
       h('td', null, j.sceneId + (j.reused ? ' · 재사용' : '')),
       h('td', null, chip(JOB_LABEL[j.status] || j.status, JOB_KIND[j.status] || ''), j.error && h('div', { class: 'small', style: 'color:var(--rose);margin-top:4px;max-width:420px' }, j.error.message, h('div', { class: 'muted' }, '→ ' + j.error.recovery))),
@@ -38,6 +37,16 @@ export function animation() {
         ['failed', 'uncertain', 'polling_interrupted', 'download_failed'].includes(j.status) ? h('button', { class: 'btn sm ghost', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/jobs/${j.id}/dismiss`)) }, '닫기') : null))))))
       : h('div', { class: 'muted' }, '아직 생성 작업이 없습니다.')));
   return wrap;
+}
+
+/** Cost review first (free estimate), then the explicit confirmation; used by the summary buttons and per-scene retries. */
+async function startGeneration(ep, sceneIds) {
+  if (!sceneIds || !sceneIds.length) return toast('만들 장면이 없습니다', { error: true });
+  const modelId = state.summary.settings.defaultModelId;
+  let est;
+  try { est = await api.post(`/api/episodes/${ep.id}/generation/estimate`, { sceneIds, modelId }); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
+  if (!est.canAuthorize) return toast(est.blockers[0] ? est.blockers[0].message : '지금은 생성할 수 없습니다', { error: true, recovery: est.blockers[0] && est.blockers[0].recovery });
+  return authorizeAndRun(ep, { sceneIds, modelId }, est);
 }
 
 async function drawEstimate(ep, g, panel) {

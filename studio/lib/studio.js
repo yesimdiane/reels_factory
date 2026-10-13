@@ -68,7 +68,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return vcache.get(sig);
   };
   const video = provider || new Proxy({}, { get: (_t, prop) => currentVideo()[prop] });
-  const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load() });
+  const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load(), products });
   const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: sba.composePrompt });
   const promptSvc = createPromptService({
     store, cfg, geminiFactory, log,
@@ -82,7 +82,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     },
   });
   const voice = createVoiceService({ store, cfg, fetchFn, speechProvider, runtime });
-  const renderer = createRenderService({ store, cfg, voice, log });
+  const renderer = createRenderService({ store, cfg, voice, log, broll: { approved: (ep) => sba.approvedBroll(ep), file: (ep, b) => sba.brollFile(ep, b) } });
   const publishing = createPublishingService({ store });
   store.episodes.seedDemo();
   // Projects / scene approvals / Image Development hand-off (no AI or video provider is wired in: nothing here can spend money).
@@ -241,6 +241,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         versions: store.episodes.versions(id).filter((v) => !deletedVersions(ep)[v.version]),
         deletedVersionCount: Object.keys(deletedVersions(ep)).length,
         header: null,
+        videoStudio: null,
         broll: sba.brollView(ep),
         assets: assetReadiness(ep),
       },
@@ -256,6 +257,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       timeline: used,
     });
     view.derived.header = episodeHeader(ep, view.derived);
+    view.derived.videoStudio = videoStudioStatus(ep, { voiceValid: (lid) => { const l = (ep.lines || []).find((x) => x.id === lid); const a = l && voice.lineAudio(ep, l); return !!(a && a.valid); }, voiceEst, genEstimate, renderPlan, renderFresh: (view.derived.steps.find((x) => x.key === 'render') || {}).state === 'done' });
     return view;
   }
 
@@ -669,6 +671,69 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     store.episodes.audit(id, 'episode.edited', { by, field: 'title', from: before, to: t });
     return episodeView(id);
   }
+  let ffmpegProbe = null;
+  const ffmpegAvailable = () => {
+    if (ffmpegProbe == null) { try { ffmpegProbe = require('node:child_process').spawnSync(cfg.ffmpeg.ffmpeg, ['-version'], { timeout: 5000 }).status === 0; } catch (_) { ffmpegProbe = false; } }
+    return ffmpegProbe;
+  };
+  const ACTIVE = ['preparing', 'submitting', 'processing'];
+  /**
+   * What the simplified Video Studio shows: video / voice / render status, estimated cost and an HONEST infrastructure report
+   * (what really runs on this server and what needs an API key or a manual step). Nothing here starts a job.
+   */
+  function videoStudioStatus(ep, ctx) {
+    const scenes = ep.scenes || [];
+    const jobs = (ep.generation && ep.generation.jobs) || [];
+    const lastJob = (sid) => jobs.filter((j) => j.sceneId === sid).slice(-1)[0];
+    const clips = ep.clips || {};
+    const approved = scenes.filter((x) => clips[x.id] && clips[x.id].approvedVersion).length;
+    const generated = scenes.filter((x) => clips[x.id] && (clips[x.id].versions || []).length).length;
+    const running = scenes.filter((x) => { const j = lastJob(x.id); return j && ACTIVE.includes(j.status); }).map((x) => x.id);
+    const failed = [];
+    const uncertain = [];
+    scenes.forEach((x) => {
+      const j = lastJob(x.id);
+      if (!j || (clips[x.id] && clips[x.id].approvedVersion)) return;
+      if (['failed', 'download_failed'].includes(j.status)) failed.push({ sceneId: x.id, jobId: j.id, status: j.status, billed: j.billed, message: (j.error && j.error.message) || '', recovery: (j.error && j.error.recovery) || '' });
+      else if (['uncertain', 'polling_interrupted'].includes(j.status)) uncertain.push({ sceneId: x.id, jobId: j.id, status: j.status, message: (j.error && j.error.message) || '요청 결과를 확인해야 합니다.' });
+    });
+    const lines = ep.lines || [];
+    const voiceReady = lines.filter((l) => ctx.voiceValid(l.id)).length;
+    const vEst = ctx.voiceEst || {};
+    const g = ctx.genEstimate || {};
+    const finals = (ep.renders || []).filter((r) => !r.preview);
+    const previews = (ep.renders || []).filter((r) => r.preview);
+    const lastFinal = finals[finals.length - 1] || null;
+    const lastPreview = previews[previews.length - 1] || null;
+    const approvedBroll = sba.approvedBroll(ep);
+    const videoMode = video.mode;
+    const voiceLive = runtime.voiceRequested() === 'live';
+    const keyOk = videoMode === 'mock' ? true : !!(runtime.muapiKey && runtime.muapiKey());
+    const infra = [
+      { key: 'video', label: '영상 생성', mode: videoMode, available: keyOk, runsOn: videoMode === 'mock' ? '이 서버 (목업 · 실제 영상 아님)' : 'Muapi API (외부 서비스)', note: videoMode === 'mock' ? '목업 모드: 확인용 임시 영상이 만들어지며 요금이 없습니다.' : keyOk ? '실제(유료) 모드: 모든 생성은 비용 확인 후에만 실행됩니다.' : 'Muapi API 키가 설정되지 않아 실행할 수 없습니다.' },
+      { key: 'voice', label: '음성 생성', mode: voiceLive ? 'live' : 'mock', available: !voiceLive || !!runtime.heygenKey(), runsOn: voiceLive ? 'HeyGen API (외부 서비스)' : '이 서버 (목업 음성)', note: !voiceLive ? '목업 음성입니다.' : runtime.heygenKey() ? '실제 음성: 글자 수 확인 후에만 실행됩니다.' : '실제 음성이 요청되었지만 HeyGen API 키가 없습니다. 키를 저장하기 전에는 실행할 수 없습니다.' },
+      { key: 'render', label: '렌더 · 자막 · B-roll', mode: 'local', available: ffmpegAvailable(), runsOn: '이 서버의 FFmpeg (무료)', note: ffmpegAvailable() ? '미리보기와 최종 렌더는 서버에서 무료로 실행됩니다.' : '서버에 FFmpeg가 없어 렌더할 수 없습니다.' },
+      { key: 'flow', label: 'Google Flow 클립', mode: 'manual', available: true, runsOn: '직접 제작 후 업로드', note: 'Google Flow는 API로 호출하지 않습니다. 만든 클립을 직접 올려 승인하세요.' },
+    ];
+    const needsLocal = infra.filter((x) => !x.available);
+    let next = null;
+    if (!ep.approvals || !isStoryboardApproved(ep)) next = { key: 'storyboard', label: '스토리보드를 먼저 승인하세요', view: 'storyboard' };
+    else if (running.length) next = { key: 'wait', label: `${running.length}개 장면 생성 중…`, view: 'animation' };
+    else if (approved < scenes.length) next = { key: 'clips', label: failed.length ? `실패한 ${failed.length}개 장면을 다시 시도하세요` : '클립을 생성하고 승인하세요', view: 'animation' };
+    else if (voiceReady < lines.length) next = { key: 'voice', label: '음성을 만드세요', view: 'voice' };
+    else if (!lastFinal || (ctx.renderFresh === false)) next = { key: 'render', label: '렌더하세요', view: 'render' };
+    else next = { key: 'review', label: '최종 영상을 검토·승인하세요', view: 'review' };
+    return {
+      clips: { total: scenes.length, generated, approved, running, failed, uncertain, retryable: failed.map((x) => x.sceneId) },
+      voice: { total: lines.length, ready: voiceReady, mode: voiceLive ? 'live' : voice.mode, keyConfigured: !!runtime.heygenKey(), canRun: !!vEst.canRun, billableChars: vEst.billableChars == null ? null : vEst.billableChars, needsApi: voiceLive && !runtime.heygenKey() },
+      broll: { approved: approvedBroll.length, total: (ep.broll || []).filter((b) => b.status !== 'removed').length, needImage: (ep.broll || []).filter((b) => b.status !== 'removed' && !b.imageRef).length },
+      render: { running: !!(ep.renderJob && ep.renderJob.status === 'running'), canRender: !!(ctx.renderPlan && ctx.renderPlan.canRender), problems: (ctx.renderPlan && ctx.renderPlan.problems) || [], lastFinal: lastFinal && { v: lastFinal.v, url: `/media/render/${ep.id}/${lastFinal.v}`, downloadUrl: `/media/render/${ep.id}/${lastFinal.v}?download=1`, at: lastFinal.at }, lastPreview: lastPreview && { v: lastPreview.v, url: `/media/render/${ep.id}/${lastPreview.v}` }, fresh: ctx.renderFresh !== false && !!lastFinal, job: ep.renderJob || null },
+      cost: { mode: g.mode || videoMode, videoUsd: g.totalUsd == null ? null : g.totalUsd, videoUnknown: g.totalUsd == null && g.mode === 'live', voiceChars: vEst.billableChars == null ? null : vEst.billableChars, note: (g.mode || videoMode) === 'mock' ? '목업은 요금이 없습니다.' : '예상 비용은 직접 입력한 가격 기준의 추정치이며, 실행 전에 한 번 더 확인을 받습니다.' },
+      compat: g.compat || null,
+      infra, unavailable: needsLocal.map((x) => x.key), next,
+    };
+  }
+
   /** What the compact Episode header shows. Advanced metadata (uuid, ids, versions …) is deliberately not part of it. */
   function episodeHeader(ep, derived) {
     const steps = derived.steps || [];

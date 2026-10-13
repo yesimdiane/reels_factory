@@ -91,7 +91,7 @@ async function buildAudioTrack(ffmpeg, items, total, outFile, cwd) {
   await run(ffmpeg, args, { cwd });
 }
 
-function createRenderService({ store, cfg, voice, log = () => {} }) {
+function createRenderService({ store, cfg, voice, log = () => {}, broll = { approved: () => [], file: () => '' } }) {
   const active = new Set();
 
   function gather(ep) {
@@ -108,13 +108,20 @@ function createRenderService({ store, cfg, voice, log = () => {} }) {
       if ((s.inserts || []).length && !isSceneApproved(ep, s.id)) problems.push({ code: 'CUTS_NOT_APPROVED', message: `${s.id}: 컷(클로즈업) 편집이 승인되지 않았습니다. 컷을 바꾸면 씬을 다시 검토·승인해야 합니다.`, recovery: 'Script Studio에서 이 씬을 확인하고 "씬 승인"을 누르세요.' });
       clips[s.id] = { file: f, v: v.v, sha256: v.sha256, durationSec: v.durationSec, mock: !!v.mock };
     });
+    // Approved B-roll stills are layered over their scene; one without a usable image blocks the render instead of being skipped silently.
+    const overlays = [];
+    broll.approved(ep).forEach((b) => {
+      const f = broll.file(ep, b);
+      if (!f || !fs.existsSync(f)) return problems.push({ code: 'BROLL_IMAGE_MISSING', message: `${b.id}: B-roll 이미지를 찾을 수 없습니다.`, recovery: 'Storyboard의 컷·B-roll에서 이미지를 다시 지정하거나 B-roll 승인을 취소하세요.' });
+      overlays.push({ id: b.id, sceneId: b.sceneId, at: b.insertAtSec, dur: b.durationSec, file: f });
+    });
     const audio = {};
     (ep.lines || []).forEach((l) => {
       const a = voice.lineAudio(ep, l);
       if (!a.valid) problems.push({ code: 'NO_AUDIO', message: `대사 ${l.id}: 현재 대본에 맞는 음성이 없습니다.`, recovery: 'Voice Studio에서 음성을 생성하세요.' });
       else audio[l.id] = a;
     });
-    return { problems, clips, audio };
+    return { problems, clips, audio, overlays };
   }
 
   function plan(epId) {
@@ -155,7 +162,11 @@ function createRenderService({ store, cfg, voice, log = () => {} }) {
       const args = ['-hide_banner', '-y'];
       tl.scenes.forEach((s) => args.push('-i', g.clips[s.id].file));
       args.push('-i', 'audio.wav');
+      // B-roll stills become extra looped inputs after the audio input
+      const overlays = g.overlays.filter((o) => tl.scenes.some((s) => s.id === o.sceneId));
+      overlays.forEach((o) => { args.push('-loop', '1', '-framerate', String(fps), '-t', o.dur.toFixed(3), '-i', o.file); });
       let chains = [];
+      const sceneOut = {};
       tl.scenes.forEach((s, i) => {
         const last = i === tl.scenes.length - 1;
         const dur = s.duration + (last ? tl.cta.duration : 0);
@@ -166,9 +177,19 @@ function createRenderService({ store, cfg, voice, log = () => {} }) {
         chains.push(`[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${fps},setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=${pad.toFixed(3)},trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS[${baseLabel}]`);
         // insert shots (close-ups) are cropped from the SAME clip at the SAME timestamps: scene length, dialogue and audio timing do not change
         if (inserts.length) chains.push(...sceneInsertChains({ base: baseLabel, out: `v${i}`, inserts, W, H, fps, dur }).chains);
+        // approved B-roll: a still image laid over this scene for its time window (the scene length, dialogue and audio never change)
+        overlays.filter((o) => o.sceneId === s.id).forEach((o) => {
+          const k = overlays.indexOf(o);
+          const inIdx = tl.scenes.length + 1 + k;
+          const from = sceneOut[i] || `v${i}`;
+          const to = `v${i}o${k}`;
+          chains.push(`[${inIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,format=yuv420p,fps=${fps},trim=duration=${o.dur.toFixed(3)},setpts=PTS-STARTPTS+${o.at.toFixed(3)}/TB[bro${k}]`);
+          chains.push(`[${from}][bro${k}]overlay=enable='between(t,${o.at.toFixed(3)},${(o.at + o.dur).toFixed(3)})':eof_action=pass:format=auto[${to}]`);
+          sceneOut[i] = to;
+        });
       });
       const fontsArg = cfg.fontsDir ? `:fontsdir=${cfg.fontsDir.replace(/([:\\'])/g, '\\$1')}` : '';
-      chains.push(tl.scenes.map((_, i) => `[v${i}]`).join('') + `concat=n=${tl.scenes.length}:v=1:a=0[vc]`, `[vc]ass=subs.ass${fontsArg}[vout]`);
+      chains.push(tl.scenes.map((_, i) => `[${sceneOut[i] || 'v' + i}]`).join('') + `concat=n=${tl.scenes.length}:v=1:a=0[vc]`, `[vc]ass=subs.ass${fontsArg}[vout]`);
       const out = path.join(work, 'out.mp4');
       args.push('-filter_complex', chains.join(';'), '-map', '[vout]', '-map', `${tl.scenes.length}:a`, '-t', tl.total.toFixed(3),
         '-c:v', 'libx264', '-preset', preview ? 'veryfast' : cfg.preset, '-crf', String(preview ? 28 : cfg.crf), '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-r', String(fps),
