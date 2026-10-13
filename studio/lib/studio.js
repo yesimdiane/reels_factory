@@ -14,6 +14,7 @@ const { createProductService } = require('./products');
 const { createStoryLab } = require('./storylab');
 const { createScriptGen } = require('./scriptgen');
 const { createEpisodeIds } = require('./episodeids');
+const { createStoryboardAssets } = require('./storyboardassets');
 const { createScriptPresets } = require('./scriptpresets');
 const { createEndingTemplates } = require('./endingtemplates');
 const F = require('./formula');
@@ -67,7 +68,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return vcache.get(sig);
   };
   const video = provider || new Proxy({}, { get: (_t, prop) => currentVideo()[prop] });
-  const gen = createGenerationService({ store, provider: video, cfg, log });
+  const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load() });
+  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: sba.composePrompt });
   const promptSvc = createPromptService({
     store, cfg, geminiFactory, log,
     available: () => router.routeFor('storyboardPrompts').provider !== 'mock' && !!keys.get(router.routeFor('storyboardPrompts').provider),
@@ -185,6 +187,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         titleKoMissing: !s.title_ko,
         clipSec: clipSecFor(model, s.durationSec),
         prompt: ep.prompts[s.id] || null,
+        motion: (ep.motion && ep.motion[s.id]) || null,
+        broll: (ep.broll || []).filter((b) => b.sceneId === s.id && b.status !== 'removed'),
         promptWarnings: ep.prompts[s.id] ? lintPrompt(ep.prompts[s.id].video, ep) : [],
         castWarnings: ep.prompts[s.id] ? lintCast(ep.prompts[s.id].video, s, L) : [],
         usesSheet: promptSvc.usesSheetFor(s, L),
@@ -237,6 +241,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         versions: store.episodes.versions(id).filter((v) => !deletedVersions(ep)[v.version]),
         deletedVersionCount: Object.keys(deletedVersions(ep)).length,
         header: null,
+        broll: sba.brollView(ep),
         assets: assetReadiness(ep),
       },
       productRefImages: (() => {
@@ -353,6 +358,16 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return store.episodes.create(seed);
   }
 
+  /** Structured product appearance for a scene (only meaningful when the product is ON): where, how big, which way, how visible, how the characters handle it, which approved reference. */
+  const PLACE = { position: ['left', 'center', 'right', 'foreground', 'background'], scale: ['small', 'medium', 'large'], orientation: ['front', 'side', 'angled', 'top', 'back'], visibility: ['partial', 'full', 'hero'] };
+  function cleanPlacement(p) {
+    if (!p || typeof p !== 'object') return undefined;
+    const out = {};
+    Object.keys(PLACE).forEach((k) => { if (p[k] && PLACE[k].includes(String(p[k]))) out[k] = String(p[k]); });
+    out.interaction = String(p.interaction || '').trim().slice(0, 300);
+    out.refImageId = String(p.refImageId || '').slice(0, 80);
+    return out;
+  }
   function sanitizeScenes(list, old) {
     const seen = new Set();
     return list.map((s, i) => {
@@ -376,6 +391,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         visual: String(s.visual != null ? s.visual : prev.visual || '').slice(0, 2000),
         action: String(s.action != null ? s.action : prev.action || '').slice(0, 1500),
         emotion: String(s.emotion != null ? s.emotion : prev.emotion || '').slice(0, 200),
+        productPlacement: s.productPlacement !== undefined ? cleanPlacement(s.productPlacement) : prev.productPlacement,
         narration: String(s.narration != null ? s.narration : prev.narration || '').slice(0, 1500),
         placement: String(s.placement != null ? s.placement : prev.placement || '').slice(0, 800),
         startImage: s.startImage !== undefined ? s.startImage : prev.startImage,
@@ -523,7 +539,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       let text = String(video);
       // The character-sheet rule is mandatory whenever a sheet is used: it is re-appended if the operator deleted it.
       if (promptSvc.usesSheetFor(sc, lib()) && !text.includes(SHEET_RULE)) text = text.replace(/\s+$/, '') + '\n' + SHEET_RULE;
-      ep.prompts[sceneId] = Object.assign({}, ep.prompts[sceneId], { video: text, negative: String(negative != null ? negative : (ep.prompts[sceneId] || {}).negative || ''), edited: true, editedAt: nowIso() });
+      const prevP = ep.prompts[sceneId];
+      const promptHistory = prevP ? (prevP.history || []).concat([{ rev: prevP.rev || 1, video: prevP.video, negative: prevP.negative, at: prevP.editedAt || prevP.at || null }]).slice(-20) : [];
+      ep.prompts[sceneId] = Object.assign({}, ep.prompts[sceneId], { rev: (prevP ? prevP.rev || 1 : 0) + 1, history: promptHistory, video: text, negative: String(negative != null ? negative : (ep.prompts[sceneId] || {}).negative || ''), edited: true, editedAt: nowIso() });
     });
     return episodeView(id);
   }
@@ -1110,6 +1128,11 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       if (!au || !au.valid) throw new StudioError('NOT_FOUND', '음성이 없습니다.', { status: 404 });
       return au.file;
     }
+    if (kind === 'broll') {
+      const bi = (ep.broll || []).find((x) => x.id === b && x.imageRef && x.imageRef.type === 'upload');
+      if (!bi) throw new StudioError('NOT_FOUND', 'B-roll 이미지가 없습니다.', { status: 404 });
+      return store.episodes.file(a, path.join('broll', bi.imageRef.file));
+    }
     if (kind === 'startframe') {
       const s = ep.scenes.find((x) => x.id === b);
       if (!s || !s.startImage || s.startImage.type !== 'upload') throw new StudioError('NOT_FOUND', '시작 프레임이 없습니다.', { status: 404 });
@@ -1123,7 +1146,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
 
   return {
     exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
-    summary, episodeView, episodeIds, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
+    summary, episodeView, episodeIds, sba, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };

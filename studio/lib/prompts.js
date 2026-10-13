@@ -18,6 +18,14 @@ const CAMERA = ['Slow push-in, eye level', 'Gentle handheld follow, medium shot'
  * Structured scene prompt (positive part). Returns { text, sections, usesSheet }.
  * sections: camera, actions, environment, lighting, continuity, duration, aspect, cast, identity, product.
  */
+/** Product appearance chosen for the scene (structured fields; only used when 제품 등장 is ON). */
+function placementLine(scene) {
+  const pl = scene.productPlacement;
+  if (!pl) return '';
+  const bits = [pl.position && 'position: ' + pl.position, pl.scale && 'scale: ' + pl.scale, pl.orientation && 'orientation: ' + pl.orientation, pl.visibility && 'visibility: ' + pl.visibility, pl.interaction && 'character interaction: ' + pl.interaction].filter(Boolean);
+  return bits.length ? '\nPRODUCT PLACEMENT FOR THIS SCENE (keep the verified product appearance): ' + bits.join('; ') + '.' : '';
+}
+
 function buildScenePromptParts(ep, scene, lib, clipSec, { usesSheet = true, prev = null, sections: over = null } = {}) {
   const style = lib.style;
   const ids = scene.characters || [];
@@ -39,7 +47,7 @@ function buildScenePromptParts(ep, scene, lib, clipSec, { usesSheet = true, prev
     cast,
   ];
   if (identity.length) parts.push('IDENTITY (keep exactly on-model): ' + identity.join(' '));
-  if (scene.showsProduct) parts.push(productBlock(ep));
+  if (scene.showsProduct) parts.push(productBlock(ep) + placementLine(scene));
   parts.push(`CAMERA: ${sections.camera}`, `CHARACTER ACTIONS: ${sections.actions}`, `ENVIRONMENT: ${sections.environment}`, `LIGHTING & STYLE: ${sections.lighting}`, `CONTINUITY: ${sections.continuity}`,
     `DURATION & FORMAT: ${sections.duration}, ${sections.aspect}. No on-screen text, subtitles, labels, speech bubbles or logos.`);
   if (ids.length && usesSheet) parts.push(SHEET_RULE);

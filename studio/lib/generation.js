@@ -26,7 +26,7 @@ const AUTH_TTL_MS = 30 * 60 * 1000;
 const ACTIVE = new Set(['preparing', 'submitting', 'processing']);
 const RECOVERABLE = new Set(['processing', 'polling_interrupted', 'download_failed']);
 
-function createGenerationService({ store, provider, cfg, now = () => Date.now(), log = () => {} }) {
+function createGenerationService({ store, provider, cfg, now = () => Date.now(), log = () => {}, composePrompt = (ep, sid, text) => text }) {
   const running = new Set();
   const lib = () => store.characters.load();
 
@@ -100,7 +100,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     const p = ep.prompts && ep.prompts[scene.id];
     const img = startImage(ep, scene);
     if (!p || img.error) return '';
-    return jobKey({ model, prompt: p.video, negative: p.negative, clipSec: clipSecFor(model, scene.durationSec), aspectRatio: '9:16', imageSha256: img.sha256 });
+    return jobKey({ model, prompt: composePrompt(ep, scene.id, p.video), negative: p.negative, clipSec: clipSecFor(model, scene.durationSec), aspectRatio: '9:16', imageSha256: img.sha256 });
   }
 
   function pickScenes(ep, sceneIds) {
@@ -302,7 +302,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       });
       let sub;
       try {
-        sub = await provider.submit({ model, prompt: prompt.video, imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative });
+        sub = await provider.submit({ model, prompt: composePrompt(store.episodes.get(epId), sceneId, prompt.video), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative });
       } catch (e) {
         const definitelyRefused = ['AUTH', 'BAD_REQUEST', 'CREDITS', 'RATE_LIMIT'].includes(e.code);
         await setJob(epId, job.id, { status: definitelyRefused ? 'failed' : 'uncertain', billed: definitelyRefused ? false : null, error: errInfo(e) });
