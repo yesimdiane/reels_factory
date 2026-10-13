@@ -252,7 +252,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       productRefImages: (() => {
         const refs = ep.productRefs && ep.productRefs.imageIds;
         if (!refs || !refs.length || !ep.productId) return [];
-        try { const pv = products.get(ep.productId); return refs.map((i) => pv.images.find((x) => x.id === i)).filter(Boolean).map((im) => ({ id: im.id, url: im.url, kind: im.kind, kindLabel: im.kindLabel, label: im.label })); } catch (_) { return []; }
+        try { const pv = products.get(ep.productId); return refs.map((i) => pv.images.find((x) => x.id === i)).filter((im) => im && im.status === 'approved').map((im) => ({ id: im.id, url: im.url, kind: im.kind, kindLabel: im.kindLabel, label: im.label })); } catch (_) { return []; }
       })(),
       productStudioImages,
       formula: formulaView(ep),

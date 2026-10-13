@@ -48,6 +48,7 @@ export const EN = {
   // misc
   '초안 저장': 'Save draft', '연결 테스트': 'Test connection', '토큰 저장': 'Save token', '연결 해제': 'Disconnect', 'ManyChat 열기': 'Open ManyChat', 'ManyChat 대시보드 열기': 'Open ManyChat', '설정 복사 (JSON)': 'Copy config (JSON)', '내보내기': 'Export', 'ManyChat 설정 단계로 넘기기': 'Move to ManyChat setup', '설정 안내 보기 · 설정 복사': 'Guided setup', 'ManyChat 설정 완료 기록': 'Mark configured in ManyChat', '검증 기록 남기기 (테스트 완료)': 'Record verification', '설정 단계로 되돌리기': 'Reopen setup', '실패로 기록': 'Mark failed', '캠페인 기록 보관': 'Archive campaign', '활성으로 기록': 'Record as active', '실패 기록': 'Record failure', '변경하고 다시 검증': 'Change and re-verify', '설정 완료로 기록': 'Record as configured', '확인했고 돌리기': 'Confirm and reopen', '해제': 'Disconnect', '보관': 'Archive',
   '보고서 가져오기 (CSV/XLSX)': 'Import report (CSV/XLSX)', '필터 해제': 'Clear filter', '가져오기': 'Import', '스토리랩에서 시작하기': 'Start in Story Lab',
+  '스토리 만들기 →': 'Create story →',
   '스토리보드로 이동': 'Go to Storyboard', '스토리보드 열기': 'Open Storyboard',
   '제목 수정': 'Edit title', '에피소드 보류': 'Hold episode', '이어서 작업': 'Resume work',
   '스토리 승인': 'Approve story', '보류': 'Hold', '보류 해제': 'Resume', '삭제 취소 (복원)': 'Undo delete (restore)', '고급 설정': 'Advanced settings', '자세히 보기': 'Details', '수정본 재승인': 'Re-approve edited version',

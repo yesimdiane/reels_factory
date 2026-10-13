@@ -112,12 +112,19 @@ function createProductService({ store, router, extractFn = extractProduct, downl
       readiness: readiness(p, refs),
       generations: generationsOf(p),
       linkedEpisodes: linkedEpisodes(p.id),
+      mainImage: mainImageOf(p, refs),
     });
+  }
+  /** The picture shown for the product: the first image of the APPROVED reference set, else the first approved image, else the first usable upload. Read-only. */
+  function mainImageOf(p, refs) {
+    const usable = p.images.filter((i) => !['rejected', 'replaced'].includes(i.status));
+    const pick = (refs && refs.imageIds || []).map((id) => usable.find((i) => i.id === id)).filter(Boolean)[0] || usable.find((i) => i.status === 'approved') || usable[0];
+    return pick ? { id: pick.id, url: `/media/product/${p.id}/${pick.id}`, kind: pick.kind, label: pick.label || '', approved: pick.status === 'approved' } : null;
   }
   /** Episodes created for this product (any state). Read-only: nothing is created or changed here. */
   function linkedEpisodes(pid) {
     try {
-      return store.episodes.list().filter((e) => e.productId === pid).map((e) => ({ id: e.id, title: e.title || '', conceptId: (e.concept || {}).conceptId || '' }));
+      return store.episodes.list().filter((e) => e.productId === pid).map((e) => ({ id: e.id, displayId: e.displayId || e.id, title: e.title || '', conceptId: (e.concept || {}).conceptId || '', category: e.category || '', archived: !!e.archivedAt }));
     } catch (_) { return []; }
   }
   /** AI image versions grouped by the generation request that produced them (history, newest first). */
@@ -138,7 +145,7 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     return { ok: missing.length === 0, missing };
   }
 
-  const list = () => ids().map((i) => { const p = get(i); return { id: p.id, name: p.name, url: p.url, extraction: p.extraction && p.extraction.status, reference: referenceState(p).state, images: p.images.length, readiness: readiness(p), updatedAt: p.updatedAt }; });
+  const list = () => ids().map((i) => { const p = get(i); return { id: p.id, code: p.code || '', name: p.name, url: p.url, affiliateUrl: p.affiliateUrl || '', mainImage: mainImageOf(p, referenceState(p)), linkedEpisodes: linkedEpisodes(p.id), extraction: p.extraction && p.extraction.status, reference: referenceState(p).state, images: p.images.length, readiness: readiness(p), updatedAt: p.updatedAt }; });
 
   async function create({ id, name, url = '', affiliateUrl = '', description = '', category = '', features = [], forbiddenClaims = [], legacy = false, price = null, code = '' } = {}) {
     if (!String(name || '').trim() && !String(url || '').trim()) throw new StudioError('NEED_INPUT', '상품명이나 상품 URL 중 하나는 필요합니다.', { status: 400 });
