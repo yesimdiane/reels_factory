@@ -130,6 +130,36 @@ function halfSecondBeats(beats, duration) {
   return result.sort((a, b) => a.t0 - b.t0 || String(a.characterId).localeCompare(String(b.characterId)));
 }
 
+
+// Read-only audio timing: use synthesized duration only for audio matching the
+// currently approved script. No TTS generation, file IO, or billable calls here.
+function audioDuration(ep, line) {
+  const saved = ep && ep.voice && ep.voice.lines && ep.voice.lines[line.id];
+  if (!saved || !Number.isFinite(Number(saved.durationSec)) || Number(saved.durationSec) <= 0) return null;
+  if (!saved.scriptHash) return null;
+  try {
+    const { scriptFingerprint } = require('./episode');
+    if (saved.scriptHash !== scriptFingerprint(ep)) return null;
+  } catch (_) { return null; }
+  return Number(saved.durationSec);
+}
+function dialogueWindows(ep, lines, duration, exitFrom) {
+  const out = [];
+  let cursor = Math.min(0.5, Math.max(0, duration - STEP));
+  for (const line of lines) {
+    if (cursor >= duration - 1e-6 || cursor >= exitFrom - 1e-6) break;
+    const measured = audioDuration(ep, line);
+    const estimated = Math.max(1, snap(String(line.en).trim().split(/\\s+/).length / 2.7));
+    const seconds = measured == null ? estimated : Math.max(STEP, Math.ceil(measured / STEP) * STEP);
+    const t0 = snap(cursor);
+    const t1 = Math.min(duration, exitFrom, t0 + seconds);
+    if (t1 - t0 < STEP - 1e-6) break;
+    out.push({ line, t0, t1, source: measured == null ? 'estimated' : 'synthesized-audio', measuredSec: measured });
+    cursor = t1;
+  }
+  return out;
+}
+
 function draftBeats(ep, scene, characters) {
   const dur = Number(scene.durationSec) || 4;
   const cast = (scene.characters && scene.characters.length ? scene.characters : []).filter(Boolean);
@@ -171,15 +201,9 @@ function draftBeats(ep, scene, characters) {
   });
 
   // 2) dialogue: a speaking beat (gesture from the line's content) + a reaction beat for the listener, before any exit
-  const speakSec = (l) => Math.max(1, snap(String(l.en).trim().split(/\s+/).length / 2.7));
-  let cursor = Math.min(0.5, Math.max(0, dur - STEP));
-  lines.forEach((l, n) => {
+  dialogueWindows(ep, lines, dur, exitFrom).forEach(({ line: l, t0, t1 }, n) => {
     const cid = cast.includes(l.speaker) ? l.speaker : cast[0];
     if (!cid) return;
-    const limit = Math.max(cursor + STEP, exitFrom);
-    const t0 = Math.min(cursor, dur - STEP);
-    const t1 = Math.min(dur, limit, Math.max(t0 + STEP, snap(t0 + speakSec(l))));
-    if (t1 - t0 < STEP) return;
     const persona = personaOf(cid, nameOf(cid));
     const g = persona ? persona[dialogueKind(l)] : gestureFor(l);
     const cue = cuesFor(l.en) || sceneCue || { emotion: 'engaged' };
@@ -189,7 +213,6 @@ function draftBeats(ep, scene, characters) {
       const react = listenerCue(tgt, nameOf(tgt), n);
       push({ t0, t1, characterId: tgt, character: nameOf(tgt), emotion: react.emotion, body: react.body, gaze: `toward ${nameOf(cid)}`, expression: react.expression, camera: '', _listen: true });
     }
-    cursor = t1;
   });
 
   // 3) resolve overlaps per character: speaking > exit > other structure; trimmed beats keep their text, drop only when < 0.5 s remain
@@ -216,4 +239,4 @@ function draftBeats(ep, scene, characters) {
   return halfSecondBeats(out, dur);
 }
 
-module.exports = { draftBeats, isGeneric, isGenericText, timedSegments, GENERIC, STEP };
+module.exports = { draftBeats, dialogueWindows, audioDuration, isGeneric, isGenericText, timedSegments, GENERIC, STEP };
