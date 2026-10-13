@@ -137,6 +137,8 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
     throw new StudioError('BAD_REF', '알 수 없는 이미지 참조입니다.', { status: 422 });
   }
   const nextBrollId = (ep) => 'BR' + (brollOf(ep).reduce((m, b) => Math.max(m, Number((/^BR(\d+)/.exec(b.id) || [0, 0])[1])), 0) + 1);
+  /** Stable id of the image that was approved: B-roll id + content hash (or the product/frame it points at). */
+  const assetIdOf = (b) => { const r = b.imageRef || {}; return r.type === 'upload' ? `${b.id}:${String(r.sha256 || '').slice(0, 12)}` : r.type === 'product' ? `product:${r.imageId}` : r.type === 'scene_start' ? `startframe:${r.sceneId}` : ''; };
   const assetStatus = (b) => (b.imageRef ? 'ready' : 'needed');
 
   async function saveBroll(id, raw, by = 'operator') {
@@ -169,6 +171,7 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
       if (!b || b.status === 'removed') throw new StudioError('NOT_FOUND', 'B-roll을 찾을 수 없습니다: ' + bid, { status: 404 });
       if (status === 'approved' && !b.imageRef) throw new StudioError('IMAGE_NEEDED', '승인하려면 먼저 이미지가 필요합니다 (참조 선택 또는 업로드).', { status: 409 });
       b.status = status; b.statusBy = by; b.statusAt = nowIso();
+      if (status === 'approved') b.approvedAssetId = assetIdOf(b); else delete b.approvedAssetId;
       out = b;
     });
     store.episodes.audit(id, 'broll.' + status, { by, id: bid });
@@ -231,7 +234,7 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
     } catch (_) { return ''; }
     return '';
   }
-  const brollView = (ep) => brollOf(ep).filter((b) => b.status !== 'removed').map((b) => Object.assign({}, b, { asset: assetStatus(b), kindLabel: KIND_LABEL[b.kind], imageUrl: imageUrl(ep, b) }));
+  const brollView = (ep) => brollOf(ep).filter((b) => b.status !== 'removed').map((b) => Object.assign({}, b, { asset: assetStatus(b), kindLabel: KIND_LABEL[b.kind], imageUrl: imageUrl(ep, b), assetId: assetIdOf(b), imageGenerated: !!b.generated, imageError: (b.imageGen && b.imageGen.lastError) || null, promptEdited: !!(b.imageGen && b.imageGen.prompt) }));
 
   return { STEP, KINDS, cleanBeats, draftBeats, timelineText, composePrompt, motionOf, saveMotion, draftMotion, saveBroll, setBrollStatus, removeBroll, uploadBrollImage, suggestBroll, approvedBroll, brollView, brollFile };
 }
