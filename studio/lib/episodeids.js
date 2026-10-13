@@ -92,8 +92,10 @@ function createEpisodeIds({ store, products }) {
     return done;
   }
 
+  /** The episode a previous request (same idempotency key) already created, if it still exists. */
+  const byRequest = (key) => { if (!key) return null; const id = readState().requests[key]; return id && store.episodes.exists(id) ? id : null; };
   const parse = (id) => { const m = ID_RE.exec(String(id)); return m ? { productCode: m[1], number: Number(m[2]), categoryCode: m[3], category: CODE_CATEGORY[m[3]] } : null; };
-  return { createEpisode, migrate, parse, withLock, highestUsed };
+  return { createEpisode, migrate, byRequest, parse, withLock, highestUsed };
 }
 
 module.exports = { createEpisodeIds, CATEGORY_CODE, CODE_CATEGORY, ID_RE };

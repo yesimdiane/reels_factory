@@ -36,6 +36,7 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
     const p = b.product;
     // A concept that already produced an episode never silently produces another one, and an existing episode is never touched:
     // a repeat handoff is only allowed with an explicit confirmation and always creates a NEW episode (a version of the earlier one).
+    if (!id && requestId) { const prior = episodeIds.byRequest(`${cid}:${requestId}`); if (prior) return prior; } // an exact retry of an earlier request returns that episode
     const existing = store.episodes.list().filter((e) => e.concept && e.concept.conceptId === cid);
     if (existing.length && !newVersion) throw new StudioError('EPISODE_EXISTS', `이 컨셉으로 만든 에피소드가 이미 있습니다: ${existing.map((e) => e.id).join(', ')}`, { details: existing.map((e) => e.id), recovery: '기존 에피소드를 열거나, 확인 후 새 버전 에피소드를 만드세요. 기존 에피소드는 변경되지 않습니다.', status: 409 });
     const build = ({ id: epId }) => {

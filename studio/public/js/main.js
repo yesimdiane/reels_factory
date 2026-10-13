@@ -16,6 +16,7 @@ import { publishing } from './views/publishing.js';
 import { settings } from './views/settings.js';
 import { guardLeave } from './views/leave-guard.js';
 import { startBilingual } from './bilingual.js';
+import { episodeHeader } from './views/episode-actions.js';
 
 // [key, ko, en, view, inRail]   Dashboard → Products → Story Lab → Script → Storyboard → Video Studio → Review → Publishing → Settings
 export const NAV = [
@@ -36,6 +37,7 @@ const ICON = { animation: 'video' };
 const VIDEO_GROUP = ['animation', 'voice', 'render'];
 const TAB_VIEWS = ['overview', 'products', 'storylab', 'script', 'animation', 'settings'];
 const PRODUCT_VIEWS = ['products', 'storylab'];
+const EP_HEADER_VIEWS = ['script', 'storyboard', 'animation', 'voice', 'render', 'review', 'publishing'];
 const NO_ID_VIEWS = ['overview', 'episodes', 'settings'];
 
 let poll = null;
@@ -80,6 +82,7 @@ export function rerender() {
   const nav = NAV.find((n) => n[0] === state.view);
   stage.replaceChildren();
   try {
+    if (state.episode && EP_HEADER_VIEWS.includes(state.view)) { const eh = episodeHeader(state.episode); if (eh) stage.append(eh); }
     stage.append(nav[3](state));
   } catch (e) {
     console.error(e);

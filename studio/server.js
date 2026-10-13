@@ -184,7 +184,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/prompts/:key/preview', async ({ p, body }) => ({ text: S.prompts.preview(p.key, body.vars || {}) }));
 
   // ---- script generation from the approved concept ----
-  route('POST', '/api/episodes/:id/script/generate', async ({ p, body }) => { const r = await S.scriptgen.generate(p.id, { confirm: body.confirm, overwrite: body.overwrite === true, extra: body.extra }); const v = ep(p.id); v.generated = r; return v; });
+  route('POST', '/api/episodes/:id/script/generate', async ({ p, body }) => { S.assertNotHeld(p.id); const r = await S.scriptgen.generate(p.id, { confirm: body.confirm, overwrite: body.overwrite === true, extra: body.extra }); const v = ep(p.id); v.generated = r; return v; });
   // ---- AI 프롬프트 관리: script prompt presets (editable creative text; safety constraints stay in code) ----
   route('GET', '/api/script-presets', async () => S.presets.list());
   route('PUT', '/api/script-presets/active', async ({ body }) => S.presets.setActive(body.presetId));
@@ -249,6 +249,9 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('GET', '/media/cutframe/:a/:b', async ({ p, query }) => ({ file: await S.cutFrame(p.a, p.b, query.t) }));
   route('GET', '/api/episodes-trash', async () => ({ trash: S.trashList() }));
   route('DELETE', '/api/episodes/:id', async ({ p, body }) => S.trashEpisode(p.id, { confirmPublished: !!(body && body.confirmPublished), confirmApproved: !!(body && body.confirmApproved) }));
+  route('POST', '/api/episodes/:id/hold', async ({ p, body }) => S.holdEpisode(p.id, body && body.reason));
+  route('POST', '/api/episodes/:id/resume', async ({ p }) => S.resumeEpisode(p.id));
+  route('PUT', '/api/episodes/:id/meta', async ({ p, body }) => S.editEpisode(p.id, { title: body && body.title }));
   route('PUT', '/api/episodes/:id/category', async ({ p, body }) => S.setEpisodeCategory(p.id, body.category));
   route('GET', '/api/episodes/:id/impact', async ({ p }) => S.episodeImpact(p.id));
   route('POST', '/api/episodes/:id/archive', async ({ p }) => S.archiveEpisode(p.id));
@@ -285,14 +288,14 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('PUT', '/api/episodes/:id/scenes/:sid/title', async ({ p, body }) => S.setSceneTitle(p.id, p.sid, body.title_ko));
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame', async ({ p, raw, headers }) => S.uploadStartFrame(p.id, p.sid, raw, decodeURIComponent(headers['x-filename'] || 'frame.png')), { upload: true });
   route('POST', '/api/episodes/:id/start-images/estimate', async ({ p, body }) => S.startImages.estimate(p.id, body.sceneIds, { force: body.force === true }));
-  route('POST', '/api/episodes/:id/start-images/generate', async ({ p, body }) => { const r = await S.startImages.generate(p.id, body.sceneIds, { confirm: body.confirm, force: body.force === true }); const v = ep(p.id); v.startImageResult = r; return v; });
+  route('POST', '/api/episodes/:id/start-images/generate', async ({ p, body }) => { S.assertNotHeld(p.id); const r = await S.startImages.generate(p.id, body.sceneIds, { confirm: body.confirm, force: body.force === true }); const v = ep(p.id); v.startImageResult = r; return v; });
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame/approve', async ({ p, body }) => S.approveStartFrame(p.id, p.sid, body.approved !== false));
   route('POST', '/api/episodes/:id/storyboard/approve', async ({ p }) => S.approveStoryboard(p.id));
   route('PUT', '/api/episodes/:id/spend-limit', async ({ p, body }) => S.setSpendLimit(p.id, body.usd));
 
   // ---- animation ----
   route('POST', '/api/episodes/:id/generation/estimate', async ({ p, body }) => S.gen.estimate(p.id, body));
-  route('POST', '/api/episodes/:id/generation/authorize', async ({ p, body }) => S.gen.authorize(p.id, body));
+  route('POST', '/api/episodes/:id/generation/authorize', async ({ p, body }) => { S.assertNotHeld(p.id); return S.gen.authorize(p.id, body); });
   route('POST', '/api/episodes/:id/generation/run', async ({ p, body }) => {
     const { accepted, done } = await S.gen.run(p.id, body.authorizationId);
     bg(done, 'generation');

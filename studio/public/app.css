@@ -491,3 +491,13 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .story-actions .btn { justify-content: center; min-height: 46px; }
 .story-actions .btn.sage, .story-actions .btn[data-act="resume"], .story-actions .btn[data-act="restore"] { grid-column: 1 / -1; }
 @media (max-width: 640px) { .story-head { flex-wrap: wrap; } .story-head .row { width: 100%; } }
+
+/* Compact Episode header */
+.ep-header { display: grid; gap: 8px; padding: 14px 16px; border: 1px solid var(--line-strong); border-radius: 18px; background: var(--paper); margin-bottom: 18px; }
+.ep-head-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ep-head-id { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ep-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; font-size: 14px; letter-spacing: .02em; }
+.ep-title { font-weight: 700; font-size: 18px; line-height: 1.3; overflow-wrap: anywhere; }
+.ep-meta { font-size: 13px; color: var(--muted); }
+.ep-status { display: flex; gap: 6px; flex-wrap: wrap; }
+.ep-actions .btn { min-height: 44px; }

@@ -222,6 +222,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         audit: store.episodes.auditLog(id, 40),
         versions: store.episodes.versions(id).filter((v) => !deletedVersions(ep)[v.version]),
         deletedVersionCount: Object.keys(deletedVersions(ep)).length,
+        header: null,
       },
       productRefImages: (() => {
         const refs = ep.productRefs && ep.productRefs.imageIds;
@@ -234,6 +235,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       sfx: ep.sfx,
       timeline: used,
     });
+    view.derived.header = episodeHeader(ep, view.derived);
     return view;
   }
 
@@ -260,7 +262,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       products: products.list(),
       storylab: storylabSummary(),
       ai: { routing: integrations.overview().routing, usage: usage.summary(store.settings.get().ai.limits) },
-      episodes: eps.map((e) => ({ id: e.id, displayId: e.displayId || e.id, uuid: e.uuid || '', productCode: e.productCode || '', episodeNumber: e.episodeNumber || null, category: e.category || (e.concept && e.concept.category) || '', productId: e.productId || '', concept: e.derived.concept, title: e.title, titleEn: e.titleEn, productName: e.product.name, steps: e.derived.steps, spentUsd: e.derived.spentUsd, limitUsd: e.derived.limitUsd, totalPlannedSec: e.derived.totalPlannedSec, scenes: e.scenes.length, thumb: firstClipThumb(e), published: !!(e.publishing && e.publishing.publishedAt), finalApproved: !!e.approvals.final, archived: !!e.archivedAt, updatedAt: e.updatedAt })),
+      episodes: eps.map((e) => ({ id: e.id, displayId: e.displayId || e.id, uuid: e.uuid || '', productCode: e.productCode || '', episodeNumber: e.episodeNumber || null, category: e.category || (e.concept && e.concept.category) || '', productId: e.productId || '', concept: e.derived.concept, title: e.title, titleEn: e.titleEn, productName: e.product.name, steps: e.derived.steps, spentUsd: e.derived.spentUsd, limitUsd: e.derived.limitUsd, totalPlannedSec: e.derived.totalPlannedSec, scenes: e.scenes.length, thumb: firstClipThumb(e), published: !!(e.publishing && e.publishing.publishedAt), finalApproved: !!e.approvals.final, archived: !!e.archivedAt, onHold: !!e.holdAt, header: e.derived.header, updatedAt: e.updatedAt })),
       queue,
       totals: {
         episodes: eps.length,
@@ -601,6 +603,55 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     await store.episodes.update(id, (ep) => { delete ep.archivedAt; delete ep.archivedBy; });
     store.episodes.audit(id, 'episode.unarchived', { by });
     return episodeView(id);
+  }
+
+  /** 보류: pauses an episode. It stays visible, nothing is removed, and every PAID action (AI script, images, video generation) is refused until it is resumed. */
+  async function holdEpisode(id, reason = '', by = 'operator') {
+    const ep0 = store.episodes.get(id);
+    if (ep0.trashedAt) throw new StudioError('TRASHED', '휴지통에 있는 에피소드입니다.', { status: 409 });
+    if (ep0.holdAt) throw new StudioError('ALREADY_HOLD', '이미 보류 중인 에피소드입니다.', { status: 409 });
+    await store.episodes.update(id, (ep) => { ep.holdAt = nowIso(); ep.holdBy = by; ep.holdReason = String(reason || '').slice(0, 300); });
+    store.episodes.audit(id, 'episode.hold', { by, reason: String(reason || '').slice(0, 300) });
+    return episodeView(id);
+  }
+  async function resumeEpisode(id, by = 'operator') {
+    const ep0 = store.episodes.get(id);
+    if (!ep0.holdAt) throw new StudioError('NOT_HOLD', '보류 중인 에피소드가 아닙니다.', { status: 409 });
+    await store.episodes.update(id, (ep) => { delete ep.holdAt; delete ep.holdBy; delete ep.holdReason; });
+    store.episodes.audit(id, 'episode.resumed', { by });
+    return episodeView(id);
+  }
+  function assertNotHeld(id) {
+    const ep = store.episodes.get(id);
+    if (ep.holdAt) throw new StudioError('EPISODE_ON_HOLD', '보류 중인 에피소드입니다. 보류를 해제한 뒤 유료 생성을 진행하세요.', { status: 409, recovery: '에피소드 메뉴 → 보류 해제' });
+  }
+  /** Title is the only free-text field that is edited here; the ID, uuid, product and story snapshot never change. */
+  async function editEpisode(id, { title } = {}, by = 'operator') {
+    const t = String(title == null ? '' : title).trim().slice(0, 200);
+    if (!t) throw new StudioError('NEED_TITLE', '제목을 입력하세요.', { status: 422 });
+    const before = store.episodes.get(id).title;
+    if (before === t) return episodeView(id);
+    await store.episodes.update(id, (ep) => { ep.title = t; });
+    store.episodes.audit(id, 'episode.edited', { by, field: 'title', from: before, to: t });
+    return episodeView(id);
+  }
+  /** What the compact Episode header shows. Advanced metadata (uuid, ids, versions …) is deliberately not part of it. */
+  function episodeHeader(ep, derived) {
+    const steps = derived.steps || [];
+    const cur = steps.find((x) => x.state !== 'done') || null;
+    const approvals = [
+      { key: 'story', label: '스토리', ok: !!(ep.story || ep.concept) && !!(derived.concept && derived.concept.ok !== false) },
+      { key: 'script', label: '대본', ok: !!derived.scriptApproved },
+      { key: 'storyboard', label: '스토리보드', ok: !!(steps.find((x) => x.key === 'storyboard') || {}).state && steps.find((x) => x.key === 'storyboard').state === 'done' },
+      { key: 'final', label: '최종', ok: !!(ep.approvals && ep.approvals.final) },
+    ];
+    return {
+      code: ep.displayId || ep.id, title: ep.title, productName: (ep.product || {}).name || '', productCode: ep.productCode || '', category: ep.category || (ep.concept && ep.concept.category) || '',
+      stage: cur ? { key: cur.key, label: cur.label, state: cur.state } : { key: 'done', label: '완료', state: 'done' },
+      approvals, approvedCount: approvals.filter((a) => a.ok).length,
+      onHold: !!ep.holdAt, holdReason: ep.holdReason || '', archived: !!ep.archivedAt, published: !!(ep.publishing && ep.publishing.publishedAt),
+      resumeStep: cur ? cur.key : null,
+    };
   }
 
   /** The CURRENT category is a separate field: changing it never changes the Episode ID (UMB-01-D stays UMB-01-D). */
@@ -1056,7 +1107,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
 
   return {
     exportName, cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
-    summary, episodeView, episodeIds, setEpisodeCategory, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
+    summary, episodeView, episodeIds, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
