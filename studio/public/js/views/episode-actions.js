@@ -1,6 +1,6 @@
 // Episode / script-version management: a compact ⋯ menu, 삭제 (soft, restorable), 복제, 보관, 대본 버전 관리.
 // Nothing here removes files: the server hides items (trash / archive / deleted version) and keeps every linked asset.
-import { h, icon, modal, toast, confirmDialog, fmtUsd } from '../ui.js';
+import { h, icon, chip, modal, toast, confirmDialog, fmtUsd } from '../ui.js';
 import { state, act } from '../state.js';
 import { api } from '../api.js';
 
@@ -45,6 +45,8 @@ export function episodeMenu(e, { archivedView = false } = {}) {
   return kebab({ id: 'ep-' + e.id, label: `${e.id} 메뉴`, items: [
     { key: 'duplicate', label: '에피소드 복제', hint: '대본만 새로 복사 (승인·영상은 복사 안 함)', onClick: () => duplicateEpisode(e) },
     archivedView ? { key: 'unarchive', label: '보관 해제', onClick: () => unarchiveEpisode(e) } : { key: 'archive', label: '에피소드 보관', hint: '목록에서만 치웁니다 (삭제 아님)', onClick: () => archiveEpisode(e) },
+    { key: 'rename', label: '제목 수정', onClick: () => editTitle(e) },
+    e.onHold ? { key: 'resume', label: '보류 해제', hint: '유료 생성을 다시 허용', onClick: () => resumeEpisode(e) } : { key: 'hold', label: '에피소드 보류', hint: '삭제 없이 멈춤 · 유료 생성 차단', onClick: () => holdEpisode(e) },
     { key: 'versions', label: '대본 버전 관리', hint: '버전 삭제·복원', onClick: () => versionManager(e) },
     { key: 'delete', label: '에피소드 삭제', hint: '휴지통으로 이동 (복원 가능)', danger: true, onClick: () => deleteEpisode(e) },
   ] });
@@ -57,6 +59,22 @@ async function duplicateEpisode(e) {
     h('div', { class: 'field' }, h('label', null, '복제본 이름 (비워 두면 자동)'), h('input', { type: 'text', oninput: (ev) => (title = ev.target.value) }))), confirm: '복제', tone: 'sage' });
   if (!ok) return;
   try { const r = await api.post(`/api/episodes/${e.id}/duplicate`, { title }); toast(`${r.duplicatedId || '복제본'}을 만들었습니다`); await refresh(); } catch (err) { toast(err.message, { error: true, recovery: err.recovery }); }
+}
+
+async function editTitle(e) {
+  let title = e.title;
+  const ok = await confirmDialog({ title: '에피소드 제목 수정', body: h('div', { class: 'stack small', style: 'gap:8px' }, h('div', { class: 'muted' }, '제목만 바뀝니다. 에피소드 코드, 스토리, 대본, 자료는 그대로입니다.'), h('div', { class: 'field' }, h('input', { type: 'text', value: e.title, 'aria-label': '제목', 'data-edit-title': '', oninput: (ev) => (title = ev.target.value) }))), confirm: '저장', tone: 'sage' });
+  if (!ok) return;
+  try { await api.put(`/api/episodes/${e.id}/meta`, { title }); toast('저장했습니다'); await refresh(); } catch (err) { toast(err.message, { error: true, recovery: err.recovery }); }
+}
+async function holdEpisode(e) {
+  let reason = '';
+  const ok = await confirmDialog({ title: `"${e.title}" 에피소드를 보류할까요?`, body: h('div', { class: 'stack small', style: 'gap:8px' }, h('div', null, '삭제가 아닙니다. 모든 자료는 그대로 두고, 보류를 해제할 때까지 유료 생성(AI 대본·이미지·영상)만 막습니다.'), h('div', { class: 'field' }, h('label', null, '사유 (선택)'), h('input', { type: 'text', oninput: (ev) => (reason = ev.target.value) }))), confirm: '보류', tone: 'clay' });
+  if (!ok) return;
+  try { await api.post(`/api/episodes/${e.id}/hold`, { reason }); toast('보류했습니다'); await refresh(); } catch (err) { toast(err.message, { error: true, recovery: err.recovery }); }
+}
+async function resumeEpisode(e) {
+  try { await api.post(`/api/episodes/${e.id}/resume`); toast('보류를 해제했습니다'); await refresh(); } catch (err) { toast(err.message, { error: true, recovery: err.recovery }); }
 }
 
 async function archiveEpisode(e) {
@@ -147,4 +165,29 @@ export async function versionManager(e) {
   modal((close) => h('div', { class: 'stack' }, h('h2', null, `대본 버전 관리 · ${e.id}`),
     h('p', { class: 'small muted', style: 'margin:0' }, '삭제해도 에피소드와 연결된 자료는 그대로이며 파일은 지워지지 않습니다. 삭제된 버전은 ⋯ 메뉴에서 복원할 수 있습니다.'), box,
     h('div', { class: 'row end' }, h('button', { class: 'btn', type: 'button', onclick: close }, '닫기'))), { wide: true });
+}
+
+const CATS = { drama: '반전형 생활 개그', viral: '바이럴형', info: '신뢰·정보형' };
+const STAGE_VIEW = { product: 'products', concept: 'storylab', script: 'script', approval: 'script', storyboard: 'storyboard', estimate: 'animation', animation: 'animation', clips: 'animation', voice: 'voice', render: 'render', review: 'review', publish: 'publishing' };
+
+/** Compact Episode header: code · title · product · category · stage · approvals · Resume Work. Advanced metadata sits in a collapsed panel. */
+export function episodeHeader(ep) {
+  const hd = ep.derived && ep.derived.header;
+  if (!hd) return null;
+  const row = { id: ep.id, title: ep.title, onHold: hd.onHold };
+  const target = hd.resumeStep ? STAGE_VIEW[hd.resumeStep] : 'review';
+  return h('section', { class: 'ep-header', 'data-episode-header': ep.id },
+    h('div', { class: 'ep-head-top' },
+      h('div', { class: 'ep-head-id' }, h('span', { class: 'ep-code', 'data-code': '' }, hd.code), hd.onHold ? chip('보류 중', 'mock') : null, hd.archived ? chip('보관됨', 'mock') : null),
+      episodeMenu(row, { archivedView: hd.archived })),
+    h('div', { class: 'ep-title' }, hd.title),
+    h('div', { class: 'ep-meta' }, [hd.productName + (hd.productCode ? ` (${hd.productCode})` : ''), CATS[hd.category] || null].filter(Boolean).join(' · ')),
+    h('div', { class: 'ep-status' },
+      chip('단계: ' + hd.stage.label, hd.stage.state === 'attention' ? 'attention' : hd.stage.state === 'done' ? 'done' : ''),
+      chip(`승인 ${hd.approvedCount}/${hd.approvals.length}`, hd.approvedCount === hd.approvals.length ? 'done' : 'attention')),
+    h('div', { class: 'ep-actions' },
+      h('button', { class: 'btn', type: 'button', 'data-resume-work': '', onclick: () => { location.hash = '#/' + target + '/' + (['products', 'storylab'].includes(target) ? ep.productId : ep.id); } }, '이어서 작업 ', icon('play'))),
+    hd.onHold && hd.holdReason ? h('div', { class: 'small muted' }, '보류 사유: ' + hd.holdReason) : null,
+    h('details', { class: 'small', 'data-ep-advanced': '' }, h('summary', { style: 'cursor:pointer;min-height:32px;display:flex;align-items:center' }, '상세 정보'),
+      h('div', { class: 'stack', style: 'gap:2px;margin-top:4px' }, [`내부 ID: ${ep.uuid || '-'}`, `대본 v${ep.version || 0}${ep.story ? ' · 스토리 v' + ep.story.revision : ''}`, `생성: ${ep.createdAt ? new Date(ep.createdAt).toLocaleString('ko-KR') : '-'}`, `수정: ${ep.updatedAt ? new Date(ep.updatedAt).toLocaleString('ko-KR') : '-'}`].map((t) => h('div', { class: 'muted mono' }, t)))));
 }

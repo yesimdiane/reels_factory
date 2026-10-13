@@ -244,7 +244,7 @@ function createProjects({ store, episodeIds, lib, endings, products, log = () =>
   }
 
   // ---------- duplication ----------
-  const RUNTIME_KEYS = ['approvals', 'prompts', 'clips', 'generation', 'spend', 'voice', 'renders', 'sfx', 'renderJob', 'sceneApprovals', 'imageDev', 'suggestions', 'status', 'version', 'createdAt', 'updatedAt', 'spendLimitUsd', 'duplicatedFrom', 'trashedAt', 'trashedBy', 'archivedAt', 'archivedBy', 'deletedVersions', 'uuid', 'displayId', 'productCode', 'episodeNumber', 'idScheme'];
+  const RUNTIME_KEYS = ['approvals', 'prompts', 'clips', 'generation', 'spend', 'voice', 'renders', 'sfx', 'renderJob', 'sceneApprovals', 'imageDev', 'suggestions', 'status', 'version', 'createdAt', 'updatedAt', 'spendLimitUsd', 'duplicatedFrom', 'trashedAt', 'trashedBy', 'archivedAt', 'archivedBy', 'holdAt', 'holdBy', 'holdReason', 'deletedVersions', 'uuid', 'displayId', 'productCode', 'episodeNumber', 'idScheme'];
   function freeEpisodeId(srcId) {
     const base = srcId.replace(/-C\d+$/, '').slice(0, 34);
     for (let n = 1; n < 1000; n += 1) { const cand = `${base}-C${n}`; if (!store.episodes.exists(cand)) return cand; }

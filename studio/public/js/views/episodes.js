@@ -25,7 +25,7 @@ function episodeCard(e, { archivedView = false } = {}) {
   return h('article', { class: 'card ep-card', 'data-episode': e.id, style: 'padding:0;overflow:hidden;display:grid;grid-template-columns:120px 1fr' },
     h('div', { class: 'thumb', style: 'border-radius:0;border:0;border-right:1px solid var(--line)' }, e.thumb ? h('video', { src: e.thumb, muted: true, playsinline: true, preload: 'metadata' }) : h('div', { style: 'height:100%;display:grid;place-items:center;color:var(--muted);font-size:12px;text-align:center;padding:8px' }, '미리보기 없음')),
     h('div', { class: 'stack', style: 'padding:16px;gap:8px' },
-      h('div', { class: 'row between' }, h('span', { class: 'eyebrow' }, e.id), h('div', { class: 'row', style: 'gap:6px' }, archivedView ? chip('보관됨', 'mock') : null, chip(status[0], status[1]))),
+      h('div', { class: 'row between' }, h('span', { class: 'eyebrow' }, e.id), h('div', { class: 'row', style: 'gap:6px' }, archivedView ? chip('보관됨', 'mock') : null, e.onHold ? chip('보류 중', 'mock') : null, chip(status[0], status[1]))),
       h('h3', { style: 'font-size:17px' }, e.title),
       h('div', { class: 'small muted' }, e.productName),
       e.concept && e.concept.linked ? h('div', { class: 'small' }, chip(e.concept.ok ? '컨셉 ' + e.concept.conceptId + ' r' + e.concept.revision : e.concept.state === 'script_stale' ? '컨셉 변경 · 대본 재생성 필요' : '컨셉 승인 필요', e.concept.ok ? 'done' : 'attention')) : e.concept && e.concept.legacy ? h('div', { class: 'small' }, chip('스토리 랩 이전', 'mock')) : null,
