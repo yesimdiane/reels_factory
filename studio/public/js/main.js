@@ -14,6 +14,7 @@ import { render } from './views/render.js';
 import { review } from './views/review.js';
 import { publishing } from './views/publishing.js';
 import { settings } from './views/settings.js';
+import { guardLeave } from './views/leave-guard.js';
 
 // [key, ko, en, view, inRail]   Dashboard → Products → Story Lab → Script → Storyboard → Video Studio → Review → Publishing → Settings
 export const NAV = [
@@ -84,6 +85,7 @@ export function rerender() {
     stage.append(h('div', { class: 'banner err' }, h('div', null, h('b', null, '화면을 그리지 못했습니다'), e.message)));
   }
   schedulePoll();
+  placeActionBar();
 }
 
 function schedulePoll() {
@@ -141,7 +143,41 @@ async function route() {
 }
 
 hooks.rerender = rerender;
-window.addEventListener('hashchange', route);
+// iPhone Safari: keep the sticky action bar above the tab bar (safe area) and above the on-screen keyboard (visualViewport).
+function placeActionBar() {
+  const vv = window.visualViewport;
+  const kb = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
+  const tab = document.getElementById('tabbar');
+  const tabH = tab && getComputedStyle(tab).display !== 'none' ? tab.offsetHeight : 0;
+  const root = document.documentElement.style;
+  root.setProperty('--kb', kb + 'px');
+  root.setProperty('--bar-bottom', (kb > 80 ? kb : tabH) + 'px');
+}
+if (window.visualViewport) { window.visualViewport.addEventListener('resize', placeActionBar); window.visualViewport.addEventListener('scroll', placeActionBar); }
+window.addEventListener('resize', placeActionBar);
+placeActionBar();
+// Leaving the editor with unsaved edits: keep the current page and ask (save / discard / stay). beforeunload covers closing the tab.
+let lastHash = location.hash;
+let reverting = false;
+window.addEventListener('hashchange', async () => {
+  if (reverting) { reverting = false; lastHash = location.hash; return; }
+  const target = location.hash;
+  if (state.leaveGuard && state.leaveGuard.dirty()) {
+    reverting = true;
+    location.hash = lastHash;
+    const go = await guardLeave({ dirty: true, what: '다른 화면으로', save: state.leaveGuard.save });
+    if (!go) return;
+    state.leaveGuard = null;
+    reverting = false;
+    location.hash = target;
+    lastHash = target;
+    return;
+  }
+  lastHash = target;
+  if (state.view !== 'script') state.leaveGuard = null;
+  route();
+});
+window.addEventListener('beforeunload', (e) => { if (state.leaveGuard && state.leaveGuard.dirty()) { e.preventDefault(); e.returnValue = ''; } });
 window.addEventListener('rf-login-required', () => { state.auth = { authRequired: true, authenticated: false }; loginScreen(); });
 route().catch((e) => {
   document.getElementById('stage').replaceChildren(h('div', { class: 'banner err' }, h('div', null, h('b', null, '서버에 연결하지 못했습니다'), e.message, h('div', { class: 'small' }, '서버가 실행 중인지 확인하세요 (로컬: node studio/server.js · 클라우드: 배포 상태와 /healthz).'))));

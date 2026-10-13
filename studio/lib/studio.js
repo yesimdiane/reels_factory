@@ -556,6 +556,95 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   }
 
   /**
+   * 씬 저장: saves ONE scene (its fields and its dialogue lines) as a draft, even when validation is incomplete. Other scenes, their ids,
+   * order, dialogue, assets and approvals are untouched. Saving never approves: an approved scene that is edited simply becomes a new
+   * draft revision (its approved version stays in the approval history).
+   */
+  async function saveScene(id, sceneId, patch = {}, by = 'operator') {
+    await store.episodes.update(id, (ep) => {
+      const sc = ep.scenes.find((x) => x.id === sceneId);
+      if (!sc) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다: ' + sceneId, { status: 404 });
+      const prevEp = F.isStructured(ep) ? JSON.parse(JSON.stringify(ep)) : null;
+      const incoming = Object.assign({}, patch.scene || {}, { id: sceneId });
+      const [clean] = sanitizeScenes([incoming], [sc]);
+      // identity, order and position in the story never change from a scene save
+      Object.assign(sc, clean, { id: sc.id, part: sc.part, beatKey: sc.beatKey, beat: sc.beat });
+      if (Array.isArray(patch.lines)) {
+        const others = ep.lines.filter((l) => l.sceneId !== sceneId);
+        const used = new Set(others.map((l) => l.id));
+        let n = 0;
+        ep.lines.forEach((l) => { const m = /^L(\d+)/.exec(l.id); if (m) n = Math.max(n, Number(m[1])); });
+        const old = new Map(ep.lines.filter((l) => l.sceneId === sceneId).map((l) => [l.id, l]));
+        const mine = patch.lines.map((l) => {
+          let lid = String(l.id || '').trim();
+          if (!lid || used.has(lid)) { do { n += 1; lid = 'L' + n; } while (used.has(lid)); }
+          used.add(lid);
+          return { id: lid, sceneId, speaker: String(l.speaker || ''), en: String(l.en || '').trim(), ko: String(l.ko || '').trim(), edited: !!(old.get(lid) || {}).edited };
+        });
+        const at = ep.lines.findIndex((l) => l.sceneId === sceneId);
+        const rest = ep.lines.filter((l) => l.sceneId !== sceneId);
+        const pos = at < 0 ? rest.length : ep.lines.slice(0, at).filter((l) => l.sceneId !== sceneId).length;
+        ep.lines = rest.slice(0, pos).concat(mine, rest.slice(pos));
+      }
+      if (prevEp) { SF.markEdits(prevEp, ep); F.syncBeats(ep); }
+    }, { snapshot: true, by, note: `씬 저장 (${sceneId})` });
+    store.episodes.audit(id, 'scene.saved', { sceneId, by });
+    await syncPromptsWithCast(id);
+    return episodeView(id);
+  }
+
+  /** 씬 추가: a new empty scene right after `afterSceneId` (formula episodes: inside that Part A beat, or at the end of "제품 연결" when the current scene is Part B). Nothing existing is overwritten. */
+  async function addScene(id, { afterSceneId, beatKey } = {}, by = 'operator') {
+    let newId = '';
+    await store.episodes.update(id, (ep) => {
+      // never reuse an id that still has clips / prompts / approval history (a deleted scene's assets must not attach to a new scene)
+      const used = new Set(ep.scenes.map((s) => s.id).concat(Object.keys(ep.clips || {}), Object.keys(ep.prompts || {}), Object.keys(ep.sceneApprovals || {})));
+      let n = ep.scenes.length + 1;
+      while (used.has('S' + n)) n += 1;
+      newId = 'S' + n;
+      const structured = F.isStructured(ep);
+      const after = (afterSceneId && ep.scenes.find((s) => s.id === afterSceneId)) || ep.scenes[ep.scenes.length - 1] || null;
+      let key = '';
+      let idx = ep.scenes.length;
+      if (structured) {
+        key = beatKey || (after && after.part === 'A' ? after.beatKey : 'product_bridge');
+        if (!F.BEAT_KEYS.includes(key)) throw new StudioError('BAD_BEAT', '새 장면은 PART A의 여섯 단계 중 하나에 들어가야 합니다.', { status: 422 });
+        if (after && after.part === 'A' && after.beatKey === key) idx = ep.scenes.indexOf(after) + 1;
+        else { let last = -1; ep.scenes.forEach((s, i) => { if (s.part === 'A' && s.beatKey === key) last = i; }); idx = last >= 0 ? last + 1 : ep.scenes.filter((s) => s.part === 'A').length; }
+      } else if (after) idx = ep.scenes.indexOf(after) + 1;
+      const sc = { id: newId, part: structured ? 'A' : '', beatKey: key, beat: structured ? F.ALL_KEYS.indexOf(key) + 1 : idx + 1, title_ko: '', title: '', durationSec: 4, characters: after ? (after.characters || []).slice() : [], showsProduct: false, visual: '', action: '', narration: '', placement: '', manualEdit: true };
+      ep.scenes.splice(idx, 0, sc);
+      const nxt = ep.scenes[idx + 1];
+      if (nxt && ep.prompts[nxt.id]) ep.prompts[nxt.id].stale = true; // its predecessor changed
+      if (structured) F.syncBeats(ep);
+    }, { snapshot: true, by, note: '씬 추가' });
+    store.episodes.audit(id, 'scene.added', { sceneId: newId, by });
+    const v = episodeView(id);
+    v.newSceneId = newId;
+    return v;
+  }
+
+  /** Removes one scene and its dialogue. Clips, images, prompts and the approval history stay on disk (nothing is deleted). The fixed ending and the last scene of a story beat cannot be removed. */
+  async function deleteScene(id, sceneId, by = 'operator') {
+    await store.episodes.update(id, (ep) => {
+      const sc = ep.scenes.find((x) => x.id === sceneId);
+      if (!sc) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다: ' + sceneId, { status: 404 });
+      if (F.isStructured(ep)) {
+        if (sc.part === 'B') throw new StudioError('ENDING_LOCKED', '고정 제품 엔딩 컷은 삭제할 수 없습니다.', { status: 409 });
+        if (ep.scenes.filter((x) => x.part === 'A' && x.beatKey === sc.beatKey).length <= 1) throw new StudioError('BEAT_EMPTY', '각 스토리 단계에는 최소 한 씬이 필요합니다. 이 씬이 이 단계의 마지막 씬입니다.', { status: 422 });
+      } else if (ep.scenes.length <= 1) throw new StudioError('LAST_SCENE', '마지막 씬은 삭제할 수 없습니다.', { status: 422 });
+      const i = ep.scenes.indexOf(sc);
+      ep.scenes.splice(i, 1);
+      ep.lines = ep.lines.filter((l) => l.sceneId !== sceneId);
+      const nxt = ep.scenes[i];
+      if (nxt && ep.prompts[nxt.id]) ep.prompts[nxt.id].stale = true;
+      if (F.isStructured(ep)) F.syncBeats(ep);
+    }, { snapshot: true, by, note: `씬 삭제 (${sceneId})` });
+    store.episodes.audit(id, 'scene.deleted', { sceneId, by });
+    return episodeView(id);
+  }
+
+  /**
    * Drag & drop reorder. Formula episodes: { beats: { setup: [ids], problem: [ids], ... } } moves Part A scenes within / between the six beats
    * (every beat keeps at least one scene; Part B, the fixed ending, can never be moved). Other episodes: { order: [ids] }.
    * Only the order / beat assignment changes; a scene whose predecessor changed gets its (template/AI) prompt flagged stale.
@@ -818,7 +907,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   return {
     cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

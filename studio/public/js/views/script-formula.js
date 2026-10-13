@@ -33,13 +33,14 @@ export async function runFormulaAction(ep, action, { extra = '' } = {}) {
   // act() swallows the error into a toast; re-check the state to see whether a protected overwrite is needed
 }
 
-export function formulaLayout({ ep, d, blocks, dirty, redrawAll, v, index }) {
+export function formulaLayout({ ep, d, blocks, dirty, redrawAll, v, index, addSceneIn, focusScene }) {
   const F = ep.formula;
   const fx = ep.formula.ending;
   const root = h('div', { class: 'stack', style: 'gap:22px' });
   const locked = !!fx.structureLocked;
   const hasA = ep.scenes.some((s) => s.part === 'A');
   const withKey = (el, rf) => (rf ? attach(index, el, rf) : el);
+  const sceneLinks = (ids) => h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, ids.map((id) => h('button', { class: 'chip', type: 'button', onclick: () => focusScene(id) }, '✎ ' + id + ' 씬 편집')));
   const blockOf = (id) => (blocks.find((b) => b.sc.id === id) || {}).block;
 
   const run = async (action) => {
@@ -84,8 +85,8 @@ export function formulaLayout({ ep, d, blocks, dirty, redrawAll, v, index }) {
       h('div', { class: 'field' }, h('label', null, '한국어 자막 요약 (대사에서 자동)'), h('div', { class: 'small', style: 'min-height:38px' }, b.subtitle_ko || '—'))));
     card.append(h('div', { class: 'grid two' }, field('이야기 설명 (English) — 직접 쓰면 AI가 그대로 살립니다', bd.story_en, (x) => (bd.story_en = x), { rows: 2, lang: 'en' }), field('비주얼 방향', bd.visual, (x) => (bd.visual = x), { rows: 2 })));
     b.sceneIds.forEach((id) => { const bl = blockOf(id); if (bl) card.append(bl); });
-    card.append(h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', onclick: () => { d.scenes.push({ id: newId(d, 'S'), part: 'A', beatKey: b.key, title_ko: '', legacyTitle: '', durationSec: 4, characters: [], showsProduct: false, visual: '', beat: i + 1, action: '', narration: '', placement: '' }); // insert after this beat's last scene
-        const last = d.scenes.map((s, k) => ({ s, k })).filter((x) => x.s.beatKey === b.key && x.s !== d.scenes[d.scenes.length - 1]).map((x) => x.k).pop(); const sc = d.scenes.pop(); d.scenes.splice(last === undefined ? firstIndexAfter(d, b.key) : last + 1, 0, sc); dirty(); redrawAll(); } }, icon('plus'), '이 단계에 장면 추가')));
+    if (focusScene) card.append(sceneLinks(b.sceneIds));
+    card.append(h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', type: 'button', onclick: () => addSceneIn && addSceneIn(b.key) }, icon('plus'), '이 단계에 씬 추가')));
     root.append(card);
   });
 
@@ -104,6 +105,7 @@ export function formulaLayout({ ep, d, blocks, dirty, redrawAll, v, index }) {
     card.append(h('div', { class: 'grid two' }, field('컷 제목 (한국어)', bd.title_ko, (x) => (bd.title_ko = x), { rows: 1, lang: 'ko', rf: `B:${b.key}:title_ko` }), h('div', { class: 'field' }, h('label', null, '한국어 자막 요약'), h('div', { class: 'small', style: 'min-height:38px' }, b.subtitle_ko || '—'))));
     card.append(h('div', { class: 'grid two' }, field('컷 설명 (English)', bd.story_en, (x) => (bd.story_en = x), { rows: 2, lang: 'en' }), field('비주얼 방향', bd.visual, (x) => (bd.visual = x), { rows: 2 })));
     b.sceneIds.forEach((id) => { const bl = blockOf(id); if (bl) card.append(bl); });
+    if (focusScene) card.append(sceneLinks(b.sceneIds));
     root.append(card);
   });
   return root;

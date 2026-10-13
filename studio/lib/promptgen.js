@@ -55,7 +55,7 @@ function geminiInstruction(ep, scenes, lib, clipSecOf) {
   }).join('\n\n');
   return [
     'You write image-to-video prompts for a hand-drawn 2D Korean webtoon / anime Instagram Reel (vertical 9:16). Output JSON only.',
-    'For each scene return English text for: camera (movement and framing: e.g. quick punch-in zoom, whip-pan, slow push-in), actions (a vivid SEQUENCE of what each selected character does — body and facial animation with exaggerated cartoon motion such as squash-and-stretch, comic pops, widening eyes, eyebrows shooting up — with a clear start and end, 2-3 sentences, never a one-line summary), environment, lighting (light + visual style), continuity (what must match the previous scene), negative_additions (extra things to avoid, optional).',
+    'For each scene return English text for: camera (movement and framing: e.g. quick punch-in zoom, whip-pan, slow push-in), actions (a vivid SECOND-BY-SECOND timeline of what each selected character does — \"0.0–1.2 s: …  1.2–2.5 s: …\" back to back until the clip length — body and facial animation with exaggerated cartoon motion such as squash-and-stretch, comic pops, widening eyes, eyebrows shooting up, with a clear start and end, never a one-line summary; if the approved scene description already has a timeline keep its timing), environment, lighting (light + visual style), continuity (what must match the previous scene), negative_additions (extra things to avoid, optional).',
     '',
     'CHARACTER REFERENCE SHEETS — CRITICAL:',
     '- The attached images are master character SHEETS. Each sheet shows ONE individual many times (portraits, expressions, outfits, close-ups, colour palette, poses, example scenes). They are identity guides, NOT scene layouts.',

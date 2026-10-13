@@ -44,7 +44,7 @@ export function sceneFooter(ep, sc, d) {
 }
 
 /** Top panel: scene approval progress, clickable validation summary, bulk approve, script approval status and the Image Development button. */
-export function projectPanel(ep, d, summaryEl, { approveScript }) {
+export function projectPanel(ep, d, summaryEl) {
   const sa = ep.derived.sceneApproval;
   const pct = sa.sceneCount ? Math.round((sa.approvedCount / sa.sceneCount) * 100) : 0;
   const ho = ep.derived.handoff;
@@ -57,13 +57,14 @@ export function projectPanel(ep, d, summaryEl, { approveScript }) {
       if (r && r.approveResult) toast(`${r.approveResult.approved.length}개 씬을 승인했습니다` + (r.approveResult.skipped.length ? ` · ${r.approveResult.skipped.length}개는 아직 승인할 수 없습니다` : ''));
     }
   };
+  // 전체 대본 승인 → 이미지 디벨롭: approves the script (when it is not approved yet) and hands over to Image Development. Explicitly confirmed; never generates anything.
   const handoff = async () => {
-    const ok = await confirmDialog({ title: '이미지 디벨롭으로 이동할까요?', body: h('div', { class: 'small stack' },
-      h('div', null, '승인된 대본의 변경 불가능한 스냅샷을 저장하고, 장면 ID·한국어 제목·대사·시각 연출·승인된 캐릭터/제품 참조를 이미지 디벨롭 작업공간으로 넘깁니다.'),
-      h('div', { class: 'banner ok' }, '이 단계에서는 이미지가 만들어지거나 요금이 발생하지 않습니다. 이미지 생성은 이동 후 별도의 비용 확인과 승인을 거칩니다.')), confirm: '스냅샷 저장하고 이동' });
+    const ok = await confirmDialog({ title: '전체 대본을 승인하고 이미지 디벨롭으로 이동할까요?', body: h('div', { class: 'small stack' },
+      h('div', null, `${sa.progress}. 전체 대본을 승인하고, 승인된 대본의 변경 불가능한 스냅샷을 저장해 장면 ID·한국어 제목·대사·시각 연출·승인된 캐릭터/제품 참조를 이미지 디벨롭 작업공간으로 넘깁니다.`),
+      h('div', { class: 'banner ok' }, '이 단계에서는 이미지가 만들어지거나 요금이 발생하지 않습니다. 이미지 생성은 이동 후 별도의 비용 확인과 승인을 거칩니다.')), confirm: scriptOk ? '스냅샷 저장하고 이동' : '승인하고 이동' });
     if (!ok) return;
-    const r = await act(() => api.post(`/api/episodes/${ep.id}/script/handoff`), { ok: '승인된 대본 스냅샷을 저장했습니다' });
-    if (r) location.hash = '#/storyboard/' + ep.id;
+    const r = await act(async () => { if (!scriptOk) await api.post(`/api/episodes/${ep.id}/script/approve`); return api.post(`/api/episodes/${ep.id}/script/handoff`); }, { ok: '전체 대본을 승인하고 스냅샷을 저장했습니다' });
+    if (r) { state.leaveGuard = null; location.hash = '#/storyboard/' + ep.id; }
   };
   const dup = async () => {
     const title = h('input', { type: 'text', value: `${ep.title} (복제)`, 'aria-label': '새 에피소드 제목' });
@@ -84,22 +85,25 @@ export function projectPanel(ep, d, summaryEl, { approveScript }) {
     try { await api.post(`/api/scene-templates/${sel.value}/apply`, { episodeId: ep.id, linked: linked.checked, beatKey: beat ? beat.value : undefined }); state.draft.script = null; await act(async () => null, { ok: '씬을 추가했습니다 (새 씬은 승인이 필요합니다)' }); } catch (e) { toast(e.message, { error: true, recovery: e.recovery }); }
   };
 
-  const card = h('div', { class: 'card project-panel stack', style: 'gap:14px', 'data-project-panel': ep.id },
+  const blockers = sa.blockers.filter((b) => b.scope === 'project' && !['SCENES_PENDING'].includes(b.code));
+  const card = h('div', { class: 'card project-panel stack', style: 'gap:12px', 'data-project-panel': ep.id },
     h('div', { class: 'row between', style: 'flex-wrap:wrap;gap:8px' },
-      h('div', null, h('div', { class: 'eyebrow' }, `프로젝트 · ${ep.derived.project.name || ep.id}`), h('h3', null, '승인 진행'), h('div', { class: 'small muted' }, '① 빨간 항목 고치기 → ② 씬별 승인 → ③ 대본 승인 → ④ 이미지 디벨롭으로 이동')),
+      h('div', null, h('div', { class: 'eyebrow' }, `프로젝트 · ${ep.derived.project.name || ep.id}`), h('h3', null, '승인 진행')),
       h('div', { class: 'row' }, chip(sa.progress, sa.allScenesApproved ? 'done' : 'attention'), scriptOk ? chip(`대본 승인됨 v${ep.approvals.script.version}`, 'done') : chip(ep.derived.scriptChangedSinceApproval ? '대본 재승인 필요' : '대본 승인 대기', 'attention'))),
     h('div', { class: 'progress', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': sa.sceneCount, 'aria-valuenow': sa.approvedCount, 'aria-label': sa.progress }, h('i', { style: `width:${pct}%` })),
-    summaryEl,
-    sa.blockers.filter((b) => b.scope === 'project' && !['SCENES_PENDING'].includes(b.code)).length ? h('div', { class: 'stack', style: 'gap:6px' }, sa.blockers.filter((b) => b.scope === 'project').map((b) => h('div', { class: 'issue err' }, b.message))) : null,
-    h('div', { class: 'row', style: 'flex-wrap:wrap;gap:10px' },
-      h('button', { class: 'btn', disabled: d.dirty || !sa.readyScenes.length, title: d.dirty ? '먼저 저장하세요' : '', onclick: bulk }, `승인 가능한 씬 모두 승인${sa.readyScenes.length ? ` (${sa.readyScenes.length})` : ''}`),
-      h('button', { class: 'btn sage', disabled: d.dirty || scriptOk || !ep.derived.validation.ok || !sa.canApproveProject, title: scriptOk ? '이미 승인됨' : !sa.allScenesApproved ? `${sa.progress} — 모든 씬을 먼저 승인하세요` : '', onclick: approveScript }, scriptOk ? '대본 승인됨' : '대본 전체 승인'),
-      h('button', { class: 'btn clay big-cta', 'data-handoff': ep.id, disabled: d.dirty || !ho.ready, title: ho.ready ? '' : '모든 씬과 대본이 승인되어야 합니다', onclick: handoff }, '대본 승인 완료 → 이미지 디벨롭으로 이동'),
+    h('div', { class: 'row project-actions', style: 'flex-wrap:wrap;gap:10px' },
+      h('button', { class: 'btn clay big-cta', 'data-handoff': ep.id, disabled: d.dirty || d.epDirty || !(scriptOk ? ho.ready : (sa.canApproveProject && ep.derived.validation.ok)), title: !sa.allScenesApproved ? `${sa.progress} — 모든 씬을 먼저 승인하세요` : d.dirty || d.epDirty ? '저장하지 않은 변경이 있습니다' : '', onclick: handoff }, '전체 대본 승인 → 이미지 디벨롭'),
       ho.done ? h('a', { class: 'btn ghost', href: '#/storyboard/' + ep.id }, ho.current ? '이미지 디벨롭 열기' : '이미지 디벨롭 열기 (대본이 바뀜 — 다시 이동 필요)') : null),
-    h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px' },
-      h('button', { class: 'btn sm ghost', onclick: dup }, '에피소드 복제'),
-      h('button', { class: 'btn sm ghost', onclick: addFromTemplate }, '템플릿에서 씬 추가'),
-      ep.derived.project ? h('span', { class: 'small muted' }, ep.duplicatedFrom ? `원본: ${ep.duplicatedFrom.episodeId} (독립 복사본)` : '') : null));
+    h('details', { class: 'plain-details' }, h('summary', { class: 'small muted' }, '더보기 · 오류 목록 · 일괄 승인 · 복제 · 템플릿'),
+      h('div', { class: 'stack', style: 'gap:10px;margin-top:8px' },
+        h('div', { class: 'small muted' }, '① 빨간 항목 고치기 → ② 씬별 승인 → ③ 전체 대본 승인 → ④ 이미지 디벨롭으로 이동'),
+        summaryEl,
+        blockers.length ? h('div', { class: 'stack', style: 'gap:6px' }, blockers.map((b) => h('div', { class: 'issue err' }, b.message))) : null,
+        h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px' },
+          h('button', { class: 'btn sm ghost', disabled: d.dirty || !sa.readyScenes.length, title: d.dirty ? '먼저 씬을 저장하세요' : '모든 검사를 통과한 씬만 한꺼번에 승인합니다', onclick: bulk }, `승인 가능한 씬 모두 승인${sa.readyScenes.length ? ` (${sa.readyScenes.length})` : ''}`),
+          h('button', { class: 'btn sm ghost', onclick: dup }, '에피소드 복제'),
+          h('button', { class: 'btn sm ghost', onclick: addFromTemplate }, '템플릿에서 씬 추가')),
+        ep.duplicatedFrom ? h('span', { class: 'small muted' }, `원본: ${ep.duplicatedFrom.episodeId} (독립 복사본)`) : null)));
   return card;
 }
 

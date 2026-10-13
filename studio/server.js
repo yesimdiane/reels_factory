@@ -243,6 +243,9 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('DELETE', '/api/cut-presets/:id', async ({ p }) => S.cutPresets.remove(p.id));
   route('PUT', '/api/episodes/:id/scenes/:sid/inserts', async ({ p, body }) => S.saveInserts(p.id, p.sid, body.inserts));
   route('GET', '/media/cutframe/:a/:b', async ({ p, query }) => ({ file: await S.cutFrame(p.a, p.b, query.t) }));
+  route('POST', '/api/episodes/:id/scenes', async ({ p, body }) => S.addScene(p.id, { afterSceneId: body.afterSceneId, beatKey: body.beatKey }));
+  route('DELETE', '/api/episodes/:id/scenes/:sid', async ({ p }) => S.deleteScene(p.id, p.sid));
+  route('PUT', '/api/episodes/:id/scenes/:sid', async ({ p, body }) => S.saveScene(p.id, p.sid, { scene: body.scene, lines: body.lines }));
   route('POST', '/api/episodes/:id/scenes/reorder', async ({ p, body }) => S.reorderScenes(p.id, { beats: body.beats, order: body.order }));
   route('POST', '/api/episodes/:id/scenes/approve-ready', async ({ p }) => { const r = await S.projects.approveReady(p.id); const v = ep(p.id); v.approveResult = r; return v; });
   // ---- review translation (read-only aid; the English text stays the source of truth) ----

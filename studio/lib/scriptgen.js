@@ -12,6 +12,7 @@ const { claimHits } = require('./claims');
 const F = require('./formula');
 const SF = require('./scriptformula');
 const { sha256, uid } = require('./util');
+const T = require('./translate');
 
 function createScriptGen({ store, products, storylab, prompts, presets, endings, router, lib }) {
   function episodeIdFor(pid) {
@@ -147,6 +148,7 @@ function createScriptGen({ store, products, storylab, prompts, presets, endings,
     const s = normalize(res.json);
     const source = { conceptId: concept.id, conceptRevision: concept.revision, productId: concept.productId, provider: res.provider, model: res.model, mock: !!res.mock, promptKey: 'script-preset', promptVersion: composed.versions.script, promptVersions: composed.versions, presetId: composed.preset.presetId, presetName: composed.preset.presetName, presetVersion: composed.preset.presetVersion, comedyLevel: composed.preset.comedyLevel, promptHash: sha256(prompt).slice(0, 12), titleKo: true, generatedAt: nowIso(), by };
     await store.episodes.update(epId, (ep) => {
+      T.cachePairs(ep, T.pairsFromScriptJson(res.json), { provider: res.provider, model: res.model, mock: !!res.mock }); // Korean translations arrive with the script: "번역 보기" needs no second call
       if (ep.lines.length) ep.preAiScript = { at: nowIso(), lines: ep.lines.length, scenes: ep.scenes.length };
       ep.title = s.title || ep.title;
       ep.beats = s.beats;
@@ -192,6 +194,7 @@ function createScriptGen({ store, products, storylab, prompts, presets, endings,
     const meta = q0.meta;
     const source = { conceptId: concept.id, conceptRevision: concept.revision, productId: concept.productId, provider: res.provider, model: res.model, mock: !!res.mock, promptKey: 'script-preset', promptVersion: meta.presetVersion, promptVersions: { script: meta.presetVersion }, presetId: meta.presetId, presetName: meta.presetName, presetVersion: meta.presetVersion, comedyLevel: meta.comedyLevel, promptHash: meta.promptHash, titleKo: true, formula: 1, action, generatedAt: nowIso(), by };
     await store.episodes.update(epId, (ep) => {
+      T.cachePairs(ep, T.pairsFromScriptJson(res.json), { provider: res.provider, model: res.model, mock: !!res.mock });
       if (ep.lines.length) ep.preAiScript = { at: nowIso(), lines: ep.lines.length, scenes: ep.scenes.length };
       if (story) {
         SF.replacePartA(ep, story.beats);
