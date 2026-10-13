@@ -500,6 +500,44 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return episodeView(id);
   }
 
+  /**
+   * Drag & drop reorder. Formula episodes: { beats: { setup: [ids], problem: [ids], ... } } moves Part A scenes within / between the six beats
+   * (every beat keeps at least one scene; Part B, the fixed ending, can never be moved). Other episodes: { order: [ids] }.
+   * Only the order / beat assignment changes; a scene whose predecessor changed gets its (template/AI) prompt flagged stale.
+   */
+  async function reorderScenes(id, { beats, order } = {}, by = 'operator') {
+    await store.episodes.update(id, (ep) => {
+      const before = ep.scenes.map((x) => x.id);
+      if (F.isStructured(ep)) {
+        if (!beats || typeof beats !== 'object') throw new StudioError('BAD_ORDER', '단계별 장면 순서가 필요합니다.', { status: 422 });
+        const a = ep.scenes.filter((x) => x.part !== 'B');
+        const b = ep.scenes.filter((x) => x.part === 'B');
+        const given = [].concat(...F.BEAT_KEYS.map((k) => (Array.isArray(beats[k]) ? beats[k].map(String) : [])));
+        if (given.length !== a.length || new Set(given).size !== a.length || a.some((x) => !given.includes(x.id))) throw new StudioError('BAD_ORDER', '장면 목록이 현재와 맞지 않습니다. 화면을 새로고침하세요.', { status: 409 });
+        const empty = F.BEAT_KEYS.filter((k) => !(beats[k] || []).length);
+        if (empty.length) throw new StudioError('BEAT_EMPTY', `각 단계에는 최소 한 장면이 필요합니다 (비는 단계: ${empty.map((k) => (F.beatMeta(k) || {}).ko).join(', ')}).`, { status: 422 });
+        const next = [];
+        F.BEAT_KEYS.forEach((k) => beats[k].forEach((sid) => {
+          const sc = a.find((x) => x.id === sid);
+          sc.part = 'A'; sc.beatKey = k; sc.beat = F.ALL_KEYS.indexOf(k) + 1;
+          next.push(sc);
+        }));
+        ep.scenes = next.concat(b);
+        F.syncBeats(ep);
+      } else {
+        if (!Array.isArray(order) || order.length !== ep.scenes.length || new Set(order).size !== order.length || ep.scenes.some((x) => !order.includes(x.id))) throw new StudioError('BAD_ORDER', '장면 목록이 현재와 맞지 않습니다. 화면을 새로고침하세요.', { status: 409 });
+        ep.scenes = order.map((sid) => ep.scenes.find((x) => x.id === sid));
+        ep.scenes.forEach((x, i) => { x.beat = i + 1; });
+      }
+      const after = ep.scenes.map((x) => x.id);
+      if (JSON.stringify(before) === JSON.stringify(after) && !F.isStructured(ep)) return;
+      // the continuity line of a prompt names the previous scene: flag prompts whose predecessor changed
+      after.forEach((sid, i) => { if (before[before.indexOf(sid) - 1] !== after[i - 1] && ep.prompts[sid]) ep.prompts[sid].stale = true; });
+    }, { snapshot: true, by, note: '장면 순서 변경' });
+    store.episodes.audit(id, 'scenes.reordered', { by });
+    return episodeView(id);
+  }
+
   /** Edits ONLY the Korean title of one scene. Titles are not part of the script/storyboard fingerprints, so approvals stay valid. */
   async function setSceneTitle(id, sceneId, title) {
     const t = String(title == null ? '' : title).trim();
@@ -725,7 +763,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   return {
     cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator,
     summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

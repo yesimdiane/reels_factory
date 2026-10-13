@@ -237,6 +237,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/scenes/:sid/approve', async ({ p }) => { await S.projects.approveScene(p.id, p.sid); return ep(p.id); });
   route('POST', '/api/episodes/:id/scenes/:sid/revoke', async ({ p }) => { await S.projects.revokeScene(p.id, p.sid); return ep(p.id); });
   route('GET', '/api/episodes/:id/scenes/:sid/history', async ({ p }) => S.projects.sceneHistory(p.id, p.sid));
+  route('POST', '/api/episodes/:id/scenes/reorder', async ({ p, body }) => S.reorderScenes(p.id, { beats: body.beats, order: body.order }));
   route('POST', '/api/episodes/:id/scenes/approve-ready', async ({ p }) => { const r = await S.projects.approveReady(p.id); const v = ep(p.id); v.approveResult = r; return v; });
   // ---- review translation (read-only aid; the English text stays the source of truth) ----
   route('POST', '/api/episodes/:id/translate/estimate', async ({ p, body }) => S.translator.estimate(p.id, { text: body.text, to: body.to }));

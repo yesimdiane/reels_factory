@@ -7,6 +7,7 @@ import { formulaLayout } from './script-formula.js';
 import { timingCard } from './script-timing.js';
 import { errorIndex, attach, summary as errorSummary } from './script-validate.js';
 import { withTranslate } from './translate-box.js';
+import { structureMap } from './structure-map.js';
 import { projectPanel, sceneFooter, sceneTools, statusChip } from './script-project.js';
 
 // Mirror of the server's estimate (display only; the server validates).
@@ -66,6 +67,7 @@ export function script() {
   wrap.append(conceptPanel(ep, d));
   if (ep.derived.concept.linked) wrap.append(presetPanel(ep));
   wrap.append(timingCard(ep, { d, dirty, redrawAll: () => import('../state.js').then(({ hooks }) => hooks.rerender()) }));
+  wrap.append(structureMap(ep, { dirty: () => d.dirty }));
   wrap.append(sceneNav(ep, 'script-scene-', { badges: true }));
   if (ep.derived.scriptChangedSinceApproval) wrap.append(h('div', { class: 'banner warn' }, h('div', null, h('b', null, '승인 후 대본이 수정되었습니다'), '유료 생성·음성·렌더가 잠겼습니다. 다시 확인하고 승인하세요.')));
 
