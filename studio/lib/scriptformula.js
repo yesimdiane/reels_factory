@@ -9,7 +9,7 @@ const { defaultVars, VAR_KEYS } = require('./endingtemplates');
 const SCENE_FIELDS = ['title_ko', 'visual', 'action', 'narration', 'placement', 'durationSec', 'showsProduct'];
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-const endingVars = (ep) => Object.assign(defaultVars(ep.product), (ep.ending && ep.ending.vars) || {});
+const endingVars = (ep) => Object.assign(defaultVars(ep.product, { neutral: !!(ep.universeId && ep.universeId !== 'jackdiane') }), (ep.ending && ep.ending.vars) || {});
 
 function freeIds(used, n, prefix) {
   const out = [];
@@ -71,14 +71,14 @@ function applyEnding(ep, endings, { respectEdits = true } = {}) {
 }
 
 /** Creates the empty formula skeleton + the default-template Part B of a NEW episode. */
-function seedFormula(ep, endings) {
+function seedFormula(ep, endings, templateId) {
   ep.comedy_story = {};
   ep.product_ending = {};
   F.BEAT_KEYS.forEach((k) => { ep.comedy_story[k] = F.emptyBeat(); });
   F.ENDING_KEYS.forEach((k) => { ep.product_ending[k] = F.emptyBeat(); });
   ep.scenes = [];
   ep.lines = [];
-  ep.ending = { templateId: endings.activeId(), version: null, vars: {}, manualVars: [] };
+  ep.ending = { templateId: templateId || endings.activeId(), version: null, vars: {}, manualVars: [] };
   applyEnding(ep, endings, { respectEdits: false });
   return ep;
 }

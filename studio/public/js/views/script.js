@@ -21,7 +21,7 @@ export function script() {
   const ep = requireEpisode();
   if (!ep) return noEpisode();
   const d = draftOf(ep);
-  const chars = state.summary.characters;
+  const chars = state.summary.characters; // all library characters (names/avatars); scene pickers use ep.characters
   const v = ep.derived.validation;
   const index = errorIndex(ep);
   const sid = currentSceneId(ep);

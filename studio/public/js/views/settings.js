@@ -90,7 +90,7 @@ export function settings() {
   return wrap;
 }
 
-function charCard(c) {
+export function charCard(c) {
   const f = { look: c.look, promptBlock: c.promptBlock, catchphrase: c.catchphrase || '' };
   const input = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', multiple: true, style: 'display:none', onchange: async (e) => { for (const file of e.target.files) await act(async () => { await api.upload(`/api/characters/${c.id}/references?label=${encodeURIComponent(file.name)}`, file); return null; }, { ok: file.name + ' 업로드됨 (승인 필요)' }); e.target.value = ''; } });
   const dz = h('div', { class: 'dropzone', tabindex: 0, onclick: () => input.click(),

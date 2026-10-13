@@ -567,3 +567,18 @@ a.brand { text-decoration: none; color: inherit; }
 .crop-h.nw { left: 0; top: 0; cursor: nwse-resize; } .crop-h.n { left: 50%; top: 0; cursor: ns-resize; } .crop-h.ne { left: 100%; top: 0; cursor: nesw-resize; }
 .crop-h.e { left: 100%; top: 50%; cursor: ew-resize; } .crop-h.se { left: 100%; top: 100%; cursor: nwse-resize; } .crop-h.s { left: 50%; top: 100%; cursor: ns-resize; }
 .crop-h.sw { left: 0; top: 100%; cursor: nesw-resize; } .crop-h.w { left: 0; top: 50%; cursor: ew-resize; }
+
+/* Character library / Story Lab cast picker */
+.cast-universes { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.cast-universe { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 12px; border: 1.5px solid var(--line); border-radius: 14px; background: var(--paper); cursor: pointer; min-height: 44px; }
+.cast-universe.on { border-color: var(--sage-deep); background: var(--sage-wash); }
+.cast-uname { font-weight: 700; font-size: 16px; }
+.cast-thumbs { display: flex; gap: 4px; }
+.cast-thumb { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background: #efe9dc; flex: none; }
+.cast-init { display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: var(--muted); border: 1px solid var(--line); }
+.cast-chars { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; align-items: stretch; }
+.cast-char { display: flex; flex-direction: column; gap: 6px; }
+.cast-pick { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px; border: 1.5px solid var(--line); border-radius: 14px; background: var(--paper); text-align: left; cursor: pointer; min-height: 44px; }
+.cast-char.on .cast-pick { border-color: var(--sage-deep); background: var(--sage-wash); }
+.cast-cname { font-weight: 700; }
+.cast-add { border: 1.5px dashed var(--line-strong); border-radius: 14px; background: transparent; color: var(--muted); min-height: 88px; cursor: pointer; }

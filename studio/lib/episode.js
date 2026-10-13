@@ -129,6 +129,13 @@ function validateScript(ep, lib) {
   });
   if (!scenes.length) E('NO_SCENES', '장면이 없습니다.');
   if (!(ep.lines || []).length) E('NO_LINES', '대사가 없습니다.');
+  // Cast: an episode made for a selected cast may only use those characters (older episodes have no cast and keep working as before).
+  if (ep.cast && Array.isArray(ep.characters) && ep.characters.length) {
+    const allowed = new Set(ep.characters);
+    const nm = (id) => (chars[id] ? chars[id].name : id);
+    scenes.forEach((s) => (s.characters || []).forEach((id) => { if (!allowed.has(id)) E('OUT_OF_CAST', `${s.id}: ${nm(id)}은(는) 이 에피소드의 출연진이 아닙니다.`, { sceneId: s.id, field: 'characters' }); }));
+    (ep.lines || []).forEach((l) => { if (l.speaker && !allowed.has(l.speaker) && chars[l.speaker]) E('OUT_OF_CAST', `${l.sceneId}: 화자 ${nm(l.speaker)}은(는) 이 에피소드의 출연진이 아닙니다.`, { lineId: l.id, sceneId: l.sceneId, field: 'speaker' }); });
+  }
   const lineIds = new Set();
   const forbiddenClaims = (ep.product && ep.product.forbiddenClaims) || [];
   const perScene = {};

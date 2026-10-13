@@ -48,6 +48,7 @@ export function videoSummary(ep, { startVideo }) {
           h('div', { style: 'font-family:var(--serif);font-size:26px;font-weight:600' }, cost.mode === 'mock' ? '$0 (목업)' : cost.videoUnknown ? '추정치 없음' : fmtUsd(cost.videoUsd)),
           h('div', { class: 'small muted' }, [cost.voiceChars != null ? `음성 ${cost.voiceChars}자` : null, cost.note].filter(Boolean).join(' · '))),
         h('div', { class: 'small', style: 'font-weight:600' }, '다음: ', vs.next.label))),
+    ep.derived.castWarnings && ep.derived.castWarnings.length ? h('div', { class: 'banner warn', 'data-cast-warnings': '' }, icon('lock'), h('div', null, h('b', null, '렌더 전에 확인하세요 — 캐릭터 자산이 부족합니다'), h('ul', { style: 'margin:6px 0 0;padding-left:18px' }, ep.derived.castWarnings.map((w) => h('li', null, w.message, w.recovery ? h('span', { class: 'small muted' }, ' → ' + w.recovery) : null))), h('div', { class: 'small muted' }, '다른 캐릭터의 목소리나 이미지로 대체하지 않습니다.'))) : null,
     failedBox,
     vs.render.problems.length ? h('div', { class: 'small muted' }, '렌더 전에 필요한 것: ' + vs.render.problems.map((p) => p.message).join(' / ')) : null,
     h('div', { class: 'vs-actions' },

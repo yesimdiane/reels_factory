@@ -5,6 +5,7 @@ import { state, hooks, refresh, setProduct } from './state.js';
 import { overview } from './views/overview.js';
 import { products } from './views/products.js';
 import { storylab } from './views/storylab.js';
+import { characters } from './views/characters.js';
 import { episodes } from './views/episodes.js';
 import { script } from './views/script.js';
 import { storyboard } from './views/storyboard.js';
@@ -24,6 +25,7 @@ export const NAV = [
   ['overview', '홈', 'Home', overview, true],
   ['products', '제품 스튜디오', 'Product Studio', products, true],
   ['storylab', '스토리 랩', 'Story Lab', storylab, true],
+  ['characters', '캐릭터', 'Characters', characters, true],
   ['episodes', '에피소드', 'Episodes', episodes, true],
   ['script', '대본 스튜디오', 'Script Studio', script, true],
   ['storyboard', '스토리보드', 'Storyboard', storyboard, true],
@@ -40,7 +42,7 @@ const VIDEO_GROUP = ['animation', 'voice', 'render'];
 const TAB_VIEWS = ['overview', 'products', 'storylab', 'script', 'animation', 'settings'];
 const PRODUCT_VIEWS = ['products', 'storylab'];
 const EP_HEADER_VIEWS = ['script', 'storyboard', 'animation', 'voice', 'render', 'review', 'publishing', 'autodm'];
-const NO_ID_VIEWS = ['overview', 'episodes', 'settings'];
+const NO_ID_VIEWS = ['overview', 'episodes', 'settings', 'characters'];
 
 let poll = null;
 

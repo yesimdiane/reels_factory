@@ -57,6 +57,8 @@ function createStore({ dir, seedDir = SEED_DIR }) {
         c = readJson(path.join(seedDir, 'characters.json'));
         writeJsonAtomic(p('characters.json'), c);
       }
+      // schema 2 (universes + richer profiles): additive, idempotent, never overwrites edited values
+      if (!c.schema || c.schema < 2) { const m = require('./universes').migrate(c); if (m.changed) writeJsonAtomic(p('characters.json'), m.lib); c = m.lib; }
       return c;
     },
     save(c) {
