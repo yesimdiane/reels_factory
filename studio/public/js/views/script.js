@@ -6,6 +6,7 @@ import { presetPanel } from './script-prompt.js';
 import { formulaLayout } from './script-formula.js';
 import { timingCard } from './script-timing.js';
 import { errorIndex, attach, summary as errorSummary } from './script-validate.js';
+import { withTranslate } from './translate-box.js';
 import { projectPanel, sceneFooter, sceneTools, statusChip } from './script-project.js';
 
 // Mirror of the server's estimate (display only; the server validates).
@@ -95,9 +96,11 @@ export function script() {
       meter.className = 'chip ' + (need > sc.durationSec + 0.05 ? 'attention' : '');
     };
     const drawLines = () => {
-      lineWrap.replaceChildren(...d.lines.map((l, li) => ({ l, li })).filter((x) => x.l.sceneId === sc.id).map(({ l, li }) => lineRow(l, li)));
+      lineWrap.replaceChildren(...d.lines.map((l, li) => ({ l, li })).filter((x) => x.l.sceneId === sc.id).map(({ l, li }) => lineRow(l, li)), narrationRow());
       refreshMeter();
     };
+    // Narration belongs to the dialogue category: a Korean narration line of the scene (optional; stored as the scene's narration, not synthesized).
+    const narrationRow = () => { const nf = withTranslate(h('div', { class: 'field', style: 'grid-column: span 2' }, h('label', null, '나레이션 (선택, 한국어)'), h('textarea', { rows: 2, lang: 'ko', placeholder: '필요할 때만 입력하세요', oninput: (e) => { sc.narration = e.target.value; dirty(); } }, sc.narration || '')), ep, () => sc.narration); nf.querySelector('textarea').setAttribute('data-rf', `S:${sc.id}:narration`); return h('div', { class: 'line narration-row' }, h('div', { class: 'speaker' }, h('span', { class: 'chip' }, '🎙 나레이션')), nf, h('span')); };
     const lineRow = (l, li) => {
       const err = index.errors.filter((e) => e.lineId === l.id);
       const est = h('div', { class: 'small muted' });
@@ -126,9 +129,9 @@ export function script() {
         h('div', { class: 'row' }, meter, h('label', { class: 'row small muted', style: 'gap:6px' }, '길이', attach(index, h('input', { type: 'number', min: 1, max: 15, step: 0.5, style: 'width:76px', value: sc.durationSec, oninput: (e) => { sc.durationSec = Number(e.target.value); refreshMeter(); dirty(); } }), `S:${sc.id}:durationSec`), '초'),
           lockedB(sc) ? null : h('button', { class: 'btn icon ghost', title: '장면 위로', onclick: () => { if (si && (!ep.formula.structured || d.scenes[si - 1].beatKey === sc.beatKey)) { [d.scenes[si - 1], d.scenes[si]] = [d.scenes[si], d.scenes[si - 1]]; dirty(); redrawAll(); } } }, icon('up')),
           lockedB(sc) ? h('span', { class: 'chip done', title: '엔딩 구조는 잠겨 있습니다' }, '🔒') : h('button', { class: 'btn icon danger', title: '장면 삭제', onclick: async () => { if (await confirmDialog({ title: `${sc.id} 장면을 삭제할까요?`, body: '이 장면의 대사도 함께 삭제됩니다. 이미 만든 클립 파일은 지워지지 않습니다.', tone: 'clay', confirm: '삭제' })) { d.scenes.splice(si, 1); d.lines = d.lines.filter((l) => l.sceneId !== sc.id); dirty(); redrawAll(); } } }, icon('trash')))),
-      h('details', { open: ['visual', 'action', 'narration', 'placement', 'showsProduct'].some((f) => (index.byKey[`S:${sc.id}:${f}`] || []).length) }, h('summary', { class: 'small muted', style: 'cursor:pointer' }, '장면 연출 · 캐릭터 행동 · 내레이션 · 제품 배치 (필수: 시각 연출)'),
+      h('details', { open: ['visual', 'action', 'placement', 'showsProduct'].some((f) => (index.byKey[`S:${sc.id}:${f}`] || []).length) }, h('summary', { class: 'small muted', style: 'cursor:pointer' }, '장면 연출 · 캐릭터 행동 · 제품 배치 (필수: 시각 연출)'),
         h('div', { class: 'grid two', style: 'margin-top:8px' },
-          sceneField('시각 연출 (필수)', sc, 'visual', dirty, index), sceneField('캐릭터 행동 (선택)', sc, 'action', dirty, index), sceneField('내레이션 (선택, 한국어)', sc, 'narration', dirty, index), sceneField('제품 배치 (선택)', sc, 'placement', dirty, index)),
+          sceneField('시각 연출 · 애니메이션 (필수, English)', sc, 'visual', dirty, index, ep), sceneField('캐릭터 행동 (선택, English)', sc, 'action', dirty, index, ep), sceneField('제품 배치 (선택)', sc, 'placement', dirty, index, ep)),
         h('label', { class: 'row small', style: 'gap:6px;margin-top:6px' }, h('input', { type: 'checkbox', checked: !!sc.showsProduct, onchange: (e) => { sc.showsProduct = e.target.checked; dirty(); } }), '이 장면에 제품이 보임')),
       lineWrap,
       h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', onclick: () => { d.lines.push({ id: '', sceneId: sc.id, speaker: chars[0].id, en: '', ko: '' }); dirty(); drawLines(); } }, icon('plus'), '대사 추가'), (ep.suggestions || []).map((sg, i) => sg.sceneId === sc.id && h('button', { class: 'btn sm ghost', title: 'PR #19 초안에서 가져온 제안 대사', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/suggestions/${i}/add`), { ok: '제안 대사를 추가했습니다' }) }, 'PR #19 제안: “' + sg.en.slice(0, 28) + (sg.en.length > 28 ? '…' : '') + '”'))),
@@ -162,8 +165,8 @@ export function script() {
   return wrap;
 }
 
-function sceneField(label, sc, key, dirty, index) {
-  return attach(index, h('div', { class: 'field' }, h('label', null, label), h('textarea', { rows: 2, oninput: (e) => { sc[key] = e.target.value; dirty(); } }, sc[key] || '')), `S:${sc.id}:${key}`);
+function sceneField(label, sc, key, dirty, index, ep) {
+  return withTranslate(attach(index, h('div', { class: 'field' }, h('label', null, label), h('textarea', { rows: key === 'visual' || key === 'action' ? 4 : 2, oninput: (e) => { sc[key] = e.target.value; dirty(); } }, sc[key] || '')), `S:${sc.id}:${key}`), ep, () => sc[key]);
 }
 
 /** Concept → script traceability + AI script generation (only from an approved concept). */

@@ -19,6 +19,7 @@ const F = require('./formula');
 const SF = require('./scriptformula');
 const { createStartImages } = require('./startimages');
 const { createProjects } = require('./projects');
+const { createTranslator } = require('./translate');
 const { createIntegrations } = require('./integrations');
 const { createVideoProvider } = require('./providers');
 const { createGenerationService } = require('./generation');
@@ -46,6 +47,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const presets = createScriptPresets({ store, prompts, seedDir: SEED_DIR });
   const endings = createEndingTemplates({ store, seedDir: SEED_DIR });
   const scriptgen = createScriptGen({ store, products, storylab, prompts, presets, endings, router, lib: () => store.characters.load() });
+  const translator = createTranslator({ store, router });
   const startImages = createStartImages({ store, products, router, lib: () => store.characters.load(), log });
   const integrations = createIntegrations({ store, vault: keys, runtime, router, usage, cfg, fetchFn, muapiFactory, log });
 
@@ -721,7 +723,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   }
 
   return {
-    cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects,
+    cfg, store, video, gen, startImages, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator,
     summary, episodeView, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
