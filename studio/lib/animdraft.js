@@ -114,22 +114,36 @@ function facialMicroPrompt(beat, stepIndex) {
   const nose = speaking ? 'subtle nostril movement with breathing' : 'nose remains stable with natural breathing';
   return [beat.expression, 'nose: ' + nose, 'mouth: ' + mouth].filter(Boolean).join('; ').slice(0, 300);
 }
-function halfSecondBeats(beats, duration) {
+// Compact per-character performance tracks. Only split at 0.1s precision
+// when speech actually ends between regular 0.5s motion boundaries.
+function compactCharacterBeats(beats, duration, speechWindows) {
   const result = [];
+  const tenths = (n) => Math.round(n * 10) / 10;
+  const audioEnd = new Map();
+  for (const w of speechWindows) {
+    const key = String(w.line.speaker);
+    if (!audioEnd.has(key)) audioEnd.set(key, []);
+    audioEnd.get(key).push({ start: w.t0, end: w.audioEnd });
+  }
   for (const beat of beats) {
-    const start = Math.round(beat.t0 / STEP);
-    const end = Math.min(Math.round(duration / STEP), Math.round(beat.t1 / STEP));
-    for (let tick = start; tick < end; tick++) {
+    const ranges = audioEnd.get(String(beat.characterId)) || [];
+    const cutPoints = [beat.t0, beat.t1];
+    for (const w of ranges) if (w.end > beat.t0 + 0.001 && w.end < beat.t1 - 0.001) cutPoints.push(w.end);
+    cutPoints.sort((x, y) => x - y);
+    for (let i = 0; i < cutPoints.length - 1; i++) {
+      const t0 = tenths(cutPoints[i]), t1 = tenths(cutPoints[i + 1]);
+      if (t1 <= t0) continue;
+      const speaking = ranges.some(w => t0 >= w.start - 0.001 && t0 < w.end - 0.001);
       const { _speak, _listen, _exit, ...clean } = beat;
-      result.push({ ...clean, t0: tick * STEP, t1: (tick + 1) * STEP,
-        emotion: String(beat.emotion || 'attentive').trim(),
-        expression: facialMicroPrompt(beat, tick - start),
+      const mouth = speaking ? 'mouth moves naturally while audio plays' : 'mouth closed; no lip movement';
+      const nose = 'nose remains steady with natural breathing';
+      result.push({ ...clean, t0, t1, emotion: String(beat.emotion || 'attentive').trim(),
+        expression: [String(beat.expression || '').replace(/; nose:.*$/i, ''), 'nose: ' + nose, 'mouth: ' + mouth].filter(Boolean).join('; ').slice(0, 300),
         body: String(beat.body || 'maintains the established pose').slice(0, 300) });
     }
   }
-  return result.sort((a, b) => a.t0 - b.t0 || String(a.characterId).localeCompare(String(b.characterId)));
+  return result.sort((x, y) => x.t0 - y.t0 || String(x.characterId).localeCompare(String(y.characterId)));
 }
-
 
 // Read-only audio timing: use synthesized duration only for audio matching the
 // currently approved script. No TTS generation, file IO, or billable calls here.
@@ -150,11 +164,12 @@ function dialogueWindows(ep, lines, duration, exitFrom) {
     if (cursor >= duration - 1e-6 || cursor >= exitFrom - 1e-6) break;
     const measured = audioDuration(ep, line);
     const estimated = Math.max(1, snap(String(line.en).trim().split(/\\s+/).length / 2.7));
-    const seconds = measured == null ? estimated : Math.max(STEP, Math.ceil(measured / STEP) * STEP);
+    const seconds = measured == null ? estimated : Math.max(0.1, Math.ceil(measured * 10) / 10);
     const t0 = snap(cursor);
-    const t1 = Math.min(duration, exitFrom, t0 + seconds);
+    const audioEnd = Math.min(duration, exitFrom, Math.round((t0 + seconds) * 10) / 10);
+    const t1 = Math.min(duration, exitFrom, Math.ceil(audioEnd / STEP) * STEP);
     if (t1 - t0 < STEP - 1e-6) break;
-    out.push({ line, t0, t1, source: measured == null ? 'estimated' : 'synthesized-audio', measuredSec: measured });
+    out.push({ line, t0, t1, audioEnd, source: measured == null ? 'estimated' : 'synthesized-audio', measuredSec: measured });
     cursor = t1;
   }
   return out;
@@ -201,7 +216,8 @@ function draftBeats(ep, scene, characters) {
   });
 
   // 2) dialogue: a speaking beat (gesture from the line's content) + a reaction beat for the listener, before any exit
-  dialogueWindows(ep, lines, dur, exitFrom).forEach(({ line: l, t0, t1 }, n) => {
+  const speechWindows = dialogueWindows(ep, lines, dur, exitFrom);
+  speechWindows.forEach(({ line: l, t0, t1 }, n) => {
     const cid = cast.includes(l.speaker) ? l.speaker : cast[0];
     if (!cid) return;
     const persona = personaOf(cid, nameOf(cid));
@@ -236,7 +252,7 @@ function draftBeats(ep, scene, characters) {
     const tail = out.slice().sort((a, b) => a.t1 - b.t1).pop();
     out.push({ sceneId: scene.id, t0: r1(last), t1: r1(dur), characterId: tail.characterId, character: tail.character, emotion: tail.emotion, body: 'holds the final pose deliberately, letting the moment land', gaze: tail.gaze, expression: 'a held, knowing look', camera: 'camera holds' });
   }
-  return halfSecondBeats(out, dur);
+  return compactCharacterBeats(out, dur, speechWindows);
 }
 
 module.exports = { draftBeats, dialogueWindows, audioDuration, isGeneric, isGenericText, timedSegments, GENERIC, STEP };
