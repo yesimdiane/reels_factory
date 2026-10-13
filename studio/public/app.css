@@ -508,3 +508,16 @@ button.issue-link:focus-visible { outline: 2px solid var(--rose); outline-offset
 .asset-chip.ok { background: var(--sage-wash); border-color: #c4d3b8; color: var(--sage-deep); }
 .asset-chip.need { background: var(--clay-wash); border-color: #e6c6ab; color: #8a4e2c; }
 .scene-dlg { margin-top: 2px; }
+
+/* Storyboard Studio: one scene at a time */
+.sb-main-img { width: 100%; max-width: 360px; aspect-ratio: 9 / 16; max-height: 62vh; object-fit: cover; border-radius: 16px; border: 1px solid var(--line-strong); background: #e9e0cf; justify-self: center; display: block; margin: 0 auto; }
+.sb-main-img.empty { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--muted); font-size: 13px; gap: 4px; padding: 12px; }
+.sb-actions { display: none; }
+.sb-bar { display: none; }
+@media (max-width: 900px) { .sb-bar { display: flex; } .sb-scene { margin-bottom: 96px; } }
+@media (min-width: 901px) { .sb-actions { display: flex; } .sb-bar { display: none; } }
+.ref-pick { appearance: none; padding: 2px; border: 2px solid var(--line-strong); border-radius: 10px; background: #fff; cursor: pointer; }
+.ref-pick.on { border-color: var(--sage-deep); box-shadow: 0 0 0 2px var(--sage-wash); }
+.ref-pick img { width: 72px; height: 72px; object-fit: contain; display: block; border-radius: 8px; }
+.beat-row { padding: 10px; display: grid; gap: 8px; }
+.broll-thumb { width: 96px; height: 96px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line-strong); }
