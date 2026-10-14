@@ -168,7 +168,7 @@ export async function versionManager(e) {
 }
 
 const CATS = { drama: '반전형 생활 개그', viral: '바이럴형', info: '신뢰·정보형' };
-const STAGE_VIEW = { product: 'products', concept: 'storylab', script: 'script', approval: 'script', storyboard: 'storyboard', estimate: 'animation', animation: 'animation', clips: 'animation', voice: 'voice', render: 'render', review: 'review', publish: 'publishing' };
+const STAGE_VIEW = { product: 'products', concept: 'storylab', script: 'script', approval: 'script', storyboard: 'image', estimate: 'animation', animation: 'animation', clips: 'animation', voice: 'voice', render: 'render', review: 'review', publish: 'publishing' };
 
 /** Compact Episode header: code · title · product · category · stage · approvals · Resume Work. Advanced metadata sits in a collapsed panel. */
 export function episodeHeader(ep) {

@@ -34,7 +34,7 @@ export function storyboard() {
   if (!ep) return noEpisode();
   const sbOk = ep.derived.storyboardApproved;
   const wrap = h('div', { class: 'stack', style: 'gap:16px' });
-  wrap.append(pageHead('Storyboard', '스토리보드', '승인된 대본의 장면을 이미지와 애니메이션 에셋으로 개발합니다. 승인 전에는 어떤 유료 생성도 시작되지 않습니다.'));
+  wrap.append(pageHead('Image Studio', '이미지 스튜디오', '승인된 대본의 장면을 이미지와 애니메이션 에셋으로 개발합니다. 승인 전에는 어떤 유료 생성도 시작되지 않습니다.'));
   if (!ep.derived.scriptApproved) wrap.append(lockedNotice('대본이 승인되어야 스토리보드를 승인할 수 있습니다.', 'script', '대본으로 이동'));
   if (ep.derived.storyboardChangedSinceApproval) wrap.append(h('div', { class: 'banner warn', 'data-sb-changed': '' }, h('div', null, h('b', null, '승인 후 스토리보드가 수정되었습니다'), '바뀐 장면만 다시 확인하고 승인하면 됩니다 (바뀌지 않은 장면의 승인은 유지됩니다).', h('ul', { style: 'margin:6px 0 0 18px' }, (ep.derived.storyboardApproval.reasons || []).map((r) => h('li', null, r))))));
   autoBuild(ep);

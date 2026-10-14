@@ -1,3 +1,4 @@
+import { characters } from './characters.js';
 import { h, chip, icon, confirmDialog, toast, fmtUsd } from '../ui.js';
 import { state, act } from '../state.js';
 import { api } from '../api.js';
@@ -140,7 +141,7 @@ function parts() {
   return { general: wrap, characters: chars };
 }
 
-const TABS = [['general', '일반 · 비용'], ['ai', 'AI 연동'], ['connections', 'API 연결'], ['voices', '음성 연결'], ['prompts', '프롬프트 매니저'], ['scriptprompts', 'AI 프롬프트 관리'], ['endings', '엔딩 템플릿'], ['usage', '사용량 · 한도'], ['characters', '캐릭터']];
+const TABS = [['general', '일반 · 비용'], ['ai', 'AI 연동'], ['connections', 'API 연결'], ['voices', '음성 연결'], ['prompts', '프롬프트 매니저'], ['scriptprompts', 'AI 프롬프트 관리'], ['endings', '엔딩 템플릿'], ['usage', '사용량 · 한도'], ['characters', '캐릭터 라이브러리']];
 
 export function settings() {
   const wrap = h('div', { class: 'stack', style: 'gap:20px' });
@@ -154,7 +155,8 @@ export function settings() {
   else if (tab === 'scriptprompts') wrap.append(presetManager());
   else if (tab === 'endings') wrap.append(endingManager());
   else if (tab === 'usage') wrap.append(usagePanel());
-  else { const p = parts(); wrap.append(tab === 'characters' ? p.characters : p.general); }
+  else if (tab === 'characters') wrap.append(characters());
+  else wrap.append(parts().general);
   return wrap;
 }
 

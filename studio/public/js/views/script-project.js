@@ -64,7 +64,7 @@ export function projectPanel(ep, d, summaryEl) {
       h('div', { class: 'banner ok' }, '이 단계에서는 이미지가 만들어지거나 요금이 발생하지 않습니다. 이미지 생성은 이동 후 별도의 비용 확인과 승인을 거칩니다.')), confirm: scriptOk ? '스냅샷 저장하고 이동' : '승인하고 이동' });
     if (!ok) return;
     const r = await act(async () => { if (!scriptOk) await api.post(`/api/episodes/${ep.id}/script/approve`); return api.post(`/api/episodes/${ep.id}/script/handoff`); }, { ok: '전체 대본을 승인하고 스냅샷을 저장했습니다' });
-    if (r) { state.leaveGuard = null; location.hash = '#/storyboard/' + ep.id; }
+    if (r) { state.leaveGuard = null; location.hash = '#/image/' + ep.id; }
   };
   const dup = async () => {
     const title = h('input', { type: 'text', value: `${ep.title} (복제)`, 'aria-label': '새 에피소드 제목' });
@@ -93,7 +93,7 @@ export function projectPanel(ep, d, summaryEl) {
     h('div', { class: 'progress', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': sa.sceneCount, 'aria-valuenow': sa.approvedCount, 'aria-label': sa.progress }, h('i', { style: `width:${pct}%` })),
     h('div', { class: 'row project-actions', style: 'flex-wrap:wrap;gap:10px' },
       h('button', { class: 'btn clay big-cta', 'data-handoff': ep.id, disabled: d.dirty || d.epDirty || !(scriptOk ? ho.ready : (sa.canApproveProject && ep.derived.validation.ok)), title: !sa.allScenesApproved ? `${sa.progress} — 모든 씬을 먼저 승인하세요` : d.dirty || d.epDirty ? '저장하지 않은 변경이 있습니다' : '', onclick: handoff }, '스토리보드로 이동'),
-      ho.done ? h('a', { class: 'btn ghost', href: '#/storyboard/' + ep.id }, ho.current ? '스토리보드 열기' : '스토리보드 열기 (대본이 바뀜 — 다시 이동 필요)') : null),
+      ho.done ? h('a', { class: 'btn ghost', href: '#/image/' + ep.id }, ho.current ? '스토리보드 열기' : '스토리보드 열기 (대본이 바뀜 — 다시 이동 필요)') : null),
     h('details', { class: 'plain-details' }, h('summary', { class: 'small muted' }, '더보기 · 오류 목록 · 일괄 승인 · 복제 · 템플릿'),
       h('div', { class: 'stack', style: 'gap:10px;margin-top:8px' },
         h('div', { class: 'small muted' }, '① 빨간 항목 고치기 → ② 씬별 승인 → ③ 스토리보드로 이동 (전체 대본 승인 포함)'),

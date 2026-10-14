@@ -54,7 +54,7 @@ function drawAi(ov) {
           h('td', null, h('input', { type: 'text', list: dl, value: f.model, placeholder: '연결 테스트로 불러온 모델', 'aria-label': r.label + ' 모델', oninput: (e) => (f.model = e.target.value) }), h('datalist', { id: dl }, ov.providers.flatMap((p) => (p.models || []).map((m) => h('option', { value: m }))))),
           h('td', null, h('button', { class: 'btn sm', onclick: async () => { if (await call(() => api.put('/api/ai/routing/' + r.task, f), '저장했습니다')) reload(); } }, '저장')));
         void prov;
-      }).concat(videoRow))))),
+      }).concat(videoRow)))),
     h('p', { class: 'small muted', style: 'margin:0' }, '모델 ID는 하드코딩하지 않습니다. 각 제공자의 "연결 테스트"가 계정의 실제 모델 목록을 불러오고, 목록에 없는 모델은 저장되지 않습니다.')));
 
   // ---- pricing ----

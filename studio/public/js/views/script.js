@@ -144,7 +144,7 @@ function assetStrip(ep) {
     ...a.characters.map((c) => { const v = c.voice || {}; const vok = c.voiceReady; return h('span', { class: 'asset-chip ' + (c.referenceReady && vok ? 'ok' : 'need'), 'data-asset': c.name }, h('b', null, c.name + ': '), c.referenceReady ? '캐릭터 데이터 완료' : '캐릭터 이미지 필요', ' / ',
       vok ? `${v.providerLabel || ''} · ${v.name || ''}` : (v.message || c.voiceNote || '목소리 미지정'),
       !vok && v.action === 'connect' ? h('a', { href: '#/settings', 'data-connect-provider': '', style: 'margin-left:6px', onclick: () => (state.settingsTab = 'voices') }, '제공자 연결') : null,
-      v.state && v.state !== 'ready' ? h('a', { href: '#/characters', 'data-change-voice': '', style: 'margin-left:6px' }, '목소리 변경') : null); }));
+      v.state && v.state !== 'ready' ? h('a', { href: '#/settings/characters', 'data-change-voice': '', style: 'margin-left:6px' }, '목소리 변경') : null); }));
 }
 
 let ordering = false;

@@ -106,7 +106,7 @@ export async function openCutEditor(ep, sceneId) {
       box.replaceChildren(...ws.map((w) => h('div', { class: 'banner ' + (w.level === 'unknown' ? '' : 'warn') }, h('div', null, w.text,
         w.level === 'blur' || w.level === 'soft' ? h('div', { class: 'small', style: 'margin-top:4px' }, '더 선명한 컷이 필요하면 고해상도 이미지를 따로 만들 수 있습니다. 스토리보드에서 비용 확인과 별도 승인을 거치며, 여기서는 아무것도 생성하지 않습니다. ',
           h('label', { class: 'row small', style: 'gap:6px;margin-top:4px' }, h('input', { type: 'checkbox', checked: !!i.hiResRequested, onchange: (e) => { i.hiResRequested = e.target.checked; } }), '이 컷은 고해상도 이미지가 필요함으로 표시'),
-          h('a', { href: '#/storyboard/' + ep.id, onclick: () => closeModal() }, '스토리보드로 이동')) : null))));
+          h('a', { href: '#/image/' + ep.id, onclick: () => closeModal() }, '스토리보드로 이동')) : null))));
     };
     const box = h('div', { class: 'stack', style: 'gap:6px' });
     const presetBtns = h('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px' }, cfg.builtIn.map((p) => h('button', { type: 'button', class: 'btn sm ' + (i.preset === p.key ? '' : 'ghost'), onclick: () => { applyPreset(i, p); draw(); } }, p.label)));

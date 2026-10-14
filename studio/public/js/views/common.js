@@ -3,7 +3,7 @@ import { state, go, selectEpisode } from '../state.js';
 import { api } from '../api.js';
 import { refTile, openFull } from './ref-gallery.js';
 
-export const VIEW_FOR_STEP = { product: 'products', concept: 'storylab', script: 'script', approval: 'script', storyboard: 'storyboard', estimate: 'animation', animation: 'animation', clips: 'animation', voice: 'voice', render: 'render', review: 'review', publish: 'publishing' };
+export const VIEW_FOR_STEP = { product: 'products', concept: 'storylab', script: 'script', approval: 'script', storyboard: 'image', estimate: 'animation', animation: 'animation', clips: 'animation', voice: 'voice', render: 'render', review: 'review', publish: 'publishing' };
 const NEXT_LABEL = {
   product: '제품·참조 이미지 준비', concept: '스토리 컨셉 승인하기', script: '대본 완성하기', approval: '대본 승인하기', storyboard: '스토리보드 승인하기', estimate: '비용 확인하고 생성 승인', animation: '애니메이션 생성하기',
   clips: '클립 검토·승인', voice: '음성 생성하기', render: '렌더 시작하기', review: '최종 영상 승인하기', publish: '캡션·ManyChat 승인하기',

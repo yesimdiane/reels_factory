@@ -14,7 +14,7 @@ export function animation() {
   const wrap = h('div', { class: 'stack', style: 'gap:20px' });
   wrap.append(pageHead('Animation Studio', '애니메이션 스튜디오', '승인된 캐릭터 이미지로 장면별 9:16 클립을 만듭니다. 생성 전 예상 비용을 확인·승인하고, 만들어진 클립은 하나씩 검토해 승인합니다.', episodePicker()));
   wrap.append(videoTabs('animation'));
-  if (!ep.derived.storyboardApproved) wrap.append(lockedNotice('대본과 스토리보드가 승인되어야 생성을 시작할 수 있습니다.', 'storyboard', '스토리보드로 이동'));
+  if (!ep.derived.storyboardApproved) wrap.append(lockedNotice('대본과 이미지 스튜디오 승인이 되어야 생성을 시작할 수 있습니다.', 'image', '이미지 스튜디오로 이동'));
   wrap.append(animationStudio(ep));
   // everything below is the multi-scene overview (batch generation with one confirmation, all clips, job history) — collapsed by default
   const all = h('div', { class: 'stack', style: 'gap:16px' });
