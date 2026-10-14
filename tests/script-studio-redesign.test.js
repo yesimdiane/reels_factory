@@ -29,7 +29,8 @@ test('Script Studio shows no image previews, image prompts or generation control
   assert.doesNotMatch(focus, /h\('img'|scene-preview|previewFor|startImageInfo|\/media\/cutframe/, 'no image previews');
   assert.doesNotMatch(focus, /이미지 · 애니메이션 프롬프트|prompt-view/, 'no prompt panel');
   assert.doesNotMatch(script + focus + project, /makeStartImages|start-images|프레임 올리기|시작 이미지 만들기/, 'no image generation controls');
-  for (const key of ["'dialogue'", "'visual'", "'acting'", "'advanced'"]) assert.match(focus, new RegExp("section\\(ep, sid, " + key), 'panel ' + key);
+  for (const key of ["'dialogue'", "'visual'", "'advanced'"]) // three sections: 시각 연출 · 대사/자막/액션/효과음 · 고급 (the old 캐릭터 연기 panel became the elements editor in section B)
+   assert.match(focus, new RegExp("section\\(ep, sid, " + key), 'panel ' + key);
   assert.match(focus, /data-dialogue-summary/);
   assert.match(script, /data-asset-strip/);
   assert.match(script, /제품 사진/); assert.match(script, /캐릭터 데이터 완료/); assert.doesNotMatch(script, /목소리 API 필요/, 'generic voice text replaced'); assert.match(script, /providerLabel/); assert.match(script, /data-change-voice/); assert.match(script, /data-connect-provider/);

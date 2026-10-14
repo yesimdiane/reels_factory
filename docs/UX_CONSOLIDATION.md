@@ -28,3 +28,14 @@
 - Dedicated regression run of the PRD-001 episode through every step.
 
 These are separate PRs; each keeps `ep.*` as the single source of truth and adds no paid call without its existing confirmation dialog.
+
+## PR A — Script Studio consolidation (this branch)
+Script Studio's scene editor now has three sections over the same canonical episode data:
+1. **① 시각 연출** — tabs *장면 연출* / *B컷 계획*. Fields: `scene.look {background, lighting, atmosphere, style}`, `scene.pose {body, pose}`, character **roles** per cast member (등장 = `scene.characters`, 참조만 = `scene.referenceOnly`, 없음) taken from the story's cast, the existing `visual`/`placement`/product toggle and 씬 다시 생성하기. A *reference-only* character is never also visible, is named in image/video prompts as "do not draw", and no reference image of it is attached (attaching would risk it appearing). B-cut planning edits the **same `ep.broll[]` records** Storyboard develops into images (kinds extended: 제품 시연, 주변 디테일, 전환 샷; add / edit / duplicate into a free slot / delete / reorder). No image is generated here.
+2. **② 대사 · 자막 · 액션 · 효과음** — dialogue + subtitles (`ep.lines`, now with duplicate and drag-reorder), optional narration, **performance elements** (`scene.elements`: 몸 동작 · 감정 · 카메라, and collapsed 눈 · 눈썹 · 입 · 표정; add / duplicate / delete / drag-reorder, optional timing + character). `scene.action`/`emotion` are kept in sync from the elements so every older reader (prompts, generation, approvals) is unchanged; older scenes get their action/emotion text shown as elements on first open. Sound effects use the **same editor component and `ep.sfx[]` records** as Storyboard (`sfx-editor.js`): built-in, upload, HeyGen catalog *search* (no SFX generation exists).
+3. **③ 고급 설정** — duration, estimated dialogue time with overflow warning, and the **shared 0.5 s beat timeline** (`beat-timeline.js`, the same component and `ep.motion[sid].beats` as Storyboard) with an objective, CCTV-style writing hint.
+
+Migration impact: none. New scene fields are optional; absent on existing episodes (PRD-001 scenes unchanged). Storyboard approval hashes include `look`/`pose`/`referenceOnly` only when they have content, so existing approvals stay valid; performance elements alone do not invalidate storyboard approval.
+
+Tests: `script-studio-consolidation.test.js`, `script-studio-consolidation-browser.test.js`.
+Limitations: element timing is stored but not yet turned into beats automatically (PR C); template (free) video prompts do not yet include look/pose lines (Gemini and start-image prompts do).

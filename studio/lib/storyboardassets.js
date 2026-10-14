@@ -12,7 +12,7 @@ const animdraft = require('./animdraft');
 const { sniffImage } = require('./extract');
 
 const STEP = 0.1; // permit precise audio-end cuts; normal motion remains 0.5s
-const KINDS = ['close_up', 'reaction', 'insert', 'broll'];
+const KINDS = ['close_up', 'reaction', 'insert', 'broll', 'product_demo', 'environment', 'transition'];
 const KIND_LABEL = { close_up: '클로즈업', reaction: '리액션 컷', insert: '인서트', broll: 'B-roll' };
 const FIELDS = ['character', 'emotion', 'body', 'gaze', 'expression', 'camera'];
 const r1 = (n) => Math.round(n * 1000) / 1000;
@@ -187,6 +187,36 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
     store.episodes.audit(id, 'broll.saved', { by, id: out.id });
     return out;
   }
+  /** Planning order of one scene's B-cut concepts (ids of that scene only); the records themselves are untouched. */
+  async function reorderBroll(id, sceneId, ids, by = 'operator') {
+    await store.episodes.update(id, (ep) => {
+      sceneOf(ep, sceneId);
+      const all = brollOf(ep);
+      const mine = all.filter((b) => b.sceneId === sceneId && b.status !== 'removed');
+      const want = (ids || []).map(String);
+      if (want.length !== mine.length || !mine.every((b) => want.includes(b.id))) throw new StudioError('BAD_ORDER', '이 장면의 B컷 목록과 순서가 맞지 않습니다.', { status: 422 });
+      const slots = all.map((b, i) => (b.sceneId === sceneId && b.status !== 'removed' ? i : -1)).filter((i) => i >= 0);
+      const byId = new Map(mine.map((b) => [b.id, b]));
+      slots.forEach((slot, k) => { all[slot] = byId.get(want[k]); });
+    });
+    store.episodes.audit(id, 'broll.reordered', { sceneId, by });
+  }
+  /** A copy of a concept (kind, note, effect, length) in the first free time slot; the image/approval are NOT copied — it is a new proposal. */
+  async function duplicateBroll(id, bid, by = 'operator') {
+    const ep0 = store.episodes.get(id);
+    const src = brollOf(ep0).find((b) => b.id === bid && b.status !== 'removed');
+    if (!src) throw new StudioError('NOT_FOUND', 'B-roll을 찾을 수 없습니다: ' + bid, { status: 404 });
+    const sc = sceneOf(ep0, src.sceneId);
+    const taken = brollOf(ep0).filter((b) => b.status !== 'removed' && b.sceneId === src.sceneId).sort((a, b) => a.insertAtSec - b.insertAtSec);
+    let at = 0;
+    for (let guard = 0; guard < 40; guard++) {
+      const hit = taken.find((b) => at < b.insertAtSec + b.durationSec - 1e-6 && b.insertAtSec < at + src.durationSec - 1e-6);
+      if (!hit) break;
+      at = r1(hit.insertAtSec + hit.durationSec);
+    }
+    if (at + src.durationSec > Number(sc.durationSec) + 1e-6) throw new StudioError('NO_ROOM', '장면 안에 같은 길이의 빈 구간이 없어 복제할 수 없습니다.', { status: 422, recovery: '길이를 줄이거나 다른 B컷의 시간을 옮긴 뒤 다시 복제하세요.' });
+    return saveBroll(id, { sceneId: src.sceneId, kind: src.kind, insertAtSec: at, durationSec: src.durationSec, effect: src.effect, note: (src.note ? src.note + ' ' : '') + '(복제)', origin: 'duplicate' }, by);
+  }
   async function setBrollStatus(id, bid, status, by = 'operator') {
     if (!['approved', 'proposed', 'rejected'].includes(status)) throw new StudioError('BAD_STATUS', '알 수 없는 상태입니다.', { status: 422 });
     let out;
@@ -267,7 +297,7 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
     });
   });
 
-  return { STEP, KINDS, assetHealth, cleanBeats, draftBeats, timelineText, composePrompt, motionOf, saveMotion, draftMotion, saveBroll, setBrollStatus, removeBroll, uploadBrollImage, suggestBroll, approvedBroll, brollView, brollFile };
+  return { STEP, KINDS, assetHealth, cleanBeats, draftBeats, timelineText, composePrompt, motionOf, saveMotion, draftMotion, saveBroll, reorderBroll, duplicateBroll, setBrollStatus, removeBroll, uploadBrollImage, suggestBroll, approvedBroll, brollView, brollFile };
 }
 
 module.exports = { createStoryboardAssets, STEP, KINDS };

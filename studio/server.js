@@ -278,6 +278,8 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/scenes/:sid/motion/draft', async ({ p }) => { await S.sba.draftMotion(p.id, p.sid); return ep(p.id); });
   route('GET', '/api/episodes/:id/broll', async ({ p }) => ({ broll: S.sba.brollView(S.store.episodes.get(p.id)) }));
   route('POST', '/api/episodes/:id/broll', async ({ p, body }) => { await S.sba.saveBroll(p.id, body || {}); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/broll/order', async ({ p, body }) => { await S.sba.reorderBroll(p.id, p.sid, body.ids); return ep(p.id); });
+  route('POST', '/api/episodes/:id/broll/:bid/duplicate', async ({ p }) => { await S.sba.duplicateBroll(p.id, p.bid); return ep(p.id); });
   route('POST', '/api/episodes/:id/broll/suggest', async ({ p }) => { const made = await S.sba.suggestBroll(p.id); const v = ep(p.id); v.suggested = made.length; return v; });
   route('POST', '/api/episodes/:id/broll/:bid/status', async ({ p, body }) => { await S.sba.setBrollStatus(p.id, p.bid, body.status); return ep(p.id); });
   route('DELETE', '/api/episodes/:id/broll/:bid', async ({ p }) => { await S.sba.removeBroll(p.id, p.bid); return ep(p.id); });
