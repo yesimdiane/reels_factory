@@ -9,13 +9,42 @@
       "mode": "image-to-video",
       "promptField": "prompt",
       "imageField": "image_url",
-      "durations": [5, 10],
-      "aspectRatios": ["16:9", "9:16", "1:1"],
+      "durations": [
+        5,
+        10
+      ],
+      "aspectRatios": [
+        "16:9",
+        "9:16",
+        "1:1"
+      ],
       "supportsNegativePrompt": true,
       "lipSync": false,
-      "verification": "docs-example",
+      "verification": "unverified",
       "docsUrl": "https://muapi.ai/docs/kling",
-      "notes": "Request example in the official Kling guide: POST /api/v1/kling-master with prompt, image_url, duration (5 or 10). aspect_ratio (16:9, 9:16, 1:1) and negative_prompt are listed in the parameter table. The docs do not list a price."
+      "notes": "Legacy endpoint. Current public MuAPI model API documentation does not confirm POST /kling-master. Select a verified model instead; do not submit paid requests with this legacy configuration."
+    },
+    {
+      "id": "kling-v2.1-standard-i2v",
+      "label": "Kling 2.1 Standard · image-to-video",
+      "provider": "muapi",
+      "endpoint": "kling-v2.1-standard-i2v",
+      "mode": "image-to-video",
+      "promptField": "prompt",
+      "imageField": "image_url",
+      "durations": [
+        5
+      ],
+      "aspectRatios": [
+        "16:9",
+        "9:16",
+        "1:1"
+      ],
+      "supportsNegativePrompt": false,
+      "lipSync": false,
+      "verification": "docs-example",
+      "docsUrl": "https://muapi.ai/playground/kling-v2.1-standard-i2v/api",
+      "notes": "Official MuAPI model API page documents POST /api/v1/kling-v2.1-standard-i2v with prompt, image_url, aspect_ratio and duration (default 5). Price must be configured by the user. Verify access for your account before paid generation."
     }
   ]
 }
