@@ -111,19 +111,19 @@ test('Gemini: both characters → both sheets once each; scene with nobody → n
 
 test('Gemini output that breaks the rules is rejected and nothing is saved', async () => {
   const bad = [
-    goodScene('S1', { actions: 'Two Jack stand side by side in the street.' }),
-    goodScene('S1', { actions: 'Jack and Diane argue under the umbrella rack.' }),
-    goodScene('S1', { environment: 'The character sheet with all expressions fills the frame as a collage.' }),
-    goodScene('S1', { actions: 'The holder is waterproof and opens automatically.' }),
-    { scene_id: 'S1', camera: '', actions: '', environment: '', lighting: '', continuity: '' },
+    [goodScene('S1', { actions: 'Two Jack stand side by side in the street.' }), 'AI_CAST_VIOLATION'],
+    [goodScene('S1', { actions: 'Jack and Diane argue under the umbrella rack.' }), 'AI_CAST_VIOLATION'],
+    [goodScene('S1', { environment: 'The character sheet with all expressions fills the frame as a collage.' }), 'AI_REFERENCE_SHEET_VIOLATION'],
+    [goodScene('S1', { actions: 'The holder is waterproof and opens automatically.' }), 'AI_PRODUCT_CLAIM_VIOLATION'],
+    [{ scene_id: 'S1', camera: '', actions: '', environment: '', lighting: '', continuity: '' }, 'AI_RESPONSE_INCOMPLETE'],
   ];
-  for (const b of bad) {
+  for (const [b, category] of bad) {
     const { s } = make({ gemini: fakeClient({ scenes: [b] }) });
     await approveWithScenes(s, 'EP01');
     addSheets(s);
     await s.rebuildPrompts('EP01', undefined, { force: true });
     const before = s.episodeView('EP01').scenes[0].prompt.video;
-    await assert.rejects(s.rebuildPrompts('EP01', ['S1'], { mode: 'gemini', confirmAi: true, force: true }), (e) => ['AI_OUTPUT_REJECTED'].includes(e.code), JSON.stringify(b));
+    await assert.rejects(s.rebuildPrompts('EP01', ['S1'], { mode: 'gemini', confirmAi: true, force: true }), (e) => e.code === category && e.details[0].code === category && !!e.correlationId, JSON.stringify(b));
     assert.equal(s.episodeView('EP01').scenes[0].prompt.video, before, 'existing prompt untouched');
   }
 });

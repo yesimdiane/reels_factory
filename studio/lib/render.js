@@ -101,7 +101,7 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
     (ep.scenes || []).forEach((s) => {
       const c = ep.clips[s.id];
       const v = c && c.approvedVersion && c.versions.find((x) => x.v === c.approvedVersion);
-      if (!v) return problems.push({ code: 'CLIP_NOT_APPROVED', message: `${s.id}: 승인된 클립이 없습니다.`, recovery: 'Animation Studio에서 클립을 승인하세요.' });
+      if (!v) return problems.push({ code: 'CLIP_NOT_APPROVED', message: `${s.id}: 승인된 클립이 없습니다.`, recovery: 'Storyboard의 장면별 "영상 클립 생성 · 승인"에서 클립을 생성·업로드·승인하세요.' });
       const f = store.episodes.file(ep.id, v.file);
       if (!fs.existsSync(f)) return problems.push({ code: 'CLIP_MISSING', message: `${s.id}: 클립 파일이 없습니다.`, recovery: '클립을 다시 생성하거나 업로드하세요.' });
       if (sha256File(f) !== v.sha256) return problems.push({ code: 'CLIP_CHECKSUM', message: `${s.id}: 클립 파일이 승인된 파일과 다릅니다 (체크섬 불일치).`, recovery: '클립을 다시 승인하세요.' });

@@ -614,3 +614,7 @@ body.scene-dragging-body { cursor: grabbing; user-select: none; -webkit-user-sel
 /* B-roll approval state: soft sage card when approved AND the image is really usable */
 .broll-card[data-broll-state="approved"] { background: var(--sage-wash); border-color: #b6c8a8; box-shadow: inset 0 0 0 1px #c4d3b8; }
 .broll-card[data-broll-state="attention"] { background: var(--clay-wash); border-color: #e6c6ab; }
+
+/* Rendering readiness: unfinished steps are neutral, only real problems are red */
+.asset-chip.pend { background: var(--paper); border-color: var(--line-strong); color: var(--espresso-2); }
+.pending-note { padding: 8px 12px; border: 1px dashed var(--line-strong); border-radius: 10px; background: var(--paper); font-size: 13px; }

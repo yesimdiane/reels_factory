@@ -27,6 +27,8 @@ const { createStartImages } = require('./startimages');
 const { createCharRefs } = require('./charrefs');
 const { createBrollImages } = require('./brollimages');
 const { createAnimPlan } = require('./animplan');
+const approvalsMod = require('./approvals');
+const { createAiDiagnostics } = require('./aidiag');
 const { createRenderReadiness } = require('./renderready');
 const { createProjects } = require('./projects');
 const { createTranslator } = require('./translate');
@@ -41,7 +43,7 @@ const { createVoiceCatalog } = require('./voicecatalog');
 const { createRenderService } = require('./render');
 const { createPromptService } = require('./promptgen');
 const { createPublishingService, checklist: publishChecklist, validate: validatePublishing } = require('./publishing');
-const { dialogueTiming, checkTitleKo, sceneTitle, validateScript, pipeline, isScriptApproved, isStoryboardApproved, scriptFingerprint, storyboardFingerprint, totalPlannedSec } = require('./episode');
+const { dialogueTiming, checkTitleKo, sceneTitle, validateScript, pipeline, isScriptApproved, isStoryboardApproved, storyboardApprovalStatus, scriptFingerprint, storyboardFingerprint, totalPlannedSec } = require('./episode');
 const { lintPrompt } = require('./prompts');
 const { lintCast, SHEET_RULE } = require('./charrules');
 const { clipSecFor, modelById, limitFor, spentUsd } = require('./budget');
@@ -88,7 +90,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const brollImages = createBrollImages({ store, products, router, charRefs, sba, lib: () => store.characters.load() });
   const animplan = createAnimPlan({ store, router, sba, charRefs, lib: () => store.characters.load() });
   const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs });
-  const promptSvc = createPromptService({
+  const aiDiagnostics = createAiDiagnostics({ store });
+  const promptSvc = createPromptService({ diagnostics: aiDiagnostics,
     store, cfg, geminiFactory, log,
     available: () => router.routeFor('storyboardPrompts').provider !== 'mock' && !!keys.get(router.routeFor('storyboardPrompts').provider),
     composeExtra: () => { const c = prompts.compose('storyboard', {}); return { text: c.text, versions: c.versions }; },
@@ -258,6 +261,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         scriptApproved: isScriptApproved(ep),
         scriptChangedSinceApproval: !!(ep.approvals.script && !isScriptApproved(ep)),
         storyboardApproved: isStoryboardApproved(ep),
+        storyboardApproval: (({ everApproved, legacy, scenes, reasons, changedScenes }) => ({ everApproved, legacy, scenes, reasons, changedScenes }))(storyboardApprovalStatus(ep)),
         storyboardChangedSinceApproval: !!(ep.approvals.storyboard && !isStoryboardApproved(ep)),
         validation,
         project: { id: ep.projectId || '', name: (projects.ensureProject(ep) || {}).name || '' },
@@ -1161,7 +1165,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       if (missing.length) throw new StudioError('NO_PROMPT', `프롬프트가 없는 장면: ${missing.map((s) => s.id).join(', ')}`, { recovery: '"프롬프트 만들기"를 누르세요.', status: 409 });
       const bad = ep.scenes.filter((s) => lintPrompt(ep.prompts[s.id].video, ep).length);
       if (bad.length) throw new StudioError('PRODUCT_CLAIM', `확인되지 않은 제품 주장이 있는 장면: ${bad.map((s) => s.id).join(', ')}`, { status: 409 });
-      ep.approvals.storyboard = { hash: storyboardFingerprint(ep), by, at: nowIso() };
+      ep.approvals.storyboard = approvalsMod.makeRecord(ep, by, nowIso());
     });
     store.episodes.audit(id, 'storyboard.approved', { by });
     return episodeView(id);
@@ -1305,7 +1309,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
 
   return {
-    exportName, cfg, characterView, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    exportName, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,

@@ -11,6 +11,7 @@ import { openCutEditor } from './cut-editor.js';
 import { charRefsPanelBody, charRefsBadge } from './scene-charrefs.js';
 import { openBrollAi, previewBroll } from './broll-ai.js';
 import { openAnimGenerate } from './anim-plan.js';
+import { clipsPanelBody, clipsBadge } from './scene-clips.js';
 import { readinessCard } from './render-readiness.js';
 import { pageHead, noEpisode, lockedNotice, productRefStrip, makeStartImages } from './common.js';
 
@@ -31,7 +32,7 @@ export function storyboard() {
   const wrap = h('div', { class: 'stack', style: 'gap:16px' });
   wrap.append(pageHead('Storyboard', '스토리보드', '승인된 대본의 장면을 이미지와 애니메이션 에셋으로 개발합니다. 승인 전에는 어떤 유료 생성도 시작되지 않습니다.'));
   if (!ep.derived.scriptApproved) wrap.append(lockedNotice('대본이 승인되어야 스토리보드를 승인할 수 있습니다.', 'script', '대본으로 이동'));
-  if (ep.derived.storyboardChangedSinceApproval) wrap.append(h('div', { class: 'banner warn' }, h('div', null, h('b', null, '승인 후 스토리보드가 수정되었습니다'), '다시 확인하고 승인하세요.')));
+  if (ep.derived.storyboardChangedSinceApproval) wrap.append(h('div', { class: 'banner warn', 'data-sb-changed': '' }, h('div', null, h('b', null, '승인 후 스토리보드가 수정되었습니다'), '바뀐 장면만 다시 확인하고 승인하면 됩니다 (바뀌지 않은 장면의 승인은 유지됩니다).', h('ul', { style: 'margin:6px 0 0 18px' }, (ep.derived.storyboardApproval.reasons || []).map((r) => h('li', null, r))))));
   autoBuild(ep);
   if (!ep.scenes.length) { wrap.append(h('div', { class: 'empty' }, '장면이 없습니다. 대본 스튜디오에서 장면을 만드세요.')); return wrap; }
   const i = curIndex(ep);
@@ -125,6 +126,7 @@ function sceneCard(ep, sc, i, chars, go) {
         h('button', { class: 'btn sm ghost', type: 'button', disabled: !ep.derived.scriptApproved, onclick: () => aiPrompts(ep, sc) }, icon('play'), 'AI로 다시 만들기'),
         h('button', { class: 'btn sm ghost', type: 'button', onclick: async () => { if (!sc.prompt || !sc.prompt.edited || await confirmDialog({ title: '수정한 프롬프트를 덮어쓸까요?', body: '이 장면의 프롬프트를 템플릿으로 다시 만듭니다. 이전 버전은 기록에 남습니다.', tone: 'clay' })) { delete state.draft[key]; act(() => api.post(`/api/episodes/${ep.id}/storyboard/prompts`, { sceneIds: [sc.id], force: true }), { ok: '프롬프트를 다시 만들었습니다' }); } } }, '템플릿으로 만들기 (무료)')))),
     panel(ep, sc, 'motion', '애니메이션 (기본 0.5초 · 음성 0.3초)', mot ? `${mot.beats.length}비트 · r${mot.rev}` : '아직 없음', motionPanel(ep, sc)),
+    panel(ep, sc, 'clips', '영상 클립 생성 · 승인', clipsBadge(sc), clipsPanelBody(ep, sc)),
     panel(ep, sc, 'cuts', '컷 · B-roll', `컷 ${cuts} · B-roll ${bro}`, cutsPanel(ep, sc)),
     panel(ep, sc, 'advanced', '고급 설정', '', h('div', { class: 'stack', style: 'gap:10px' },
       h('div', { class: 'field' }, h('label', null, '시각 설명'), h('textarea', { rows: 3, oninput: (e) => (d.visual = e.target.value) }, d.visual)),

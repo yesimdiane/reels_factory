@@ -67,7 +67,10 @@ function storyboardFingerprint(ep) {
 }
 
 const isScriptApproved = (ep) => !!(ep.approvals && ep.approvals.script && ep.approvals.script.hash === scriptFingerprint(ep));
-const isStoryboardApproved = (ep) => !!(ep.approvals && ep.approvals.storyboard && ep.approvals.storyboard.hash === storyboardFingerprint(ep));
+const approvals = require('./approvals');
+/** Per-scene, per-field storyboard approval (see approvals.js). Pre-v2 approvals keep the old whole-hash rule. */
+const storyboardApprovalStatus = (ep) => approvals.status(ep, scriptFingerprint);
+const isStoryboardApproved = (ep) => storyboardApprovalStatus(ep).approved;
 
 /** Rough English speaking time (no API call). Elongated words (BABYYYY) get extra time. */
 function estimateSpeechSec(text) {
@@ -253,4 +256,4 @@ function pipeline(ep, lib, ctx = {}) {
   });
 }
 
-module.exports = { dialogueTiming, speechNeed, wordBudget, TIGHT_OVER, OVERFLOW_OVER, checkTitleKo, sceneTitle, titlesStrict, scriptFingerprint, storyboardFingerprint, isScriptApproved, isStoryboardApproved, validateScript, estimateSpeechSec, totalPlannedSec, pipeline, STEP_KEYS };
+module.exports = { dialogueTiming, speechNeed, wordBudget, TIGHT_OVER, OVERFLOW_OVER, checkTitleKo, sceneTitle, titlesStrict, scriptFingerprint, storyboardFingerprint, storyboardApprovalStatus, isScriptApproved, isStoryboardApproved, validateScript, estimateSpeechSec, totalPlannedSec, pipeline, STEP_KEYS };

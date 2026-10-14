@@ -40,7 +40,7 @@ export function animation() {
 }
 
 /** Cost review first (free estimate), then the explicit confirmation; used by the summary buttons and per-scene retries. */
-async function startGeneration(ep, sceneIds) {
+export async function startGeneration(ep, sceneIds) {
   if (!sceneIds || !sceneIds.length) return toast('만들 장면이 없습니다', { error: true });
   const modelId = state.summary.settings.defaultModelId;
   let est;
@@ -101,14 +101,15 @@ async function authorizeAndRun(ep, g, est) {
   }, { ok: '생성을 시작했습니다' });
 }
 
-function clipCard(ep, sc, g) {
+/** opts.onRegenerate(sc): used by the Storyboard panel (it starts the cost review directly instead of selecting the scene on this page). */
+export function clipCard(ep, sc, g, opts = {}) {
   const key = 'clip:' + sc.id;
   const vs = sc.clips.versions;
   const sel = state.draft[key] != null && vs.some((v) => v.v === state.draft[key]) ? state.draft[key] : (sc.clips.approvedVersion || (vs.length ? vs[vs.length - 1].v : null));
   const cur = vs.find((v) => v.v === sel);
   const running = (ep.generation.jobs || []).find((j) => j.sceneId === sc.id && ['preparing', 'submitting', 'processing'].includes(j.status));
   const fileIn = h('input', { type: 'file', accept: 'video/mp4,video/quicktime', style: 'display:none', onchange: async (e) => { const f = e.target.files[0]; if (f) await act(() => api.upload(`/api/episodes/${ep.id}/clips/${sc.id}/upload`, f), { ok: '클립을 올렸습니다 — 검토 후 승인하세요' }); } });
-  return h('div', { class: 'clip-card' + (cur && cur.status === 'approved' ? ' approved' : '') },
+  return h('div', { class: 'clip-card' + (cur && cur.status === 'approved' ? ' approved' : ''), 'data-clip-card': sc.id, 'data-clip-status': cur ? cur.status : 'none' },
     h('div', { class: 'row between' }, h('b', null, sc.id + ' · ' + (sc.title_ko || sc.title || '').slice(0, 22)), cur ? chip(({ approved: '승인됨', pending_review: '검토 대기', rejected: '거절됨', superseded: '교체됨' })[cur.status] || cur.status, ({ approved: 'done', pending_review: 'attention', rejected: 'err' })[cur.status] || '') : chip(running ? '생성 중' : '클립 없음', running ? 'processing' : '')),
     h('div', { class: 'phone sm' }, cur ? h('video', { src: cur.url, controls: true, playsinline: true, preload: 'metadata', muted: true }) : h('div', { class: 'ph' }, running ? '생성 중… (자동으로 새로고침됩니다)' : '아직 클립이 없습니다')),
     cur ? h('div', { class: 'small muted' }, `v${cur.v} · ${cur.durationSec}초 · ${cur.width}×${cur.height}` + (cur.mock ? ' · 목업' : cur.manual ? ' · 직접 업로드' : '') + (cur.reused ? ' · 캐시 재사용' : '')) : null,
@@ -117,6 +118,6 @@ function clipCard(ep, sc, g) {
     h('div', { class: 'row', style: 'gap:6px' },
       cur && cur.status !== 'approved' ? h('button', { class: 'btn sm sage', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/clips/${sc.id}/${cur.v}/review`, { decision: 'approve' }), { ok: sc.id + ' 클립을 승인했습니다' }) }, icon('check'), '승인') : null,
       cur && cur.status !== 'rejected' ? h('button', { class: 'btn sm danger', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/clips/${sc.id}/${cur.v}/review`, { decision: 'reject' })) }, '거절') : null,
-      h('button', { class: 'btn sm ghost', title: '이 장면만 다시 생성 (새 승인 필요)', disabled: !!running || !ep.derived.storyboardApproved, onclick: () => { g.sceneIds = [sc.id]; import('../state.js').then(({ hooks }) => { hooks.rerender(); window.scrollTo({ top: 0, behavior: 'smooth' }); toast(sc.id + '만 선택했습니다. 위에서 비용을 확인하고 다시 생성하세요.'); }); } }, icon('refresh'), '재생성'),
+      h('button', { class: 'btn sm ghost', 'data-clip-regenerate': sc.id, title: '이 장면만 다시 생성 (새 승인 필요)', disabled: !!running || !ep.derived.storyboardApproved, onclick: () => { if (opts.onRegenerate) return opts.onRegenerate(sc); g.sceneIds = [sc.id]; import('../state.js').then(({ hooks }) => { hooks.rerender(); window.scrollTo({ top: 0, behavior: 'smooth' }); toast(sc.id + '만 선택했습니다. 위에서 비용을 확인하고 다시 생성하세요.'); }); } }, icon('refresh'), '재생성'),
       h('button', { class: 'btn sm ghost', title: 'Google Flow 등에서 직접 만든 클립 올리기', onclick: () => fileIn.click() }, icon('upload')), fileIn));
 }

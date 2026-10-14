@@ -17,7 +17,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { StudioError, uid, nowIso, sha256File, writeFileAtomic } = require('./util');
-const { isScriptApproved, isStoryboardApproved, scriptFingerprint, storyboardFingerprint } = require('./episode');
+const { isScriptApproved, isStoryboardApproved, storyboardApprovalStatus, scriptFingerprint } = require('./episode');
+const { sceneSetHash } = require('./approvals');
 const { modelById, clipSecFor, estimateRun, jobKey, spentUsd, limitFor, round } = require('./budget');
 const { ProviderError } = require('./providers');
 const { probe } = require('../../renderer/lib/ffmpeg');
@@ -70,7 +71,11 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     const out = [];
     const add = (code, message, recovery) => out.push({ code, message, recovery });
     if (!isScriptApproved(ep)) add('SCRIPT_NOT_APPROVED', '대본이 승인되지 않았거나 승인 후 수정되었습니다.', 'Script Studio에서 대본을 다시 확인하고 승인하세요.');
-    if (!isStoryboardApproved(ep)) add('STORYBOARD_NOT_APPROVED', '스토리보드가 승인되지 않았거나 승인 후 수정되었습니다.', 'Storyboard에서 프롬프트를 확인하고 승인하세요.');
+    // storyboard approval is per scene and per field: only a scene whose OWN approved content changed is held back, and the changed field is named
+    const sb = storyboardApprovalStatus(ep);
+    if (!sb.everApproved) add('STORYBOARD_NOT_APPROVED', '스토리보드가 아직 승인되지 않았습니다.', 'Storyboard에서 프롬프트와 시작 이미지를 확인하고 "스토리보드 승인"을 누르세요.');
+    else if (sb.legacy && !sb.approved) add('STORYBOARD_CHANGED', sb.reasons[0], 'Storyboard에서 확인한 뒤 다시 승인하세요.');
+    else scenes.forEach((s) => { const st = sb.scenes[s.id]; if (st && !st.approved) add('STORYBOARD_SCENE_CHANGED', st.isNew ? `${s.id}: 승인 이후에 추가된 장면입니다.` : `${s.id}: ${st.changed.map((c) => c.label).join(', ')}이(가) 승인 후 바뀌었습니다.`, 'Storyboard에서 이 장면을 확인한 뒤 다시 승인하세요 (다른 장면의 승인은 유지됩니다).'); });
     if (charRefs && provider.mode === 'live') charRefs.validate(ep, scenes).problems.forEach((p) => add(p.code, p.message, '캐릭터 라이브러리에서 실제 참조 이미지를 올리고 승인하거나 장면의 "캐릭터 참조 이미지"에서 고르세요.'));
     scenes.forEach((s) => {
       const p = ep.prompts && ep.prompts[s.id];
@@ -160,7 +165,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       mode: provider.mode,
       estimatedUsd: est.totalUsd,
       scriptHash: scriptFingerprint(store.episodes.get(epId)),
-      storyboardHash: storyboardFingerprint(store.episodes.get(epId)),
+      storyboardHash: sceneSetHash(store.episodes.get(epId), est.scenes),
       createdAt: new Date(now()).toISOString(),
       expiresAt: new Date(now() + AUTH_TTL_MS).toISOString(),
       by,
@@ -179,7 +184,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     if (new Date(a.expiresAt).getTime() < now()) throw new StudioError('AUTH_EXPIRED', '생성 승인이 만료되었습니다 (30분).', { recovery: '다시 승인하세요.', status: 403 });
     if (!a.sceneIds.includes(sceneId)) throw new StudioError('AUTH_SCENE', `${sceneId}는 이 승인에 포함되지 않았습니다.`, { status: 403 });
     if (a.consumed.includes(sceneId)) throw new StudioError('AUTH_USED', `${sceneId}에 대한 승인은 이미 사용되었습니다. 다시 생성하려면 새로 승인하세요.`, { status: 403 });
-    if (a.scriptHash !== scriptFingerprint(ep) || a.storyboardHash !== storyboardFingerprint(ep)) throw new StudioError('AUTH_STALE', '승인 후 대본/스토리보드가 바뀌었습니다.', { recovery: '다시 승인하세요.', status: 403 });
+    if (a.scriptHash !== scriptFingerprint(ep) || a.storyboardHash !== sceneSetHash(ep, a.sceneIds)) throw new StudioError('AUTH_STALE', '승인 후 대본/이 장면들의 스토리보드가 바뀌었습니다.', { recovery: '다시 승인하세요.', status: 403 });
     if (a.modelId !== model.id) throw new StudioError('AUTH_MODEL', '승인된 모델과 다릅니다.', { status: 403 });
   }
 
@@ -272,7 +277,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       const auth = ep0.generation.authorizations.find((a) => a.id === authId);
       const model = modelById(store.models(), auth && auth.modelId);
       checkAuthorization(ep0, auth, sceneId, model);
-      if (!isScriptApproved(ep0) || !isStoryboardApproved(ep0)) throw new StudioError('NOT_APPROVED', '대본과 스토리보드가 승인 상태여야 합니다.', { status: 403 });
+      { const sbs = storyboardApprovalStatus(ep0); const st = sbs.scenes[sceneId]; if (!isScriptApproved(ep0) || !sbs.everApproved || (st ? !st.approved : !sbs.approved)) throw new StudioError('NOT_APPROVED', '대본과 이 장면의 스토리보드가 승인 상태여야 합니다.', { status: 403 }); }
       if ((ep0.generation.jobs || []).some((j) => j.sceneId === sceneId && ACTIVE.has(j.status))) throw new StudioError('ALREADY_RUNNING', `${sceneId}에 진행 중인 작업이 있습니다.`, { status: 409 });
       const img = startImage(ep0, scene);
       const prompt = ep0.prompts[sceneId];

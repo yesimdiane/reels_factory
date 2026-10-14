@@ -127,13 +127,15 @@ test('video prompt compilation: start frame, character references, timeline, cam
 
 test('Rendering Readiness names the exact blockers, then clears them step by step (PRD flow)', async () => {
   const m = await setup();
-  const codes = () => m.s.renderReadiness.check(m.s.store.episodes.get(m.id)).items.filter((i) => i.severity === 'block').map((i) => i.code);
+  const codes = () => m.s.renderReadiness.check(m.s.store.episodes.get(m.id)).items.filter((i) => i.severity === 'block' || i.severity === 'pending').map((i) => i.code);
   let r = m.s.renderReadiness.check(m.s.store.episodes.get(m.id));
   assert.equal(r.canGenerateVideo, false); assert.equal(r.canRender, false);
   assert.ok(codes().includes('NO_START_IMAGE') || codes().includes('CHARACTER_REF_MISSING'), codes().join());
   assert.ok(codes().includes('STORYBOARD_NOT_APPROVED'));
-  assert.ok(codes().includes('CLIP_NOT_APPROVED'), 'the exact reason the render fails today: no approved clips');
+  assert.ok(codes().includes('CLIP_NOT_GENERATED'), 'no clips yet: a neutral pending step, not an error');
+  assert.equal(r.items.filter((i) => i.code === 'CLIP_NOT_GENERATED').every((i) => i.severity === 'pending'), true);
   assert.ok(r.items.some((i) => i.stage === 'render') && r.items.some((i) => i.stage === 'generate'));
+  assert.equal(r.items.some((i) => i.severity === 'block' && i.code === 'CLIP_NOT_GENERATED'), false);
   assert.equal(r.categories.find((c) => c.key === 'animation').blocking, 0, 'animation exists thanks to the script approval');
   // missing animation (older approved storyboard) is a specific blocker, nothing else is touched
   await m.s.store.episodes.update(m.id, (e) => { delete e.motion[m.sid]; });
@@ -145,13 +147,13 @@ test('Rendering Readiness names the exact blockers, then clears them step by ste
   for (const sc of m.s.store.episodes.get(m.id).scenes) { await m.s.uploadStartFrame(m.id, sc.id, png(160 + sc.id.length), sc.id + '.png'); await m.s.approveStartFrame(m.id, sc.id, true); }
   await m.s.approveStoryboard(m.id);
   r = m.s.renderReadiness.check(m.s.store.episodes.get(m.id));
-  assert.equal(r.canGenerateVideo, true, JSON.stringify(r.items.filter((i) => i.severity === 'block' && i.stage === 'generate').map((i) => i.code + ':' + i.message)));
+  assert.equal(r.canGenerateVideo, true, JSON.stringify(r.items.filter((i) => (i.severity === 'block' || i.severity === 'pending') && i.stage === 'generate').map((i) => i.code + ':' + i.message)));
   assert.equal(r.canRender, false, 'clips and audio are still missing');
   assert.ok(codes().every((c) => /CLIP|AUDIO/.test(c)), codes().join());
   // a deleted start-frame file is reported specifically (not a generic failure)
   const sc0 = m.s.store.episodes.get(m.id).scenes[0];
   require('node:fs').rmSync(m.s.store.episodes.file(m.id, 'startframes', sc0.startImage.file));
-  assert.ok(m.s.renderReadiness.check(m.s.store.episodes.get(m.id)).items.some((i) => i.sceneId === sc0.id && i.code === 'NO_START_IMAGE' && i.severity === 'block'));
+  assert.ok(m.s.renderReadiness.check(m.s.store.episodes.get(m.id)).items.some((i) => i.sceneId === sc0.id && i.code === 'NO_START_IMAGE'));
 });
 
 test('compatibility: legacy beats (name only) display with ids; an approved storyboard stays approved', async () => {

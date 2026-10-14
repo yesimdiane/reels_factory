@@ -10,7 +10,8 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { StudioError, nowIso, sha256 } = require('./util');
+const { StudioError, nowIso, sha256, uid } = require('./util');
+const { describe: describeResponse } = require('./aidiag');
 const { isScriptApproved } = require('./episode');
 const { buildScenePromptParts, buildNegativePrompt, lintPrompt } = require('./prompts');
 const { lintCast, SHEET_RULE } = require('./charrules');
@@ -18,6 +19,18 @@ const { clipSecFor, modelById } = require('./budget');
 
 const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 const SECTION_KEYS = ['camera', 'actions', 'environment', 'lighting', 'continuity'];
+
+/** Distinct, accurate failure categories (the user is told what actually went wrong — a missing field is not a rule violation). */
+const CATEGORY_OF_RULE = { UNSELECTED_CHARACTER: 'AI_CAST_VIOLATION', DUPLICATE_CHARACTER: 'AI_CAST_VIOLATION', PRODUCT_CLAIM: 'AI_PRODUCT_CLAIM_VIOLATION', SHEET_IN_SCENE: 'AI_REFERENCE_SHEET_VIOLATION' };
+const FORMAT_CATEGORIES = new Set(['AI_RESPONSE_INCOMPLETE', 'AI_RESPONSE_MALFORMED', 'AI_SCENE_ID_MISMATCH']);
+const RECOVERY = {
+  AI_RESPONSE_INCOMPLETE: 'Gemini 응답에 필요한 항목이 빠져 있습니다 (규칙 위반이 아니라 응답 형식 문제입니다). 다시 만들거나 "템플릿으로 만들기"(무료)를 사용하세요. 자동으로 다시 시도하지 않으며 기존 프롬프트는 그대로입니다.',
+  AI_RESPONSE_MALFORMED: 'Gemini 응답을 해석할 수 없습니다 (잘렸거나 JSON 형식이 아님). 장면 수를 줄여 다시 만들거나 "템플릿으로 만들기"(무료)를 사용하세요. 자동으로 다시 시도하지 않으며 기존 프롬프트는 그대로입니다.',
+  AI_SCENE_ID_MISMATCH: 'Gemini가 요청하지 않은 장면 ID를 돌려주었거나 요청한 장면 ID가 없습니다. 다시 만들거나 "템플릿으로 만들기"(무료)를 사용하세요. 기존 프롬프트는 그대로입니다.',
+  AI_CAST_VIOLATION: 'AI가 만든 프롬프트가 장면의 출연 캐릭터 규칙을 어겼습니다 (선택되지 않은 캐릭터 등장 또는 같은 캐릭터 중복). 저장하지 않았고 기존 프롬프트는 그대로입니다.',
+  AI_PRODUCT_CLAIM_VIOLATION: 'AI가 만든 프롬프트에 확인되지 않은 제품 주장이 있습니다. 저장하지 않았고 기존 프롬프트는 그대로입니다.',
+  AI_REFERENCE_SHEET_VIOLATION: 'AI가 만든 프롬프트가 캐릭터 시트·콜라주·표정 그리드를 장면에 그리라고 지시합니다. 저장하지 않았고 기존 프롬프트는 그대로입니다.',
+};
 
 const SCHEMA = {
   type: 'OBJECT',
@@ -73,7 +86,7 @@ function geminiInstruction(ep, scenes, lib, clipSecOf) {
   ].join('\n');
 }
 
-function createPromptService({ store, cfg, geminiFactory = null, clientFactory = null, available = null, composeExtra = null, log = () => {} }) {
+function createPromptService({ store, diagnostics = null, cfg, geminiFactory = null, clientFactory = null, available = null, composeExtra = null, log = () => {} }) {
   const lib = () => store.characters.load();
 
   function usesSheetFor(scene, L) {
@@ -115,6 +128,7 @@ function createPromptService({ store, cfg, geminiFactory = null, clientFactory =
    * Returns the list of {sceneId, source}; throws (saving nothing) when the AI output breaks a rule.
    */
   async function generate(epId, { sceneIds, mode = 'template', confirmAi = false, force = false, by = 'operator' } = {}) {
+    const correlationId = uid('pg');
     const ep0 = store.episodes.get(epId);
     if (!isScriptApproved(ep0)) throw new StudioError('SCRIPT_NOT_APPROVED', '대본이 승인된 뒤에 프롬프트를 만들 수 있습니다.', { recovery: '대본 스튜디오에서 대본을 승인하세요.', status: 409 });
     const L = lib();
@@ -128,6 +142,10 @@ function createPromptService({ store, cfg, geminiFactory = null, clientFactory =
     let ai = null;
     let aiMeta = null;
     let extra = null;
+    let rawOut = null;
+    let unexpected = [];
+    const problems = [];
+    const diag = (p, extraInfo = {}) => { if (diagnostics) diagnostics.record(Object.assign({ kind: 'prompt_generation', correlationId, epId, model: (aiMeta && aiMeta.model) || cfg.geminiModel, provider: (aiMeta && aiMeta.provider) || 'gemini', sceneId: p.sceneId, category: p.code, rule: p.rule || p.code, reason: p.message, missingFields: p.missingFields, responseShape: describeResponse(rawOut, SECTION_KEYS) }, extraInfo)); };
     if (mode === 'gemini') {
       if (!confirmAi) throw new StudioError('CONFIRM_REQUIRED', 'Gemini 호출은 유료일 수 있습니다. 확인 후 다시 실행하세요.', { recovery: '"AI로 만들기"에서 비용 안내를 확인하고 승인하세요.', status: 409 });
       if (!todo.length) throw new StudioError('NOTHING_TO_DO', '수정한 프롬프트만 있어 AI가 만들 장면이 없습니다.', { recovery: '덮어쓰기를 선택하거나 장면을 지정하세요.' });
@@ -139,23 +157,51 @@ function createPromptService({ store, cfg, geminiFactory = null, clientFactory =
       try {
         out = await client.generateJson({ prompt: geminiInstruction(ep0, todo, L, clipSecOf) + (extra && extra.text ? '\n\nOPERATOR PROMPT (editable in Settings → Prompt Manager; the CHARACTER SHEET and PRODUCT rules above always win):\n' + extra.text : ''), images, schema: SCHEMA });
       } catch (e) {
-        throw new StudioError('GEMINI_FAILED', String(e.message || e).replace(cfg.geminiApiKey || '\u0000', '[redacted]').slice(0, 400), { recovery: 'Gemini API 키/모델을 확인하거나 "템플릿으로 만들기"(무료)를 사용하세요. 기존 프롬프트는 바뀌지 않았습니다.', status: 502 });
+        const msg = String(e.message || e).replace(cfg.geminiApiKey || '\u0000', '[redacted]').slice(0, 400);
+        if (e && e.kind === 'malformed') {
+          const p = { code: 'AI_RESPONSE_MALFORMED', rule: 'parse', message: `Gemini 응답을 해석할 수 없습니다${e.truncated ? ' (출력 한도에서 잘림: MAX_TOKENS)' : ''}: ${msg}` };
+          diag(p, { sceneId: todo.map((x) => x.id).join(',') , finishReason: e.finishReason });
+          throw new StudioError('AI_RESPONSE_MALFORMED', `${p.message} (요청 ID ${correlationId})`, { details: [Object.assign({}, p, { correlationId })], recovery: RECOVERY.AI_RESPONSE_MALFORMED, status: 422, correlationId });
+        }
+        diag({ code: 'GEMINI_FAILED', rule: e && e.kind || 'request', message: msg }, { sceneId: todo.map((x) => x.id).join(',') });
+        throw new StudioError('GEMINI_FAILED', msg, { recovery: 'Gemini API 키/모델을 확인하거나 "템플릿으로 만들기"(무료)를 사용하세요. 기존 프롬프트는 그대로이며 자동으로 다시 시도하지 않습니다.', status: 502, correlationId });
       }
-      ai = new Map(((out && out.scenes) || []).map((x) => [x.scene_id, x]));
+      rawOut = out;
+      aiMeta = { model: client.model || cfg.geminiModel, provider: client.provider || 'gemini' };
+      // structure first: is this a scenes response at all, and do its scene ids line up with what was asked?
+      if (!out || typeof out !== 'object' || !Array.isArray(out.scenes)) {
+        const p = { code: 'AI_RESPONSE_MALFORMED', rule: 'structure', message: 'Gemini 응답에 scenes 배열이 없습니다.' };
+        diag(p, { sceneId: todo.map((x) => x.id).join(',') });
+        throw new StudioError('AI_RESPONSE_MALFORMED', `${p.message} (요청 ID ${correlationId})`, { details: [Object.assign({}, p, { correlationId })], recovery: RECOVERY.AI_RESPONSE_MALFORMED, status: 422, correlationId });
+      }
+      const norm = (id) => String(id == null ? '' : id).trim().toUpperCase();
+      ai = new Map();
+      out.scenes.forEach((x) => { const k = norm(x && x.scene_id); if (k && !ai.has(k)) ai.set(k, x); });
+      const asked = new Set(todo.map((x) => norm(x.id)));
+      unexpected = [...ai.keys()].filter((k) => !asked.has(k));
       aiMeta = { model: client.model || cfg.geminiModel, provider: client.provider || 'gemini', promptVersions: extra ? extra.versions : undefined, imageShas: images.map((i) => i.sha), at: nowIso() };
     }
     const results = [];
     const staged = {};
-    const problems = [];
     todo.forEach((s) => {
       const idx = ep0.scenes.findIndex((x) => x.id === s.id);
       let over = null;
       let neg = '';
       let source = 'template';
       if (ai) {
-        const g = ai.get(s.id);
-        if (!g || SECTION_KEYS.some((k) => !String(g[k] || '').trim())) {
-          problems.push({ sceneId: s.id, code: 'AI_INCOMPLETE', message: `${s.id}: Gemini 응답에 필요한 항목이 없습니다.` });
+        const g = ai.get(String(s.id).trim().toUpperCase());
+        if (!g) {
+          const p = unexpected.length
+            ? { sceneId: s.id, code: 'AI_SCENE_ID_MISMATCH', rule: 'scene_id', message: `${s.id}: Gemini가 이 장면 ID를 돌려주지 않았고 요청하지 않은 ID(${unexpected.slice(0, 5).join(', ')})를 돌려주었습니다.` }
+            : { sceneId: s.id, code: 'AI_RESPONSE_INCOMPLETE', rule: 'scene_missing', message: `${s.id}: Gemini 응답에 이 장면이 없습니다 (응답에는 ${ai.size}개 장면만 있음).` };
+          problems.push(p); diag(p); return;
+        }
+        const bad0 = SECTION_KEYS.filter((k) => g[k] != null && typeof g[k] !== 'string');
+        if (bad0.length) { const p = { sceneId: s.id, code: 'AI_RESPONSE_MALFORMED', rule: 'field_type', message: `${s.id}: 항목 형식이 올바르지 않습니다 (문자열이 아님): ${bad0.join(', ')}`, missingFields: bad0 }; problems.push(p); diag(p); return; }
+        const missingFields = SECTION_KEYS.filter((k) => !String(g[k] || '').trim());
+        if (missingFields.length) {
+          const p = { sceneId: s.id, code: 'AI_RESPONSE_INCOMPLETE', rule: 'required_fields', message: `${s.id}: Gemini 응답에 다음 항목이 비어 있거나 없습니다: ${missingFields.join(', ')}`, missingFields };
+          problems.push(p); diag(p, { excerpt: Object.fromEntries(SECTION_KEYS.filter((k) => !missingFields.includes(k)).map((k) => [k, g[k]])) });
           return;
         }
         over = Object.fromEntries(SECTION_KEYS.map((k) => [k, String(g[k]).trim()]));
@@ -164,15 +210,18 @@ function createPromptService({ store, cfg, geminiFactory = null, clientFactory =
       }
       const c = compose(ep0, s, L, clipSecOf(s), over, neg, idx);
       if (source === 'gemini') {
-        const body = SECTION_KEYS.map((k) => over[k]).join('\n') + '\n' + neg;
-        const bad = lintPrompt(body, ep0).map((w) => ({ code: 'PRODUCT_CLAIM', message: `확인되지 않은 제품 주장 "${w}"` }));
-        const castBad = lintCast(body, s, L);
-        bad.concat(castBad).forEach((b) => problems.push({ sceneId: s.id, code: b.code, message: `${s.id}: ${b.message}` }));
+        const body = SECTION_KEYS.map((k) => over[k]).join('\n');
+        const found = lintPrompt(body + '\n' + neg, ep0).map((w) => ({ code: 'PRODUCT_CLAIM', message: `확인되지 않은 제품 주장 "${w}"` })).concat(lintCast(body, s, L, { negative: neg }));
+        found.forEach((b) => { const p = { sceneId: s.id, code: CATEGORY_OF_RULE[b.code] || 'AI_OUTPUT_REJECTED', rule: b.code, message: `${s.id}: ${b.message}` }; problems.push(p); diag(p, { excerpt: { rule: b.code } }); });
       }
       staged[s.id] = { video: c.video, negative: c.negative, sections: c.sections, source, edited: false, builtAt: nowIso(), ai: source === 'gemini' ? aiMeta : undefined, castIds: (s.characters || []).slice(), usedSheetRule: c.video.includes(SHEET_RULE) };
       results.push({ sceneId: s.id, source });
     });
-    if (problems.length) throw new StudioError('AI_OUTPUT_REJECTED', problems[0].message, { details: problems, recovery: 'AI가 만든 프롬프트가 규칙(캐릭터 수, 제품 주장, 시트 재현 금지)을 어겨 저장하지 않았습니다. 다시 만들거나 템플릿을 사용하세요. 기존 프롬프트는 그대로입니다.', status: 422 });
+    if (problems.length) {
+      const first = problems[0];
+      const cats = [...new Set(problems.map((x) => x.code))];
+      throw new StudioError(first.code, `${problems.map((x) => x.message).join(' / ')} (요청 ID ${correlationId})`, { details: problems.map((x) => Object.assign({ correlationId }, x)), recovery: cats.map((c) => RECOVERY[c] || '').filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i).join(' '), status: 422, correlationId });
+    }
     await store.episodes.update(epId, (ep) => {
       Object.keys(staged).forEach((id) => {
         const cur = ep.prompts[id];
@@ -188,4 +237,4 @@ function createPromptService({ store, cfg, geminiFactory = null, clientFactory =
   return { generate, status, usesSheetFor };
 }
 
-module.exports = { createPromptService, geminiInstruction, SCHEMA };
+module.exports = { createPromptService, geminiInstruction, SCHEMA, CATEGORY_OF_RULE, FORMAT_CATEGORIES };
