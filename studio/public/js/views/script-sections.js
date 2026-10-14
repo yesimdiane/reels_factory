@@ -75,8 +75,8 @@ export function bcutPlanner(ep, sc) {
 
 // ------------------------------------------------------------------ performance elements (actions / expressions / camera)
 const TYPE_LABEL = { body: '몸 동작', emotion: '감정', camera: '카메라', eyes: '눈', eyebrows: '눈썹', mouth: '입', face: '표정' };
-const MAIN = ['body', 'emotion', 'camera'];
-const FACIAL = ['eyes', 'eyebrows', 'mouth', 'face'];
+export const MAIN = ['body', 'emotion', 'camera'];
+export const FACIAL = ['eyes', 'eyebrows', 'mouth', 'face'];
 const nid = (els) => { let n = els.length + 1; while (els.some((e) => e.id === 'E' + n)) n += 1; return 'E' + n; };
 
 /** First open of an older scene: its single action/emotion texts become editable elements (the originals stay until the scene is saved). */
@@ -88,40 +88,49 @@ export function seedElements(sc) {
   sc.elements = els;
 }
 
+export function elementsList(sc, castList, dirty, types, onKindChange = () => {}) {
+seedElements(sc);
+  const box = h('div', { class: 'stack', style: 'gap:6px', 'data-elements': types[0] });
+  let dragId = null;
+  const draw = () => {
+    const mine = sc.elements.filter((e) => types.includes(e.type));
+    box.replaceChildren(...mine.map((el) => {
+      const row = h('div', { class: 'card flat row', draggable: 'true', style: 'gap:6px;flex-wrap:wrap;align-items:center', 'data-element': el.id, 'data-element-type': el.type,
+        ondragstart: (e) => { dragId = el.id; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', el.id); } catch (_) { /* ignore */ } },
+        ondragover: (e) => { if (dragId) e.preventDefault(); },
+        ondrop: (e) => { e.preventDefault(); if (!dragId || dragId === el.id) return; const a = sc.elements.findIndex((x) => x.id === dragId); const [m] = sc.elements.splice(a, 1); sc.elements.splice(sc.elements.findIndex((x) => x.id === el.id), 0, m); dragId = null; dirty(); draw(); } },
+        h('span', { class: 'muted', title: '끌어서 순서 바꾸기', style: 'cursor:grab' }, '⠿'),
+        h('select', { 'aria-label': '종류', 'data-element-kind': el.id, onchange: (e) => { el.type = e.target.value; dirty(); draw(); onKindChange(); } }, types.map((t) => h('option', { value: t, selected: el.type === t }, TYPE_LABEL[t]))),
+        castList.length ? h('select', { 'aria-label': '캐릭터', 'data-element-char': el.id, onchange: (e) => { el.characterId = e.target.value || undefined; dirty(); } }, [h('option', { value: '' }, '(전체)')].concat(castList.map((c) => h('option', { value: c.id, selected: el.characterId === c.id }, c.name)))) : null,
+        h('input', { type: 'text', value: el.text, placeholder: el.type === 'camera' ? '예: 천천히 가까워지는 push-in' : '객관적으로 한 문장', style: 'flex:1;min-width:160px', 'data-element-text': el.id, oninput: (e) => { el.text = e.target.value; dirty(); } }),
+        h('input', { type: 'number', step: 0.5, min: 0, value: el.t0 ?? '', placeholder: '시작', title: '시작(초, 선택)', style: 'width:62px', onchange: (e) => { el.t0 = e.target.value === '' ? undefined : Number(e.target.value); dirty(); } }),
+        h('input', { type: 'number', step: 0.5, min: 0, value: el.t1 ?? '', placeholder: '끝', title: '끝(초, 선택)', style: 'width:62px', onchange: (e) => { el.t1 = e.target.value === '' ? undefined : Number(e.target.value); dirty(); } }),
+        h('button', { class: 'btn icon ghost', type: 'button', title: '복제', 'data-element-dup': el.id, onclick: () => { const i = sc.elements.findIndex((x) => x.id === el.id); sc.elements.splice(i + 1, 0, Object.assign({}, el, { id: nid(sc.elements) })); dirty(); draw(); } }, icon('copy')),
+        h('button', { class: 'btn icon danger', type: 'button', title: '삭제', 'data-element-remove': el.id, onclick: () => { sc.elements = sc.elements.filter((x) => x.id !== el.id); dirty(); draw(); } }, icon('trash')));
+      return row;
+    }));
+    if (!mine.length) box.append(h('div', { class: 'small muted' }, '없음'));
+  };
+  draw();
+  box._draw = draw;
+  return box;
+}
+
 export function elementsEditor(ep, sc, castList, dirty) {
   seedElements(sc);
-  const mkList = (types, openByDefault) => {
-    const box = h('div', { class: 'stack', style: 'gap:6px', 'data-elements': types[0] });
-    let dragId = null;
-    const draw = () => {
-      const mine = sc.elements.filter((e) => types.includes(e.type));
-      box.replaceChildren(...mine.map((el) => {
-        const row = h('div', { class: 'card flat row', draggable: 'true', style: 'gap:6px;flex-wrap:wrap;align-items:center', 'data-element': el.id, 'data-element-type': el.type,
-          ondragstart: (e) => { dragId = el.id; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', el.id); } catch (_) { /* ignore */ } },
-          ondragover: (e) => { if (dragId) e.preventDefault(); },
-          ondrop: (e) => { e.preventDefault(); if (!dragId || dragId === el.id) return; const a = sc.elements.findIndex((x) => x.id === dragId); const [m] = sc.elements.splice(a, 1); sc.elements.splice(sc.elements.findIndex((x) => x.id === el.id), 0, m); dragId = null; dirty(); draw(); } },
-          h('span', { class: 'muted', title: '끌어서 순서 바꾸기', style: 'cursor:grab' }, '⠿'),
-          h('select', { 'aria-label': '종류', 'data-element-kind': el.id, onchange: (e) => { el.type = e.target.value; dirty(); draw(); redrawOthers(); } }, types.map((t) => h('option', { value: t, selected: el.type === t }, TYPE_LABEL[t]))),
-          castList.length ? h('select', { 'aria-label': '캐릭터', 'data-element-char': el.id, onchange: (e) => { el.characterId = e.target.value || undefined; dirty(); } }, [h('option', { value: '' }, '(전체)')].concat(castList.map((c) => h('option', { value: c.id, selected: el.characterId === c.id }, c.name)))) : null,
-          h('input', { type: 'text', value: el.text, placeholder: el.type === 'camera' ? '예: 천천히 가까워지는 push-in' : '객관적으로 한 문장', style: 'flex:1;min-width:160px', 'data-element-text': el.id, oninput: (e) => { el.text = e.target.value; dirty(); } }),
-          h('input', { type: 'number', step: 0.5, min: 0, value: el.t0 ?? '', placeholder: '시작', title: '시작(초, 선택)', style: 'width:62px', onchange: (e) => { el.t0 = e.target.value === '' ? undefined : Number(e.target.value); dirty(); } }),
-          h('input', { type: 'number', step: 0.5, min: 0, value: el.t1 ?? '', placeholder: '끝', title: '끝(초, 선택)', style: 'width:62px', onchange: (e) => { el.t1 = e.target.value === '' ? undefined : Number(e.target.value); dirty(); } }),
-          h('button', { class: 'btn icon ghost', type: 'button', title: '복제', 'data-element-dup': el.id, onclick: () => { const i = sc.elements.findIndex((x) => x.id === el.id); sc.elements.splice(i + 1, 0, Object.assign({}, el, { id: nid(sc.elements) })); dirty(); draw(); } }, icon('copy')),
-          h('button', { class: 'btn icon danger', type: 'button', title: '삭제', 'data-element-remove': el.id, onclick: () => { sc.elements = sc.elements.filter((x) => x.id !== el.id); dirty(); draw(); } }, icon('trash')));
-        return row;
-      }));
-      if (!mine.length) box.append(h('div', { class: 'small muted' }, '없음'));
-    };
-    draw();
-    box._draw = draw;
-    return box;
-  };
-  const main = mkList(MAIN);
-  const facial = mkList(FACIAL);
   const redrawOthers = () => { main._draw(); facial._draw(); };
+  const main = elementsList(sc, castList, dirty, MAIN, redrawOthers);
+  const facial = elementsList(sc, castList, dirty, FACIAL, redrawOthers);
   const add = (types, box) => h('button', { class: 'btn sm ghost', type: 'button', 'data-element-add': types[0], onclick: () => { sc.elements.push({ id: nid(sc.elements), type: types[0], text: '' }); dirty(); box._draw(); } }, icon('plus'), types === MAIN ? '액션 · 감정 · 카메라 추가' : '얼굴 세부 추가');
   return h('div', { class: 'stack', style: 'gap:8px', 'data-elements-editor': sc.id },
     h('div', { class: 'small muted' }, '몸 동작 · 감정 · 카메라를 각각 추가·복제·삭제·드래그 정렬할 수 있습니다. 시간은 선택입니다 (0.5초 비트는 "고급 설정"). 저장하면 기존 "캐릭터 행동/감정" 텍스트에 자동 반영됩니다.'),
     main, add(MAIN, main),
     h('details', { class: 'scene-section', 'data-facial': sc.id, open: sc.elements.some((e) => FACIAL.includes(e.type)) ? true : undefined }, h('summary', null, h('span', { class: 'section-title' }, '얼굴 세부 (눈 · 눈썹 · 입 · 표정)'), h('span', { class: 'small muted' }, '선택')), h('div', { class: 'section-body stack', style: 'gap:8px' }, facial, add(FACIAL, facial))));
+}
+
+/** A list of performance elements of the given types + its add button (used by Storyboard's image editor; same `scene.elements` as Script Studio). */
+export function elementsBlock(sc, castList, dirty, types, addLabel) {
+  const list = elementsList(sc, castList, dirty, types);
+  return h('div', { class: 'stack', style: 'gap:6px', 'data-elements-block': types[0] }, list,
+    h('button', { class: 'btn sm ghost', type: 'button', 'data-element-add': types[0], onclick: () => { sc.elements.push({ id: nid(sc.elements), type: types[0], text: '' }); dirty(); list._draw(); } }, icon('plus'), addLabel));
 }

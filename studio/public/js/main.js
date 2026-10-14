@@ -58,7 +58,7 @@ function drawShell() {
   rail.replaceChildren(
     h('a', { class: 'brand', href: '#/overview', 'aria-label': 'Reels Factory 홈', 'data-brand-home': '' }, h('div', { class: 'brand-mark', html: '<svg viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>' }), h('div', null, h('b', null, 'Reels Factory'), h('span', null, 'Studio · Jack & Diane'))),
     ...NAV.filter((n) => n[4]).flatMap(([key, ko, en]) => [key === 'script' || key === 'settings' ? h('div', { class: 'nav-sep' }) : null, h('a', { class: 'nav-item', href: hrefFor(key), 'aria-current': active(key) ? 'page' : null }, icon(ICON[key] || key), h('span', null, h('span', { class: 'ko' }, ko), h('span', { class: 'en' }, en)))]).filter(Boolean),
-    h('div', { class: 'rail-foot' }, state.summary ? modePill() : '', authFoot())
+    h('div', { class: 'rail-foot' }, state.summary ? modePill() : '', authFoot(), state.summary && state.summary.build ? h('div', { class: 'small muted mono', 'data-build': '', title: '지금 실행 중인 코드의 버전 · 커밋 (배포가 최신인지 확인용)' }, `v${state.summary.build.version} · ${state.summary.build.shortSha || '커밋 정보 없음'}`) : null)
   );
   const tabs = document.getElementById('tabbar');
   tabs.replaceChildren(...TAB_VIEWS.map((k) => { const n = NAV.find((x) => x[0] === k); return h('button', { 'aria-current': active(k) ? 'page' : null, onclick: () => { location.hash = hrefFor(k); } }, icon(ICON[k] || k), n[1].replace(' 스튜디오', '').replace('비디오', '비디오')); }));

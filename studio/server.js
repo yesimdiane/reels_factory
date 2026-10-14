@@ -16,6 +16,7 @@ const { ProviderError } = require('./lib/providers');
 const { createSheetsBridge } = require('./lib/sheets-bridge');
 
 const VERSION = require('../package.json').version;
+const BUILD = require('./lib/buildinfo').read();
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.mp4': 'video/mp4', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.woff2': 'font/woff2' };
@@ -123,7 +124,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   const bg = (promise, label) => promise.catch((e) => log(label + ': ' + e.message)); // background work: errors are stored in the episode
 
   // ---- session / health ----
-  route('GET', '/healthz', async () => ({ ok: true, version: VERSION, schemaVersion: (require('./lib/util').readJson(S.store.path('schema.json'), {}) || {}).schemaVersion || null, video: S.video.mode, voice: S.voice.mode, time: new Date().toISOString() }));
+  route('GET', '/healthz', async () => ({ ok: true, version: VERSION, build: { sha: BUILD.sha, shortSha: BUILD.shortSha, source: BUILD.source, branch: BUILD.branch }, schemaVersion: (require('./lib/util').readJson(S.store.path('schema.json'), {}) || {}).schemaVersion || null, video: S.video.mode, voice: S.voice.mode, time: new Date().toISOString() }));
   route('GET', '/api/session', async ({ cookie }) => ({ authRequired: auth.enabled, authenticated: auth.verify(cookie) }));
   route('POST', '/api/login', async ({ body, ip, res, secure }) => {
     const v = auth.attempt(ip, body.password);
@@ -338,6 +339,9 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame', async ({ p, raw, headers }) => S.uploadStartFrame(p.id, p.sid, raw, decodeURIComponent(headers['x-filename'] || 'frame.png')), { upload: true });
   route('POST', '/api/episodes/:id/start-images/estimate', async ({ p, body }) => S.startImages.estimate(p.id, body.sceneIds, { force: body.force === true, exclude: body.exclude }));
   route('POST', '/api/episodes/:id/start-images/generate', async ({ p, body }) => { S.assertNotHeld(p.id); const r = await S.startImages.generate(p.id, body.sceneIds, { confirm: body.confirm, force: body.force === true, exclude: body.exclude }); const v = ep(p.id); v.startImageResult = r; return v; });
+  route('DELETE', '/api/episodes/:id/scenes/:sid/start-frame', async ({ p }) => S.deleteStartFrame(p.id, p.sid));
+  route('PUT', '/api/episodes/:id/scenes/:sid/image-prompt', async ({ p, body }) => S.saveImagePrompt(p.id, p.sid, body || {}));
+  route('DELETE', '/api/episodes/:id/scenes/:sid/image-prompt', async ({ p }) => S.resetImagePrompt(p.id, p.sid));
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame/approve', async ({ p, body }) => S.approveStartFrame(p.id, p.sid, body.approved !== false));
   route('POST', '/api/episodes/:id/storyboard/approve', async ({ p }) => S.approveStoryboard(p.id));
   route('PUT', '/api/episodes/:id/scenes/:sid/animation', async ({ p, body }) => S.saveAnimationSettings(p.id, p.sid, body || {}));

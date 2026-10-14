@@ -12,7 +12,8 @@ import { charRefsPanelBody, charRefsBadge } from './scene-charrefs.js';
 import { openBrollAi, previewBroll } from './broll-ai.js';
 import { openAnimGenerate } from './anim-plan.js';
 import { motionPanel } from './beat-timeline.js';
-import { clipsPanelBody, clipsBadge } from './scene-clips.js';
+import { block, shotChips, dialoguePanelBody, animationHandoff, imagePromptBody } from './storyboard-sections.js';
+import { lookFields, characterRoles, poseFields, elementsBlock, seedElements } from './script-sections.js';
 import { stepper, audioPanelBody, audioBadge, composePanelBody, composeBadge } from './scene-flow.js';
 import { sceneGallery } from './scene-gallery.js';
 import { readinessCard } from './render-readiness.js';
@@ -75,17 +76,26 @@ function sceneCard(ep, sc, i, chars, go) {
   const saveBtn = h('button', { class: 'btn', type: 'button', 'data-sb-save': sc.id, onclick: () => saveAll() }, '저장');
   const revokeImgBtn = isFrame && img.approved ? h('button', { class: 'btn ghost', type: 'button', 'data-sb-revoke-image': sc.id, onclick: async () => { if (await confirmDialog({ title: '이미지 승인을 취소할까요?', body: '이미지는 지워지지 않습니다. 취소하면 이 장면의 영상 생성은 다시 이미지 승인을 기다립니다.', confirm: '승인 취소', tone: 'clay' })) act(() => api.post(`/api/episodes/${ep.id}/scenes/${sc.id}/start-frame/approve`, { approved: false }), { ok: '이미지 승인을 취소했습니다' }); } }, '이미지 승인 취소') : null;
   const approveBtn = h('button', { class: 'btn sage', type: 'button', 'data-sb-approve-image': sc.id, disabled: !isFrame || img.approved, title: !isFrame ? '업로드하거나 만든 이미지가 있어야 승인할 수 있습니다' : '', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/scenes/${sc.id}/start-frame/approve`, { approved: true }), { ok: '이미지를 승인했습니다' }) }, icon('check'), '이미지 승인');
-  const regenBtn = h('button', { class: 'btn ghost', type: 'button', 'data-sb-regenerate': sc.id, disabled: !ep.derived.scriptApproved, title: '비용 확인 후에만 생성됩니다', onclick: () => makeStartImages(ep, [sc.id], { force: true, after: refresh }) }, '다시 만들기');
   const nextBtn = h('button', { class: 'btn ghost', type: 'button', 'data-sb-next': sc.id, disabled: !nextScene, onclick: () => go(i + 1) }, '다음 장면 →');
   const addCutBtn = h('button', { class: 'btn sm clay', type: 'button', 'data-sb-add-cut': sc.id, onclick: () => addCutChooser(ep, sc) }, '+ 컷 추가');
 
+  // structured image fields (environment, roles, pose, elements): a working copy of the SAME scene fields Script Studio edits
+  const sdKey = 'sbs:' + ep.id + ':' + sc.id;
+  const sd = (state.draft[sdKey] = state.draft[sdKey] || { characters: (sc.characters || []).slice(), referenceOnly: (sc.referenceOnly || []).slice(), action: sc.action || '', emotion: sc.emotion || '', look: Object.assign({}, sc.look || {}), pose: Object.assign({}, sc.pose || {}), elements: Array.isArray(sc.elements) ? sc.elements.map((e) => Object.assign({}, e)) : undefined, dirty: false });
+  sd.id = sc.id;
+  const castList = chars.filter((c) => (ep.characters || []).includes(c.id));
+  const structNote = h('span', { class: 'small', 'data-sb-dirty': sc.id, style: 'color:var(--clay)' });
+  const sdDirty = () => { sd.dirty = true; structNote.textContent = '저장하지 않은 변경이 있습니다'; };
+  if (sd.dirty) structNote.textContent = '저장하지 않은 변경이 있습니다';
+
   async function saveAll() {
     const place = readPlace();
-    const scene = { id: sc.id, visual: d.visual, showsProduct: !!d.showsProduct };
+    const scene = { id: sc.id, showsProduct: !!d.showsProduct };
     if (d.showsProduct) scene.productPlacement = place;
+    if (sd.dirty) Object.assign(scene, { characters: sd.characters, referenceOnly: sd.referenceOnly, look: sd.look, pose: sd.pose, elements: sd.elements });
     const ops = [];
-    if (scene.visual !== sc.visual || scene.showsProduct !== !!sc.showsProduct || d.showsProduct) ops.push(api.put(`/api/episodes/${ep.id}/scenes/${sc.id}`, { scene }));
-    await act(async () => { for (const o of ops) await o; if (sc.prompt && (d.video !== serverVideo || d.negative !== serverNeg)) await api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/prompt`, { video: d.video, negative: d.negative }); return null; }, { ok: '장면을 저장했습니다' });
+    if (sd.dirty || scene.showsProduct !== !!sc.showsProduct || d.showsProduct) ops.push(() => api.put(`/api/episodes/${ep.id}/scenes/${sc.id}`, { scene }));
+    await act(async () => { for (const o of ops) await o(); if (sc.prompt && (d.video !== serverVideo || d.negative !== serverNeg)) await api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/prompt`, { video: d.video, negative: d.negative }); delete state.draft[sdKey]; return null; });
   }
 
   // ---- main image ----
@@ -114,12 +124,55 @@ function sceneCard(ep, sc, i, chars, go) {
   const tr = translateControl(ep, () => promptEl.value);
   const negEl = h('textarea', { rows: 2, 'aria-label': '네거티브 프롬프트', oninput: (e) => (d.negative = e.target.value) }, d.negative);
 
-  // ---- panels ----
-  { const u = uiState(); const k = `sb:${ep.id}:${sc.id}:charrefs`; if (u.open[k] === undefined) u.open[k] = true; } // visible by default
-  const panels = [
-    panel(ep, sc, 'charrefs', '캐릭터 참조 이미지', charRefsBadge(sc), charRefsPanelBody(ep, sc)),
-    panel(ep, sc, 'product', '제품 등장', d.showsProduct ? 'ON' : 'OFF', h('div', { class: 'stack', style: 'gap:10px' }, toggle, placeBox)),
-    panel(ep, sc, 'prompt', '이미지 · 영상 프롬프트', sc.prompt ? `r${sc.prompt.rev || 1}${sc.prompt.edited ? ' · 수정됨' : ''}` : '아직 없음', h('div', { class: 'stack', style: 'gap:8px' },
+  // ---- ① 이미지 제작 ----
+  const editKey = ep.id + ':' + sc.id;
+  const ui0 = uiState(); ui0.sbEdit = ui0.sbEdit || {};
+  const approvedImg = !!(hasImg && img.approved);
+  const collapsed = approvedImg && !ui0.sbEdit[editKey];
+  const rerender = () => import('../state.js').then(({ hooks }) => hooks.rerender());
+  const zoom = () => { if (!img || !img.url) return; modal((close) => h('div', { class: 'stack', style: 'align-items:center;gap:8px' }, h('img', { src: img.url, alt: sc.id, 'data-sb-full': sc.id, style: 'max-height:75vh;max-width:100%;border-radius:10px' }), h('div', { class: 'small muted' }, img.fileName || img.label || ''), h('button', { class: 'btn ghost', type: 'button', onclick: close }, '닫기')), { wide: true }); };
+  const delBtn = isFrame ? h('button', { class: 'btn ghost danger', type: 'button', 'data-sb-delete-image': sc.id, disabled: img.approved, title: img.approved ? '승인된 이미지는 먼저 승인을 취소하세요' : '이 이미지 파일만 지웁니다. 캐릭터·제품 참조 이미지는 지워지지 않습니다', onclick: async () => { if (await confirmDialog({ title: '이 시작 이미지를 삭제할까요?', body: '이 장면에 연결된 이미지만 목록에서 빼고 파일은 복구 가능한 보관 폴더로 옮깁니다. 캐릭터 라이브러리와 제품 사진은 그대로입니다.', confirm: '삭제', tone: 'clay' })) act(() => api.del(`/api/episodes/${ep.id}/scenes/${sc.id}/start-frame`), { ok: '시작 이미지를 삭제했습니다 (참조 이미지는 그대로)' }); } }, icon('trash'), '삭제') : null;
+  const genBtn = h('button', { class: 'btn clay', type: 'button', 'data-sb-regenerate': sc.id, disabled: !ep.derived.scriptApproved || img && img.approved && isFrame, title: img && img.approved && isFrame ? '승인된 이미지는 먼저 승인을 취소하세요' : '비용 확인 후에만 생성됩니다', onclick: () => makeStartImages(ep, [sc.id], { force: true, after: refresh }) }, icon('play'), isFrame ? '다시 만들기' : '이미지 만들기');
+  const uploadBtn = h('button', { class: 'btn ghost', type: 'button', 'data-sb-upload': sc.id, onclick: () => fileIn.click() }, icon('upload'), '올리기');
+  const imageHead = h('div', { class: 'sb-image-head', 'data-sb-image': sc.id },
+    h('div', { class: 'sb-image-preview' }, main),
+    h('div', { class: 'stack', style: 'gap:8px;flex:1;min-width:200px' },
+      h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center' }, chip(imgState[0], imgState[1]), hasImg && img.fileName ? h('span', { class: 'small muted' }, img.fileName) : null),
+      h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, genBtn, uploadBtn, fileIn, hasImg ? h('button', { class: 'btn ghost', type: 'button', 'data-sb-zoom': sc.id, onclick: zoom }, '크게 보기') : null, delBtn),
+      h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, approveBtn, revokeImgBtn),
+      h('div', { class: 'small muted' }, '생성은 비용 확인을 거친 뒤에만 시작되고 자동으로 다시 시도하지 않습니다. 삭제는 이 장면의 이미지 파일만 지우며 캐릭터·제품 참조는 건드리지 않습니다.'),
+      sc.visual ? h('div', { class: 'small', 'data-scene-description': sc.id }, h('b', null, '장면 설명 (대본 스튜디오): '), sc.visual) : null));
+  const rolesBox = h('div');
+  const drawRoles = () => rolesBox.replaceChildren(characterRoles(ep, sd, castList, sdDirty, () => drawRoles()));
+  drawRoles();
+  seedElements(sd);
+  const redrawCamera = () => rerender();
+  { const u = uiState(); const k = `sb:${ep.id}:${sc.id}:look`; if (u.open[k] === undefined) u.open[k] = true; } // the structured image fields are open by default
+  const imageEditors = [
+    panel(ep, sc, 'look', '환경 · 캐릭터 · 포즈 · 동작 · 감정', '', h('div', { class: 'stack', style: 'gap:10px' },
+      h('div', { class: 'eyebrow' }, '환경'), lookFields(sd, sdDirty),
+      h('div', { class: 'eyebrow' }, '캐릭터 (등장 / 참조만)'), rolesBox,
+      h('div', { class: 'eyebrow' }, '포즈'), poseFields(sd, sdDirty),
+      h('div', { class: 'eyebrow' }, '몸 동작 · 감정'), elementsBlock(sd, castList, sdDirty, ['body', 'emotion'], '동작 · 감정 추가'),
+      h('div', { class: 'row', style: 'gap:8px;align-items:center' }, h('button', { class: 'btn sm', type: 'button', 'data-sb-save-struct': sc.id, onclick: () => saveAll() }, '이미지 설정 저장'), structNote))),
+    panel(ep, sc, 'face', '얼굴 표정 (선택)', '눈 · 눈썹 · 입', elementsBlock(sd, castList, sdDirty, ['eyes', 'eyebrows', 'mouth', 'face'], '얼굴 세부 추가')),
+    panel(ep, sc, 'camera', '카메라 · 샷 (선택)', '추천 샷', h('div', { class: 'stack', style: 'gap:8px' }, h('div', { class: 'small muted' }, '추천 샷을 누르면 카메라 지시로 들어갑니다 (한 번 더 누르면 해제).'), shotChips(sd, sdDirty, redrawCamera), elementsBlock(sd, castList, sdDirty, ['camera'], '카메라 지시 추가'))),
+    panel(ep, sc, 'charrefs', '참조 이미지 (캐릭터 · 제품)', charRefsBadge(sc) + ' · 제품 ' + (d.showsProduct ? 'ON' : 'OFF'), h('div', { class: 'stack', style: 'gap:10px' }, charRefsPanelBody(ep, sc), h('div', { class: 'eyebrow' }, '제품'), toggle, placeBox)),
+    panel(ep, sc, 'imageprompt', '이미지 프롬프트 (자동 합성 · 직접 수정 가능)', sc.imagePrompt && sc.imagePrompt.edited ? '수정됨' : '자동', imagePromptBody(ep, sc)),
+  ];
+  const summaryRow = h('div', { class: 'row', style: 'gap:10px;align-items:center;flex-wrap:wrap;border-left:4px solid var(--sage);padding-left:10px', 'data-sb-approved-summary': sc.id },
+    img && img.url ? h('img', { src: img.url, alt: '', style: 'width:44px;aspect-ratio:9/16;object-fit:cover;border-radius:6px' }) : null,
+    h('div', { class: 'small', style: 'flex:1;min-width:160px' }, h('b', { style: 'color:var(--sage-deep)' }, '✓ 이미지 승인됨' + (img && img.placeholder ? ' (데모 임시 이미지)' : '')), h('div', { class: 'muted' }, `${(img && (img.fileName || img.label)) || ''} · 이미지 프롬프트 ${sc.imagePrompt && sc.imagePrompt.edited ? '수정됨' : '자동'} · 컷 ${cuts} · B-roll ${bro}`)),
+    h('button', { class: 'btn sm ghost', type: 'button', onclick: zoom }, '크게 보기'),
+    revokeImgBtn ? revokeImgBtn.cloneNode(true) : null,
+    h('button', { class: 'btn sm ghost', type: 'button', 'data-sb-reopen': sc.id, onclick: () => { ui0.sbEdit[editKey] = true; rerender(); } }, '이미지 편집 열기'));
+  if (summaryRow.querySelector('[data-sb-revoke-image]')) summaryRow.querySelector('[data-sb-revoke-image]').addEventListener('click', () => revokeImgBtn.click());
+  const imageSection = block('image', '①', '이미지 제작', '환경 · 캐릭터 · 참조 · 프롬프트 → 시작 이미지 만들기 · 올리기 · 승인',
+    collapsed ? summaryRow : h('div', { class: 'stack', style: 'gap:10px' }, imageHead, ...imageEditors, approvedImg ? h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', type: 'button', 'data-sb-collapse': sc.id, onclick: () => { ui0.sbEdit[editKey] = false; rerender(); } }, '편집 접기')) : null));
+
+  // ---- ② 애니메이션 · 오디오 준비 (video generation itself is Animation Studio) ----
+  const prepSection = block('prep', '②', '애니메이션 · 오디오 준비', '애니메이션 프롬프트 · 0.5초 비트 · 대사 · 목소리 · 오디오 — 영상 생성은 애니메이션 스튜디오에서',
+    panel(ep, sc, 'prompt', '애니메이션 프롬프트', sc.prompt ? `r${sc.prompt.rev || 1}${sc.prompt.edited ? ' · 수정됨' : ''}` : '아직 없음', h('div', { class: 'stack', style: 'gap:8px' },
       sc.prompt ? h('div', { class: 'row', style: 'gap:6px' }, chip(sc.prompt.source === 'gemini' ? 'Gemini 생성' : '템플릿', sc.prompt.source === 'gemini' ? 'done' : 'mock'), sc.prompt.edited ? chip('직접 수정함', 'attention') : null, (sc.prompt.history || []).length ? chip(`이전 버전 ${(sc.prompt.history || []).length}개`, '') : null) : null,
       sc.prompt ? [promptEl, tr.panel] : h('div', { class: 'empty' }, '아직 프롬프트가 없습니다. "템플릿으로 만들기"(무료)를 누르세요.'),
       sc.prompt && sc.prompt.sections ? sectionsView(sc.prompt.sections) : null,
@@ -129,37 +182,30 @@ function sceneCard(ep, sc, i, chars, go) {
       h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, tr.btn,
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => copyText(promptEl.value, sc.id + ' 프롬프트를 복사했습니다') }, icon('copy'), 'Copy Prompt'),
         h('button', { class: 'btn sm ghost', type: 'button', disabled: !ep.derived.scriptApproved, onclick: () => aiPrompts(ep, sc) }, icon('play'), 'AI로 다시 만들기'),
-        h('button', { class: 'btn sm ghost', type: 'button', onclick: async () => { if (!sc.prompt || !sc.prompt.edited || await confirmDialog({ title: '수정한 프롬프트를 덮어쓸까요?', body: '이 장면의 프롬프트를 템플릿으로 다시 만듭니다. 이전 버전은 기록에 남습니다.', tone: 'clay' })) { delete state.draft[key]; act(() => api.post(`/api/episodes/${ep.id}/storyboard/prompts`, { sceneIds: [sc.id], force: true }), { ok: '프롬프트를 다시 만들었습니다' }); } } }, '템플릿으로 만들기 (무료)')))),
-    panel(ep, sc, 'audio', '오디오 확인 · 승인', audioBadge(ep, sc), audioPanelBody(ep, sc)),
-    panel(ep, sc, 'motion', '애니메이션 (기본 0.5초 · 음성 0.3초)', mot ? `${mot.beats.length}비트 · r${mot.rev}` : '아직 없음', motionPanel(ep, sc)),
-    panel(ep, sc, 'clips', '영상 클립 생성 · 승인', clipsBadge(sc), clipsPanelBody(ep, sc)),
-    panel(ep, sc, 'cuts', '컷 · B-roll', `컷 ${cuts} · B-roll ${bro}`, cutsPanel(ep, sc)),
-    panel(ep, sc, 'compose', '효과음 · 씬 합본 · 최종 승인', composeBadge(ep, sc), composePanelBody(ep, sc)),
-    panel(ep, sc, 'advanced', '고급 설정', '', h('div', { class: 'stack', style: 'gap:10px' },
-      h('div', { class: 'field' }, h('label', null, '시각 설명'), h('textarea', { rows: 3, oninput: (e) => (d.visual = e.target.value) }, d.visual)),
-      h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, h('button', { class: 'btn sm ghost', type: 'button', onclick: () => fileIn.click() }, icon('upload'), '프레임 올리기'), fileIn,
-        h('button', { class: 'btn sm ghost', type: 'button', title: '위로', onclick: () => reorder(ep, i, -1) }, icon('up')), h('button', { class: 'btn sm ghost', type: 'button', title: '아래로', onclick: () => reorder(ep, i, 1) }, icon('down'))),
-      refPicker(ep, sc, chars))),
-  ];
+        h('button', { class: 'btn sm ghost', type: 'button', onclick: async () => { if (!sc.prompt || !sc.prompt.edited || await confirmDialog({ title: '수정한 프롬프트를 덮어쓸까요?', body: '이 장면의 프롬프트를 템플릿으로 다시 만듭니다. 이전 버전은 기록에 남습니다.', tone: 'clay' })) { delete state.draft[key]; act(() => api.post(`/api/episodes/${ep.id}/storyboard/prompts`, { sceneIds: [sc.id], force: true }), { ok: '프롬프트를 다시 만들었습니다' }); } } }, '템플릿으로 만들기 (무료)')),
+      animationHandoff(ep, sc))),
+    panel(ep, sc, 'motion', '0.5초 비주얼 비트 (대본 스튜디오와 같은 타임라인)', mot ? `${mot.beats.length}비트 · r${mot.rev}` : '아직 없음', motionPanel(ep, sc)),
+    panel(ep, sc, 'dialogue', '대사 · 목소리', `${(ep.lines || []).filter((l) => l.sceneId === sc.id).length}줄`, dialoguePanelBody(ep, sc)),
+    panel(ep, sc, 'audio', '오디오 생성 · 미리듣기 · 승인', audioBadge(ep, sc), audioPanelBody(ep, sc)));
 
-  // an approved start image collapses the image/prompt editing sections into a compact summary; the production steps after it stay available
-  const editKey = ep.id + ':' + sc.id;
-  const ui0 = uiState(); ui0.sbEdit = ui0.sbEdit || {};
-  const collapsed = !!(hasImg && img.approved && !img.placeholder && !ui0.sbEdit[editKey]);
-  const IMAGE_EDIT = ['charrefs', 'product', 'prompt', 'advanced'];
-  const shownPanels = collapsed ? panels.filter((pn) => !IMAGE_EDIT.includes(pn.getAttribute('data-panel'))) : panels;
-  const summaryRow = collapsed ? h('div', { class: 'row', style: 'gap:10px;align-items:center;flex-wrap:wrap;border-left:4px solid var(--sage);padding-left:10px', 'data-sb-approved-summary': sc.id },
-    img.url ? h('img', { src: img.url, alt: '', style: 'width:36px;aspect-ratio:9/16;object-fit:cover;border-radius:6px' }) : null,
-    h('div', { class: 'small', style: 'flex:1;min-width:160px' }, h('b', { style: 'color:var(--sage-deep)' }, '✓ 이미지 승인됨'), h('div', { class: 'muted' }, `${img.fileName || img.label || ''} · 프롬프트 ${sc.prompt ? 'r' + (sc.prompt.rev || 1) : '없음'} · 컷 ${cuts} · B-roll ${bro}`)),
-    h('button', { class: 'btn sm ghost', type: 'button', 'data-sb-reopen': sc.id, onclick: () => { ui0.sbEdit[editKey] = true; import('../state.js').then(({ hooks }) => hooks.rerender()); } }, '이미지·프롬프트 수정 열기')) : (hasImg && img.approved && ui0.sbEdit[editKey] ? h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', type: 'button', 'data-sb-collapse': sc.id, onclick: () => { ui0.sbEdit[editKey] = false; import('../state.js').then(({ hooks }) => hooks.rerender()); } }, '수정 접기')) : null);
+  // ---- ③ B-roll 제작 ----
+  const brollSection = block('broll', '③', 'B-roll 제작', 'B-roll 개념 → 프롬프트 · 이미지 생성 · 미리보기 · 승인 (컷은 영상 크롭 편집)',
+    panel(ep, sc, 'cuts', '컷 · B-roll', `컷 ${cuts} · B-roll ${bro}`, cutsPanel(ep, sc)));
+
+  // ---- 마무리 + 고급 ----
+  const tail = [
+    panel(ep, sc, 'compose', '효과음 · 씬 합본 · 최종 승인', composeBadge(ep, sc), composePanelBody(ep, sc)),
+    panel(ep, sc, 'advanced', '고급 설정', '', h('div', { class: 'stack', style: 'gap:8px' },
+      h('div', { class: 'small' }, `장면 길이 ${sc.durationSec}초 (대본 스튜디오에서 수정 · 승인에 영향)`),
+      h('div', { class: 'small', 'data-dialogue-estimate': sc.id }, (() => { const t = (ep.derived.timing.scenes || []).find((x) => x.sceneId === sc.id); const a = t && t.actual; return a && a.complete ? `실측 대사 ${a.needSec.toFixed(1)}초` : '대사 길이: 오디오를 만들면 실측으로 표시됩니다'; })()),
+      h('div', { class: 'small muted' }, '0.5초 비트 타임라인은 ② 애니메이션 · 오디오 준비의 같은 편집기입니다. 장면 순서 변경과 시각 설명 수정은 대본 스튜디오에서 합니다.'))),
+  ];
+  const shownPanels = [imageSection, prepSection, brollSection, ...tail];
 
   const el = h('section', { class: 'card sb-scene', id: 'sb-scene-' + sc.id, 'data-sb-scene': sc.id },
     h('div', { class: 'row between' }, h('div', null, h('div', { class: 'eyebrow' }, `${sc.id} · ${sc.durationSec}초${sc.part ? ' · PART ' + sc.part + (sc.part === 'B' ? ' · 고정 엔딩' : '') : ''}`), h('h2', { style: 'margin:2px 0 0' }, sc.title_ko || sc.title)), addCutBtn),
-    main,
     stepper(ep, sc),
-    h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap', 'data-sb-status': '' }, chip(imgState[0], imgState[1]), chip(sc.prompt ? '프롬프트 있음' : '프롬프트 없음', sc.prompt ? 'done' : 'attention'), chip(mot ? `모션 ${mot.beats.length}비트` : '모션 없음', mot ? 'done' : ''), chip(`컷 ${cuts}`, ''), h('button', { class: 'chip broll-jump', type: 'button', 'data-broll-jump': sc.id, 'aria-label': 'B-roll 편집으로 이동', style: 'cursor:pointer', onclick: () => { const section = document.querySelector('[data-panel="cuts"]'); if (!section) return; section.open = true; const target = section.querySelector('[data-broll]') || section.querySelector('[data-broll-list]') || section; requestAnimationFrame(() => { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); target.style.scrollMarginBottom = '220px'; target.style.scrollMarginTop = '90px'; target.classList.add('broll-jump-highlight'); setTimeout(() => target.classList.remove('broll-jump-highlight'), 1600); }); } }, `B-roll ${bro}`), d.showsProduct ? chip('제품 ON', 'attention') : null),
-    summaryRow,
-    h('div', { class: 'scene-actions-bar inline sb-actions' }, h('div', { class: 'bar-buttons' }, saveBtn, approveBtn, revokeImgBtn, regenBtn, nextBtn)),
+    h('div', { class: 'scene-actions-bar inline sb-actions' }, h('div', { class: 'bar-buttons' }, saveBtn, nextBtn)),
     ...shownPanels);
   // mobile: the same actions as a sticky bar (the inline copy is hidden by CSS on phones)
   const bar = h('div', { class: 'scene-actions-bar sb-bar' }, h('div', { class: 'bar-buttons' }, saveBtn.cloneNode(true), approveBtn.cloneNode(true), nextBtn.cloneNode(true)));
