@@ -32,7 +32,7 @@ test('Jack and the monsoon (3.5 s): dialogue + action become specific 0.5 s beat
   assert.equal(beats[0].t0, 0); assert.equal(Math.max(...beats.map((b) => b.t1)), 3.5, 'covers the whole scene');
   beats.forEach((b) => { assert.equal(b.sceneId, 'S1'); assert.equal(b.characterId, 'jack'); assert.ok(b.t0 * 2 === Math.round(b.t0 * 2) && b.t1 * 2 === Math.round(b.t1 * 2)); assert.ok(!isGeneric(b), JSON.stringify(b)); });
   const text = JSON.stringify(beats);
-  assert.match(text, /smug/); assert.match(text, /dismissive hand gesture/); assert.match(text, /walks into the rain/); assert.match(text, /camera holds as they exit/); assert.match(text, /medium shot/);
+  assert.match(text, /smug/); assert.match(text, /folds his arms briefly and shakes his head once/); assert.match(text, /walks into the rain/); assert.match(text, /camera holds as they exit/); assert.match(text, /medium shot/);
   // same character never overlaps
   const sorted = beats.slice().sort((a, b) => a.t0 - b.t0);
   for (let i = 1; i < sorted.length; i++) assert.ok(sorted[i].t0 >= sorted[i - 1].t1 - 1e-9);
