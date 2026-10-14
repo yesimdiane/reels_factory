@@ -60,3 +60,27 @@ test('registration is free (no network), unconfirmed models stay "unverified" an
   assert.throws(() => s.confirmModel('nope'), (e) => e.code === 'NOT_FOUND');
   assert.throws(() => s.gen.estimate('EP01', { modelId: 'does-not-exist' }), (e) => e.code === 'MODEL', 'an unknown model is an error, never a silent fallback');
 });
+
+test('official muapi-cli registry: Kling Master image-to-video uses kling-v2.1-master-i2v (not the old "kling-master"); list-style image inputs are sent as arrays', async () => {
+  const { s } = make();
+  const seed = s.store.models().find((m) => m.id === 'kling-master');
+  assert.equal(seed.endpoint, 'kling-v2.1-master-i2v');
+  assert.equal(seed.verification, 'unverified', 'from a registry read, not from a live job');
+  const cli = s.muapiCliModels();
+  assert.ok(cli.models.length > 50 && /official/i.test(cli.source));
+  assert.ok(cli.models.every((m) => mc.validateEndpoint(m.endpoint) === m.endpoint), 'every registry endpoint passes our trusted-path validation');
+  const by = Object.fromEntries(cli.models.map((m) => [m.alias, m]));
+  assert.equal(by['kling-master'].endpoint, 'kling-v2.1-master-i2v');
+  assert.equal(by['kling-master'].imageAsList, false);
+  assert.equal(by['seedance-pro-fast'].endpoint, 'seedance-pro-i2v-fast');
+  assert.equal(by['seedance-pro-fast'].imageAsList, true);
+  const body = mc.buildBody({ endpoint: 'x', imageField: 'images_list', imageAsList: true }, { prompt: 'P', imageUrl: 'U', aspectRatio: '9:16', duration: 5 });
+  assert.deepEqual(body.images_list, ['U']);
+  s.addCustomModel({ id: 'seedance-pro-fast', endpoint: by['seedance-pro-fast'].endpoint, durations: [5], imageAsList: true, confirmed: true });
+  const m = s.store.models().find((x) => x.id === 'seedance-pro-fast');
+  assert.equal(m.imageField, 'images_list'); assert.equal(m.imageAsList, true);
+  const sent = [];
+  const fetchFn = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ request_id: 'r' }), text: async () => '{}' }; };
+  await createMuapiProvider({ apiKey: 'k', fetchFn }).submit({ model: m, prompt: 'hi', imageUrl: 'https://x/i.png', duration: 5 });
+  assert.deepEqual(sent[0].images_list, ['https://x/i.png']); assert.ok(!('image_url' in sent[0]));
+});

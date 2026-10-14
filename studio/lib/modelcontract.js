@@ -35,7 +35,8 @@ function cleanExtra(x) {
 function buildBody(model, { prompt, imageUrl, aspectRatio, duration, negativePrompt, extra = {} }) {
   const body = Object.assign({}, model.extraParams || {}, extra);
   body[model.promptField || 'prompt'] = prompt;
-  body[model.imageField || 'image_url'] = imageUrl;
+  // some endpoints take the start image as a one-element array (images_list), others as a plain image_url string
+  body[model.imageField || 'image_url'] = model.imageAsList ? [imageUrl] : imageUrl;
   if (aspectRatio != null) body[model.aspectField || 'aspect_ratio'] = aspectRatio;
   if (duration != null) body[model.durationField || 'duration'] = duration;
   if (negativePrompt) body[model.negativeField || 'negative_prompt'] = negativePrompt;
