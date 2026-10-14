@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { approveWithScenes } = require('./helpers/approve');
+const { approveAllAudio, approveAllScenes } = require('./helpers/scene-flow');
 const { png } = require('./helpers/v23');
 const { loadConfig } = require('../renderer/lib/config');
 const { createStudio } = require('../studio/lib/studio');
@@ -50,6 +51,11 @@ test('workflow: script → storyboard → images → generate (no clip required)
   const ids = await upToStoryboard(s);
   assert.ok(ids.length >= 7, 'the episode has S1–S7+: ' + ids.join());
   r = R(s);
+  // generation waits for approved audio (the animation follows the approved audio length)
+  assert.ok(s.gen.estimate(ID, { sceneIds: [s.store.episodes.get(ID).lines[0].sceneId] }).blockers.some((b) => b.code === 'AUDIO_NOT_APPROVED'));
+  assert.ok(r.items.filter((i) => i.code === 'AUDIO_NOT_APPROVED').every((i) => i.severity === 'pending' && i.action.panel === 'audio'));
+  await approveAllAudio(s, ID);
+  r = R(s);
   assert.equal(r.canGenerateVideo, true, JSON.stringify(open(r, 'generate').map((i) => i.code + ':' + i.message)));
   assert.equal(r.stages.generate.status, 'ready');
   // no clip exists yet: every scene is "waiting for video generation" — neutral pending items, never a red error
@@ -68,10 +74,9 @@ test('workflow: script → storyboard → images → generate (no clip required)
   for (const sid of ids) { const v = s.store.episodes.get(ID).clips[sid].versions.slice(-1)[0]; await s.gen.review(ID, sid, v.v, 'approve'); }
   r = R(s);
   assert.equal(r.clips.approved, ids.length); assert.equal(r.stages.clipGeneration.status, 'done'); assert.equal(r.stages.clipApproval.status, 'done');
-  assert.ok(open(r, 'render').every((i) => i.code === 'NO_AUDIO'), 'only the voice step is left: ' + JSON.stringify(open(r, 'render').map((i) => i.code)));
-  assert.ok(r.items.filter((i) => i.code === 'NO_AUDIO').every((i) => i.severity === 'pending' && i.action.view === 'voice'));
-  const ve = s.voice.estimate(ID);
-  await s.voice.synthesize(ID, { confirmChars: ve.billableChars });
+  assert.ok(open(r, 'render').every((i) => i.code === 'SCENE_NOT_APPROVED'), 'only the scene finals are left: ' + JSON.stringify(open(r, 'render').map((i) => i.code)));
+  assert.ok(r.items.filter((i) => i.code === 'SCENE_NOT_APPROVED').every((i) => i.severity === 'pending' && i.action.panel === 'compose'));
+  await approveAllScenes(s, ID);
   r = R(s);
   assert.equal(r.canRender, true, JSON.stringify(open(r, 'render').map((i) => i.code + ':' + i.message)));
   assert.equal(r.stages.render.status, 'ready');
