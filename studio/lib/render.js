@@ -40,7 +40,7 @@ function wrap(text, maxEm, maxLines = 2) {
   return best.lines;
 }
 
-function buildDialogueAss(tl, { W, H, font, fontSize, disclosure }) {
+function buildDialogueAss(tl, { W, H, font, fontSize, disclosure, cues = null, yFrac = 0.74, lang = 'ko' }) {
   const cx = Math.round(W / 2);
   const subEm = (W * 0.86) / fontSize;
   const out = [
@@ -53,10 +53,14 @@ function buildDialogueAss(tl, { W, H, font, fontSize, disclosure }) {
     '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
   const ev = (layer, a, b, style, text) => out.push(`Dialogue: ${layer},${ts(a)},${ts(b)},${style},,0,0,0,,${text}`);
-  tl.lines.forEach((l) => {
+  // default: one Korean caption per audio line; the Video Studio passes edited cues (text, shifted windows, hidden, language)
+  const rows = cues ? cues.filter((c) => !c.hidden).map((c) => ({ speaker: c.speaker, start: c.start, end: c.end, ko: c.ko, en: c.en })) : tl.lines.map((l) => ({ speaker: l.speaker, start: l.start, end: l.end + 0.15, ko: l.ko, en: l.en }));
+  rows.forEach((l) => {
     const col = assColor(SPEAKER_COLOR[l.speaker] || '#FFFFFF');
-    const body = wrap(l.ko, subEm).map(esc).join('\\N');
-    ev(2, l.start, l.end + 0.15, 'Sub', `{\\pos(${cx},${Math.round(H * 0.74)})\\c${col}}${body}`);
+    const main = lang === 'en' ? l.en : l.ko;
+    let body = wrap(main, subEm).map(esc).join('\\N');
+    if (lang === 'both' && l.en) body += `\\N{\\fs${Math.round(fontSize * 0.7)}}` + wrap(l.en, (W * 0.86) / (fontSize * 0.7)).map(esc).join('\\N');
+    ev(2, l.start, l.end, 'Sub', `{\\pos(${cx},${Math.round(H * yFrac)})\\c${col}}${body}`);
   });
   const ctaLines = tl.cta.lines.map(clean).filter(Boolean);
   if (ctaLines.length && tl.cta.duration > 0) {
@@ -81,10 +85,18 @@ function buildDialogueAss(tl, { W, H, font, fontSize, disclosure }) {
   return out.join('\n') + '\n';
 }
 
+/** Optional per-item fades (sound effects): afade in at the start, out ending at the item's own end. */
+function fadeFilter(it) {
+  let f = '';
+  if (it.fadeIn > 0) f += `,afade=t=in:st=0:d=${Number(it.fadeIn).toFixed(2)}`;
+  if (it.fadeOut > 0 && it.durationSec > it.fadeOut) f += `,afade=t=out:st=${(it.durationSec - it.fadeOut).toFixed(2)}:d=${Number(it.fadeOut).toFixed(2)}`;
+  return f;
+}
+
 async function buildAudioTrack(ffmpeg, items, total, outFile, cwd) {
   const args = ['-hide_banner', '-y'];
   items.forEach((i) => args.push('-i', i.file));
-  const parts = items.map((it, k) => `[${k}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,volume=${(it.gainDb || 0).toFixed(1)}dB,adelay=${Math.round(it.start * 1000)}:all=1[a${k}]`);
+  const parts = items.map((it, k) => `[${k}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,volume=${(it.gainDb || 0).toFixed(1)}dB${fadeFilter(it)},adelay=${Math.round(it.start * 1000)}:all=1[a${k}]`);
   const mix = items.map((_, k) => `[a${k}]`).join('') + `amix=inputs=${items.length}:normalize=0:dropout_transition=0`;
   const filter = parts.concat([`${mix},apad=whole_dur=${total.toFixed(3)},loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[out]`]).join(';');
   args.push('-filter_complex', filter, '-map', '[out]', '-t', total.toFixed(3), '-ac', '1', '-ar', '48000', outFile);
@@ -112,7 +124,7 @@ function sceneVideoChains({ i, clipIn, dur, clipDurationSec, inserts, overlays, 
   return { chains, label: from };
 }
 
-function createRenderService({ store, cfg, voice, log = () => {}, broll = { approved: () => [], file: () => '', problem: () => '' }, sceneGate = null }) {
+function createRenderService({ store, cfg, voice, log = () => {}, broll = { approved: () => [], file: () => '', problem: () => '' }, sceneGate = null, videoEdit = null }) {
   const active = new Set();
 
   function gather(ep) {
@@ -151,7 +163,8 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
     const ep = store.episodes.get(epId);
     const g = gather(ep);
     const tl = buildTimeline(ep, (id) => (g.audio[id] ? g.audio[id].durationSec : null));
-    return { problems: g.problems, timeline: tl, canRender: g.problems.length === 0 };
+    const cues = videoEdit ? videoEdit.cues(ep, tl) : [];
+    return { problems: g.problems, timeline: tl, canRender: g.problems.length === 0, cues, subtitleChecks: videoEdit ? videoEdit.checks(ep, tl) : [] };
   }
 
   async function doRender(epId, { preview, by }) {
@@ -172,15 +185,17 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
     fs.mkdirSync(work, { recursive: true });
     try {
       const fontSize = settings.render.fontSize || 60; // ASS PlayRes is 1080x1920; libass scales it to the output size
-      const ass = buildDialogueAss(tl, { W: 1080, H: 1920, font: fontName, fontSize, disclosure: settings.render.burnDisclosure ? (ep.publishing && ep.publishing.disclosure) || '' : '' });
+      const ed = videoEdit ? videoEdit.get(ep) : null;
+      const ass = buildDialogueAss(tl, { W: 1080, H: 1920, font: fontName, fontSize: (ed && ed.style.fontSize) || fontSize, cues: videoEdit ? videoEdit.cues(ep, tl) : null, yFrac: ed ? ed.style.yFrac : 0.74, lang: ed ? ed.style.lang : 'ko', disclosure: settings.render.burnDisclosure ? (ep.publishing && ep.publishing.disclosure) || '' : '' });
       fs.writeFileSync(path.join(work, 'subs.ass'), ass);
       // Dialogue + sound effects on one continuous track (no artificial silence is inserted between lines).
-      const items = tl.lines.map((l) => ({ file: g.audio[l.id].file, start: l.start, gainDb: 0 }));
+      const mixEd = ed ? ed.mix : { voiceDb: 0, sfxDb: 0 };
+      const items = tl.lines.map((l) => ({ file: g.audio[l.id].file, start: l.start, gainDb: mixEd.voiceDb }));
       (ep.sfx || []).forEach((s) => {
         const f = store.episodes.file(epId, s.file);
         const sc0 = s.sceneId && tl.scenes.find((x) => x.id === s.sceneId);
         const at = s.sceneId ? (sc0 ? sc0.start + Number(s.offsetSec || 0) : -1) : Number(s.atSec || 0); // scene-bound effects follow their scene
-        if (fs.existsSync(f) && at >= 0 && at < tl.total) items.push({ file: f, start: at, gainDb: Number(s.gainDb || -6) });
+        if (fs.existsSync(f) && at >= 0 && at < tl.total) items.push({ file: f, start: at, gainDb: Number(s.gainDb || -6) + mixEd.sfxDb, fadeIn: Number(s.fadeInSec || 0), fadeOut: Number(s.fadeOutSec || 0), durationSec: Number(s.durationSec || 0) });
       });
       await buildAudioTrack(cfg.ffmpeg.ffmpeg, items, tl.total, path.join(work, 'audio.wav'), work);
 
@@ -223,7 +238,7 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
         const rel = path.join('renders', 'v' + n + (preview ? '-preview' : '') + '.mp4');
         fs.mkdirSync(path.dirname(store.episodes.file(epId, rel)), { recursive: true });
         fs.copyFileSync(out, store.episodes.file(epId, rel));
-        const r = { v: n, file: rel, sha256: hash, size: fs.statSync(out).size, durationSec: Math.round(info.duration * 100) / 100, width: W, height: H, preview: !!preview, scriptHash: scriptFingerprint(e), cutsHash: cutsFingerprint(e), clipRefs: Object.fromEntries(Object.entries(g.clips).map(([k, c]) => [k, { v: c.v, sha256: c.sha256 }])), sceneHashes: sceneGate ? sceneGate.hashes(e) : {}, hasMockClips: Object.values(g.clips).some((c) => c.mock), mockVoice: Object.values(g.audio).some((x) => x.mock), warnings: tl.warnings.map((w) => w.message), font: fontName, createdAt: nowIso(), by };
+        const r = { v: n, file: rel, sha256: hash, size: fs.statSync(out).size, durationSec: Math.round(info.duration * 100) / 100, width: W, height: H, preview: !!preview, scriptHash: scriptFingerprint(e), cutsHash: cutsFingerprint(e), clipRefs: Object.fromEntries(Object.entries(g.clips).map(([k, c]) => [k, { v: c.v, sha256: c.sha256 }])), sceneHashes: sceneGate ? sceneGate.hashes(e) : {}, editHash: videoEdit ? videoEdit.editHash(e) : '', hasMockClips: Object.values(g.clips).some((c) => c.mock), mockVoice: Object.values(g.audio).some((x) => x.mock), warnings: tl.warnings.map((w) => w.message), font: fontName, createdAt: nowIso(), by };
         e.renders.push(r);
         e.renderJob = { status: 'done', v: n, finishedAt: nowIso() };
         return r;
@@ -270,6 +285,7 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
         const bad = Object.keys(now).filter((k) => r.sceneHashes[k] !== now[k]);
         if (bad.length) throw new StudioError('STALE', `이 렌더 이후 장면(${bad.join(', ')})이 바뀌었습니다. 다시 렌더하세요.`, { status: 409 });
       }
+      if (videoEdit && r.editHash !== undefined && r.editHash !== videoEdit.editHash(ep)) throw new StudioError('STALE', '이 렌더 이후 자막·믹스 설정이 바뀌었습니다. 다시 렌더하세요.', { status: 409 });
       const f = store.episodes.file(epId, r.file);
       if (!fs.existsSync(f) || sha256File(f) !== r.sha256) throw new StudioError('CHECKSUM', '렌더 파일이 기록된 체크섬과 다릅니다.', { status: 409 });
       ep.approvals.final = { v: r.v, sha256: r.sha256, by, at: nowIso() };

@@ -114,6 +114,8 @@ function createSfx({ store, cfg, fetchFn = fetch, heygenKey = () => '', sceneExi
       if (patch.offsetSec !== undefined) s.offsetSec = Math.max(0, num(patch.offsetSec, s.offsetSec || 0));
       if (patch.atSec !== undefined) s.atSec = Math.max(0, num(patch.atSec, s.atSec || 0));
       if (patch.gainDb !== undefined) s.gainDb = Math.min(6, Math.max(-30, num(patch.gainDb, s.gainDb)));
+      if (patch.fadeInSec !== undefined) s.fadeInSec = Math.min(2, Math.max(0, num(patch.fadeInSec, 0)));
+      if (patch.fadeOutSec !== undefined) s.fadeOutSec = Math.min(2, Math.max(0, num(patch.fadeOutSec, 0)));
       if (patch.label !== undefined) s.label = String(patch.label).slice(0, 80);
       if (patch.sceneId !== undefined) { assertScene(ep, patch.sceneId); s.sceneId = patch.sceneId; }
       if (patch.remove) ep.sfx = ep.sfx.filter((x) => x.id !== sfxId);

@@ -395,6 +395,10 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('DELETE', '/api/episodes/:id/scenes/:sid/sfx-plan', async ({ p }) => { await S.animGate.revokeSfx(p.id, p.sid); return ep(p.id); });
   route('POST', '/api/episodes/:id/scenes/:sid/lipsync', async ({ p }) => { await S.animGate.acknowledgeMixOnly(p.id, p.sid); return ep(p.id); });
   route('DELETE', '/api/episodes/:id/scenes/:sid/lipsync', async ({ p }) => { await S.animGate.clearLipSync(p.id, p.sid); return ep(p.id); });
+  route('PUT', '/api/episodes/:id/video-edit/style', async ({ p, body }) => { await S.videoEdit.saveStyle(p.id, body || {}); return ep(p.id); });
+  route('PUT', '/api/episodes/:id/video-edit/mix', async ({ p, body }) => { await S.videoEdit.saveMix(p.id, body || {}); return ep(p.id); });
+  route('PUT', '/api/episodes/:id/video-edit/subtitles/:lid', async ({ p, body }) => { await S.videoEdit.saveSubtitle(p.id, p.lid, body || {}); return ep(p.id); });
+  route('DELETE', '/api/episodes/:id/video-edit/subtitles/:lid', async ({ p }) => { await S.videoEdit.resetSubtitle(p.id, p.lid); return ep(p.id); });
   route('POST', '/api/episodes/:id/sfx/search', async ({ body }) => S.sfx.searchHeygen(body.query));
   route('POST', '/api/episodes/:id/scenes/:sid/sfx/heygen', async ({ p, body }) => { await S.sfx.addHeygen(p.id, { soundId: body.soundId, sceneId: p.sid, offsetSec: body.offsetSec }); return ep(p.id); });
   route('POST', '/api/episodes/:id/sfx/:fid/update', async ({ p, body }) => { await S.sfx.update(p.id, p.fid, body); return ep(p.id); });

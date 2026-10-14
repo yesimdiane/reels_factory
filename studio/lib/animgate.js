@@ -13,7 +13,7 @@ const h = (v) => sha256(canonical(v));
 function createAnimGate({ store, sceneFlow }) {
   const sceneOf = (ep, id) => { const s = (ep.scenes || []).find((x) => x.id === id); if (!s) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다: ' + id, { status: 404 }); return s; };
   const sfxList = (ep, sid) => (ep.sfx || []).filter((x) => x.sceneId === sid);
-  const sfxHash = (ep, sid) => h(sfxList(ep, sid).map((x) => [x.id, x.sha256, x.offsetSec, x.gainDb]));
+  const sfxHash = (ep, sid) => h(sfxList(ep, sid).map((x) => [x.id, x.sha256, x.offsetSec, x.gainDb].concat(x.fadeInSec || x.fadeOutSec ? [x.fadeInSec || 0, x.fadeOutSec || 0] : [])));
 
   /** undecided · approved (plan) · none (explicit "no SFX") · stale (decision no longer matches the list) */
   function sfxState(ep, sid) {

@@ -32,3 +32,10 @@ Per scene, before any paid generation (`studio/lib/animgate.js`, UI `views/anim-
 Per-character voice settings (`views/voice-settings.js`): provider (HeyGen / Google / **MuAPI TTS**), MuAPI `voice_id`, rate, style, emotion — stored on the character and reused by every episode. Only the rate is sent to providers today; style/emotion are saved notes and the UI says so.
 
 MuAPI TTS (`providers/muapi-tts.js`, from #70) is wired into the voice service. In MuAPI live mode it is blocked until the operator confirms the endpoint in Settings (`TTS_UNVERIFIED`) and a voice_id exists; the exact character count must be confirmed; a failed paid line is never retried. Mock mode uses the mock voice.
+
+## Video Studio (PR-3)
+Five tabs on `#/render/EP01` (the readiness card stays on top): **1 장면 검토 → 2 타임라인 → 3 자막 → 4 사운드 → 5 최종 렌더**.
+* Timeline: scene / voice / SFX / B-roll / subtitle lanes on a shared time axis (music lane shown as absent — no music is generated or imported). Items open an editor; UI step 0.3 s (storage grid 0.05 s). Voice lines are read-only: approved audio timing is never changed here.
+* Subtitles (`studio/lib/videoedit.js`, `ep.videoEdit`): per-line text (ko/en), start/end shift, hide, reset; style = language (ko/en/both), position, font size. A phone preview shows the caption; real glyphs/wrapping are checked in the preview render. Checks: empty / >60 chars / overlap / hidden.
+* Sound: voice and effect balance (dB) for the final render; per-effect offset, gain, fade in/out (fades and offsets are part of the scene hash, so changing them invalidates that scene's approval instead of being silently kept).
+* Final render: checklist (all scenes approved, audio approved, SFX decided, no subtitle errors, no blocking problems, no paid call), preview/final render, versions with download. Each render stores an `editHash`; editing captions/mix afterwards marks the render *outdated* and blocks its final approval until re-rendered.

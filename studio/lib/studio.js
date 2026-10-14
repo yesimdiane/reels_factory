@@ -3,6 +3,7 @@
 'use strict';
 const mc = require('./modelcontract');
 const { createAnimGate } = require('./animgate');
+const { createVideoEdit } = require('./videoedit');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
@@ -115,7 +116,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const sceneFlow = createSceneFlow({ store, cfg, voice, broll: brollApi, log });
   const animGate = createAnimGate({ store, sceneFlow });
   const sfx = createSfx({ store, cfg, fetchFn, heygenKey: () => runtime.heygenKey(), log });
-  const renderer = createRenderService({ store, cfg, voice, log, broll: brollApi, sceneGate: { renderProblems: (ep) => sceneFlow.renderProblems(ep), hashes: (ep) => sceneFlow.hashes(ep) } });
+  const videoEdit = createVideoEdit({ store });
+  const renderer = createRenderService({ store, cfg, voice, log, videoEdit, broll: brollApi, sceneGate: { renderProblems: (ep) => sceneFlow.renderProblems(ep), hashes: (ep) => sceneFlow.hashes(ep) } });
   const publishing = createPublishingService({ store });
   store.episodes.seedDemo();
   // Projects / scene approvals / Image Development hand-off (no AI or video provider is wired in: nothing here can spend money).
@@ -308,8 +310,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       })(),
       productStudioImages,
       formula: formulaView(ep),
-      renders: ep.renders.map((r) => Object.assign({}, r, { url: `/media/render/${id}/${r.v}`, current: !!(ep.approvals.final && ep.approvals.final.v === r.v) })),
+      renders: ep.renders.map((r) => Object.assign({}, r, { outdatedEdit: r.editHash !== undefined && r.editHash !== videoEdit.editHash(ep), url: `/media/render/${id}/${r.v}`, current: !!(ep.approvals.final && ep.approvals.final.v === r.v) })),
       sfx: ep.sfx,
+      videoEdit: videoEdit.get(ep),
       sceneFlow: {
         scenes: Object.fromEntries((ep.scenes || []).map((sc) => {
           const au = sceneFlow.audioState(ep, sc.id);
@@ -1498,7 +1501,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
 
   return {
-    exportName, sceneFlow, animGate, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    exportName, sceneFlow, animGate, videoEdit, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, deleteStartFrame, saveImagePrompt, resetImagePrompt, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, confirmModel, confirmMuapiTts, muapiCheck, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,

@@ -87,7 +87,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
       clip: clip ? h([clip.v, clip.sha256]) : '',
       audio: audioState(ep, sid).hash,
       cuts: h([cuts.inserts, cuts.broll.map((b) => [b.id, b.at, b.dur, b.sha])]),
-      sfx: h(sfxOf(ep, sid).map((x) => [x.id, x.sha256, x.offsetSec, x.gainDb])),
+      sfx: h(sfxOf(ep, sid).map((x) => [x.id, x.sha256, x.offsetSec, x.gainDb].concat(x.fadeInSec || x.fadeOutSec ? [x.fadeInSec || 0, x.fadeOutSec || 0] : []))),
     };
   }
   const sceneHash = (parts) => h(parts);
@@ -142,7 +142,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
       const cuts = cutsOf(ep, sid);
       const overlays = cuts.broll.filter((b) => b.file && fs.existsSync(b.file)).map((b) => ({ id: b.id, at: b.at, dur: b.dur, file: b.file }));
       const items = tl.lines.filter((l) => l.sceneId === sid && audio[l.id]).map((l) => ({ file: audio[l.id].file, start: Math.max(0, l.start - ts.start), gainDb: 0 }));
-      sfxOf(ep, sid).forEach((x) => { const f = store.episodes.file(epId, x.file); if (fs.existsSync(f) && x.offsetSec < dur) items.push({ file: f, start: x.offsetSec, gainDb: Number(x.gainDb || -6) }); });
+      sfxOf(ep, sid).forEach((x) => { const f = store.episodes.file(epId, x.file); if (fs.existsSync(f) && x.offsetSec < dur) items.push({ file: f, start: x.offsetSec, gainDb: Number(x.gainDb || -6), fadeIn: Number(x.fadeInSec || 0), fadeOut: Number(x.fadeOutSec || 0), durationSec: Number(x.durationSec || 0) }); });
       const work = store.episodes.file(epId, 'tmp', 'comp-' + Date.now());
       fs.mkdirSync(work, { recursive: true });
       try {
