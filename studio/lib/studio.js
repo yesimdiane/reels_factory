@@ -241,6 +241,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         startImageInfo: img.error ? { error: img.error } : { fileName: (s.startImage && s.startImage.name) || '', label: img.label, generated: !!img.generated, approved: img.approved, placeholder: img.placeholder, url: img.characterId ? `/media/ref/${img.characterId}/${img.refId}` : `/media/startframe/${id}/${s.id}` },
         clips: { approvedVersion: clips.approvedVersion, versions: clips.versions.map((v) => Object.assign({}, v, { url: `/media/clip/${id}/${s.id}/${v.v}`, freshness: gen.freshness(ep, s, v) })) },
         animationSettings: (ep.animation || {})[s.id] || {},
+        imagePrompt: startImages.promptView(ep, s),
         animationPrompt: ep.prompts[s.id] ? animplan.compose(ep, s.id, ep.prompts[s.id].video) : '',
         line: ep.lines.filter((l) => l.sceneId === s.id).map((l) => l.id),
         approval: readiness.scenes.find((x) => x.sceneId === s.id),
@@ -337,6 +338,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       if (e.approvals.final && !(e.publishing && e.publishing.approvedAt)) q('caption', '캡션·ManyChat 문구 승인 대기', 'publishing');
     });
     return {
+      build: require('./buildinfo').read(),
       providers: providerStatus(),
       settings: publicSettings(),
       models: store.models(),
@@ -1170,6 +1172,49 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return episodeView(id);
   }
 
+  /** "생성한 이미지 삭제": removes the scene's start-frame RECORD only. The file moves to startframes/_deleted/ (recoverable); character and product references are never touched. An approved frame must be un-approved first. */
+  async function deleteStartFrame(id, sceneId, by = 'operator') {
+    await store.episodes.update(id, (ep) => {
+      const sc = ep.scenes.find((x) => x.id === sceneId);
+      if (!sc) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다.', { status: 404 });
+      const si = sc.startImage;
+      if (!si || si.type !== 'upload') throw new StudioError('NO_FRAME', '삭제할 시작 프레임이 없습니다 (캐릭터 참조 이미지는 여기서 지우지 않습니다).', { status: 404 });
+      if (si.approved) throw new StudioError('APPROVED', '승인된 이미지는 먼저 승인을 취소해야 삭제할 수 있습니다.', { status: 409 });
+      const from = store.episodes.file(id, 'startframes', si.file);
+      if (fs.existsSync(from)) {
+        const to = store.episodes.file(id, 'startframes', '_deleted', Date.now() + '-' + si.file);
+        fs.mkdirSync(path.dirname(to), { recursive: true });
+        fs.renameSync(from, to);
+      }
+      ep.startImageTrash = (ep.startImageTrash || []).concat({ sceneId, file: si.file, sha256: si.sha256, name: si.name || '', generated: !!si.generated, at: nowIso(), by });
+      delete sc.startImage;
+    });
+    store.episodes.audit(id, 'startframe.deleted', { sceneId, by });
+    return episodeView(id);
+  }
+
+  /** Structured-prompt override for the start image: only the scene-describing head is editable (rules are re-added by code on every generation). */
+  async function saveImagePrompt(id, sceneId, { text }, by = 'operator') {
+    await store.episodes.update(id, (ep) => {
+      const sc = ep.scenes.find((x) => x.id === sceneId);
+      if (!sc) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다.', { status: 404 });
+      const t = String(text || '').trim();
+      if (!t) throw new StudioError('EMPTY', '프롬프트가 비어 있습니다. 자동 합성으로 되돌리려면 "자동으로 되돌리기"를 누르세요.', { status: 422 });
+      const bad = lintPrompt(t, ep);
+      if (bad.length) throw new StudioError('PRODUCT_CLAIM', `확인되지 않은 제품 주장이 있습니다: ${bad.join(', ')}`, { status: 422 });
+      const hard = lintCast(t, sc, lib()).filter((w) => w.code !== 'UNSELECTED_CHARACTER');
+      if (hard.length) throw new StudioError('CAST_RULE', hard[0].message, { details: hard, status: 422 });
+      ep.imagePrompts = ep.imagePrompts || {};
+      const prev = ep.imagePrompts[sceneId] || {};
+      ep.imagePrompts[sceneId] = { text: t.slice(0, 3000), edited: true, rev: (prev.rev || 0) + 1, history: (prev.history || []).concat(prev.text ? [{ rev: prev.rev || 1, text: prev.text, at: prev.at }] : []).slice(-10), at: nowIso(), by };
+    });
+    return episodeView(id);
+  }
+  async function resetImagePrompt(id, sceneId) {
+    await store.episodes.update(id, (ep) => { if (ep.imagePrompts && ep.imagePrompts[sceneId]) ep.imagePrompts[sceneId] = Object.assign({}, ep.imagePrompts[sceneId], { edited: false, at: nowIso() }); });
+    return episodeView(id);
+  }
+
   async function approveStartFrame(id, sceneId, approved, by = 'operator') {
     await store.episodes.update(id, (ep) => {
       const s = ep.scenes.find((x) => x.id === sceneId);
@@ -1415,7 +1460,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   return {
     exportName, sceneFlow, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, muapiCheck, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, deleteStartFrame, saveImagePrompt, resetImagePrompt, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, muapiCheck, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

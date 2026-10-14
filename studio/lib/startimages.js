@@ -37,6 +37,23 @@ function createStartImages({ store, products, router, lib, charRefs, log = () =>
     if (!isScriptApproved(ep)) throw new StudioError('SCRIPT_NOT_APPROVED', '대본이 승인되기 전에는 AI 시작 이미지를 만들 수 없습니다 (유료 생성).', { recovery: 'Script Studio에서 대본을 승인하세요.', status: 409 });
   }
 
+  /** The scene-describing part of the image prompt (built from the shared scene fields). The cast / identity / product / "no text" rules are appended by code and cannot be edited away. */
+  function autoHead(ep, scene) {
+    return [
+      'Create ONE vertical 9:16 illustration: the FIRST FRAME of a short animated comedy scene, in a clean 2D anime / Korean webtoon style (ink outlines, flat cel shading, expressive faces).',
+      `SCENE ${scene.id}: ${scene.title || ''}`,
+      'VISUAL: ' + (scene.visual || '(not described)'),
+      scene.action ? 'ACTION AT THE FIRST FRAME: ' + scene.action : '',
+      ...sceneLook.promptLines(scene, lib()),
+    ].filter(Boolean).join('\n');
+  }
+  /** What is sent: the operator's saved text when they edited it, otherwise the automatic text. */
+  function headFor(ep, scene) {
+    const o = ep.imagePrompts && ep.imagePrompts[scene.id];
+    return o && o.edited && o.text ? o.text : autoHead(ep, scene);
+  }
+  const promptView = (ep, scene) => { const o = (ep.imagePrompts || {})[scene.id] || {}; return { text: headFor(ep, scene), auto: autoHead(ep, scene), edited: !!(o.edited && o.text), rev: o.rev || 0 }; };
+
   /** Inputs for one scene. Throws (before any paid call) when the cast has no approved, non-placeholder character reference. */
   function inputs(ep, scene, exclude = []) {
     const L = lib();
@@ -56,11 +73,7 @@ function createStartImages({ store, products, router, lib, charRefs, log = () =>
     try { charRefs.enforce({ chars: ci.chars, product: productParts }); } catch (e) { if (e.details) e.details.sceneId = scene.id; e.message = `${scene.id}: ${e.message}`; throw e; } // model input limits, before any paid call
     const facts = scene.showsProduct ? (ep.product.verifiedFeatures || []) : [];
     const prompt = [
-      'Create ONE vertical 9:16 illustration: the FIRST FRAME of a short animated comedy scene, in a clean 2D anime / Korean webtoon style (ink outlines, flat cel shading, expressive faces).',
-      `SCENE ${scene.id}: ${scene.title || ''}`,
-      'VISUAL: ' + (scene.visual || '(not described)'),
-      scene.action ? 'ACTION AT THE FIRST FRAME: ' + scene.action : '',
-      ...sceneLook.promptLines(scene, L),
+      headFor(ep, scene),
       castDirective(cast, L),
       ...identityLines(cast, L),
       ...ci.lines,
@@ -130,7 +143,7 @@ function createStartImages({ store, products, router, lib, charRefs, log = () =>
     return { generated, skipped, failed };
   }
 
-  return { estimate, generate, plan };
+  return { estimate, generate, plan, promptView, autoHead };
 }
 
 module.exports = { createStartImages };

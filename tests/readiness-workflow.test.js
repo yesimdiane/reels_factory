@@ -61,7 +61,7 @@ test('workflow: script → storyboard → images → generate (no clip required)
   // no clip exists yet: every scene is "waiting for video generation" — neutral pending items, never a red error
   assert.equal(r.clips.none, ids.length); assert.equal(r.stages.clipGeneration.status, 'waiting'); assert.equal(r.stages.render.status, 'waiting');
   const pend = r.items.filter((i) => i.code === 'CLIP_NOT_GENERATED');
-  assert.equal(pend.length, ids.length); assert.ok(pend.every((i) => i.severity === 'pending' && /영상 클립 생성 대기 — Storyboard에서 영상을 생성하거나 업로드하세요\./.test(i.message) && i.action.view === 'storyboard' && i.action.panel === 'clips' && i.action.sceneId));
+  assert.equal(pend.length, ids.length); assert.ok(pend.every((i) => i.severity === 'pending' && /영상 클립 생성 대기 — 애니메이션 스튜디오에서 영상을 생성하거나 업로드하세요\./.test(i.message) && i.action.view === 'animation' && i.action.sceneId), 'clip items open the scene in Animation Studio');
   assert.equal(r.items.filter((i) => i.severity === 'block').length, 0, 'no red errors for a normal unfinished workflow');
   assert.ok(!JSON.stringify(r.items).includes('Animation Studio'), 'no instruction points at a page that is not in the navigation');
   // generation does not need a previously generated clip

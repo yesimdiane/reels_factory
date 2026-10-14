@@ -39,3 +39,21 @@ Migration impact: none. New scene fields are optional; absent on existing episod
 
 Tests: `script-studio-consolidation.test.js`, `script-studio-consolidation-browser.test.js`.
 Limitations: element timing is stored but not yet turned into beats automatically (PR C); template (free) video prompts do not yet include look/pose lines (Gemini and start-image prompts do).
+
+## PR (Storyboard consolidation) — what actually changed in the Storyboard
+**Why the UI looked unchanged:** two separate causes were found by reproducing the app from `main` with a headless browser (`before-*` runs):
+1. *The running deployment was older than the merged work.* The reported layout (참조 이미지 · 제품 등장 · 이미지/영상 프롬프트 · 애니메이션 · 컷/B-roll · 고급) has none of the panels added by #60/#61 (오디오 확인 · 영상 클립 생성 · 효과음 · 합본), so it predates even those. To make this checkable the app now shows its build id: bottom of the left rail (`v2.3.0 · <commit>`), `GET /healthz → build.shortSha`, `/api/state → build`. On Railway the commit comes from `RAILWAY_GIT_COMMIT_SHA` (or `RF_BUILD_SHA`).
+2. *A real bug in the #62 collapse:* scenes whose approved start image is a character reference marked as a demo/placeholder were never collapsed (`!img.placeholder`), so their editors stayed open. Collapse now applies to every approved start image (the summary shows a "데모 임시 이미지" note). A readiness/jump link that reopens an editor also keeps it open for that session (by design).
+
+**New scene editor (3 sections, replacing the flat panel list):**
+- **① 이미지 제작** — start image (preview, 만들기/다시 만들기 [cost-confirmed as before], 올리기, 크게 보기, 삭제, 승인/취소) · 환경·캐릭터(등장/참조만)·포즈·몸동작·감정 (the same `scene.look/pose/referenceOnly/elements` Script Studio edits) · 얼굴 표정 and 카메라·샷 (collapsed; 8 recommended shot types) · 참조 이미지 (character + product, merged) · 이미지 프롬프트 (automatic from the fields; manual edits are kept and never overwritten; code re-adds cast/identity/product/"no text" rules on generation).
+  - Delete = removes only that scene's start-frame record; the file moves to `startframes/_deleted/` (recoverable); an approved frame must be un-approved first; character library and product images are never touched (test-covered).
+  - Approved start image → the whole section collapses to a sage summary (크게 보기 · 승인 취소 · 이미지 편집 열기).
+- **② 애니메이션 · 오디오 준비** — animation prompt (+ hand-off card to Animation Studio, which owns model/cost/generation/approval) · the shared 0.5 s beats · 대사 · 목소리 (per-speaker voice picker from the synced catalog; never regenerates audio by itself) · 오디오 생성·미리듣기·승인.
+- **③ B-roll 제작** — 컷 · B-roll (concept, prompt, image generation, preview, approval; existing cards).
+- Below: 효과음·씬 합본·최종 승인 and a slim 고급 설정 (read-only duration / measured dialogue; the duplicated 시각 설명 textarea, frame upload, reorder arrows and the duplicate reference picker were removed — the data is untouched and edited in Script Studio).
+- The Storyboard no longer contains video-generation controls; readiness items for clips now open the scene in Animation Studio.
+
+Screenshots: `docs/screenshots/storyboard-unapproved-scene.png` (editor open), `storyboard-approved-scene.png` (approved → summary).
+
+**Remaining work (not done):** separate product-reference chooser beyond the existing product toggle/placement; per-line voice preview from the catalog (only the audio panel's generated audio can be played); B-roll concept editing still uses the existing B-roll cards (Script Studio has the concept planner); resolution of the deployed app's version needs the Railway deploy to be refreshed on your side.

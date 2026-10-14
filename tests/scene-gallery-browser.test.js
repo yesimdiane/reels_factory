@@ -48,13 +48,14 @@ test('gallery: order, states, B-cut count, open scene, full-size preview, compar
     // approved scene → compact summary, image/prompt editor hidden; reopen shows it
     await page.locator(`[data-gallery-open="${ids[0]}"]`).click();
     await page.waitForSelector(`[data-sb-approved-summary="${ids[0]}"]`);
-    assert.equal(await page.locator('[data-panel="prompt"]').count(), 0);
-    assert.equal(await page.locator('[data-panel="audio"]').count(), 1, 'later production steps stay available');
+    assert.equal(await page.locator('[data-panel="look"]').count(), 0, 'the image-production editor is collapsed');
+    assert.equal(await page.locator('[data-panel="audio"]').count(), 1, 'audio / animation preparation stays available');
+    assert.equal(await page.locator('[data-panel="prompt"]').count(), 1, 'the animation prompt stays available');
     await page.locator(`[data-sb-reopen="${ids[0]}"]`).click();
-    await page.waitForSelector('[data-panel="prompt"]');
+    await page.waitForSelector('[data-panel="look"]');
     // an unapproved scene is open by default
     await page.locator(`[data-gallery-open="${ids[2]}"]`).click();
-    await page.waitForSelector('[data-panel="prompt"]');
+    await page.waitForSelector('[data-panel="look"]');
     // full-size preview
     await page.locator(`[data-gallery-zoom="${ids[1]}"]`).click();
     await page.waitForSelector(`[data-gallery-full="${ids[1]}"]`);
