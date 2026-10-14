@@ -33,7 +33,7 @@ test('storyboard: character reference section shows real thumbnails and lets the
     const jack = page.locator(`${box} [data-char-ref="jack"]`);
     assert.match(await jack.innerText(), new RegExp(`jack:${j1.id}`));
     assert.match(await jack.innerText(), /승인됨/);
-    const src = await jack.locator('img').getAttribute('src');
+    const src = await jack.locator('img').first().getAttribute('src');
     assert.equal(src, `/media/ref/jack/${j1.id}`, 'thumbnail is the saved Character Library image');
     const got = await page.evaluate(async (u) => { const r = await fetch(u); return { ok: r.ok, n: (await r.arrayBuffer()).byteLength }; }, src);
     assert.ok(got.ok && got.n === m.s.store.characters.get('jack').references.find((r) => r.id === j1.id).size, 'the served bytes are the stored file');
