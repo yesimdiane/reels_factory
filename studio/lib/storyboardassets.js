@@ -103,7 +103,7 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
     const dur = raw.durationSec != null ? Number(raw.durationSec) : prev ? prev.durationSec : 1;
     const problems = [];
     if (!Number.isFinite(at) || at < 0) problems.push('삽입 위치는 0초 이상이어야 합니다.');
-    if (!(dur >= STEP)) problems.push('길이는 0.5초 이상이어야 합니다.');
+    if (!(dur >= 0.5)) problems.push('길이는 0.5초 이상이어야 합니다.');
     if (Number.isFinite(at) && Number.isFinite(dur) && at + dur > Number(sc.durationSec) + 1e-6) problems.push(`위치+길이(${r1(at + dur)}초)가 장면 길이(${sc.durationSec}초)를 넘습니다. 장면은 자동으로 늘어나지 않습니다.`);
     const others = brollOf(ep).filter((b) => b.status !== 'removed' && b.sceneId === sc.id && (!prev || b.id !== prev.id));
     if (others.some((b) => at < b.insertAtSec + b.durationSec - 1e-6 && b.insertAtSec < at + dur - 1e-6)) problems.push('같은 장면의 다른 B-roll과 시간이 겹칩니다.');
