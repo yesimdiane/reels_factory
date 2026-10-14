@@ -46,6 +46,7 @@ function mapHttpError(status, body, requestId) {
   const text = typeof msg === 'string' ? msg : JSON.stringify(msg);
   if (status === 401 || status === 403) return new ProviderError('AUTH', 'Muapi API 키가 거부되었습니다 (HTTP ' + status + '). renderer/.env의 MUAPI_API_KEY를 확인하세요. ' + text, { status });
   if (status === 402) return new ProviderError('CREDITS', 'Muapi 크레딧이 부족합니다 (HTTP 402). Muapi 대시보드 Billing에서 충전하세요. ' + text, { status });
+  if (status === 404) return new ProviderError('ENDPOINT_NOT_FOUND', 'MuAPI returned HTTP 404: the configured model endpoint may not exist. Verify the exact model slug in MuAPI Playground and select a supported model in Settings. ' + text, { status });
   if (status === 429) return new ProviderError('RATE_LIMIT', 'Muapi 요청 한도에 걸렸습니다 (HTTP 429). 잠시 후 다시 시도하세요.', { status, retryable: true });
   if (status >= 400 && status < 500) return new ProviderError('BAD_REQUEST', 'Muapi가 요청을 거부했습니다 (HTTP ' + status + '): ' + text, { status });
   return new ProviderError('SERVER', 'Muapi 서버 오류 (HTTP ' + status + '). ' + text, { status, retryable: false, uncertain: true, requestId });
@@ -158,6 +159,7 @@ function createMuapiProvider({
     async submit({ model, prompt, imageUrl, aspectRatio = '9:16', duration, negativePrompt, extra = {} }) {
       need();
       if (!model || !model.endpoint) throw new ProviderError('BAD_REQUEST', '모델 엔드포인트가 설정되지 않았습니다.');
+      if (String(model.endpoint).replace(/^\/?(api\/v1\/)?/, '') === 'kling-master') throw new ProviderError('ENDPOINT_UNVERIFIED', 'Legacy kling-master endpoint is not confirmed in the current MuAPI model API documentation. Select the verified Kling 2.1 Standard image-to-video model in Settings before making a paid request.');
       const body = Object.assign({}, model.extraParams || {}, extra, {
         [model.promptField || 'prompt']: prompt,
         [model.imageField || 'image_url']: imageUrl,
