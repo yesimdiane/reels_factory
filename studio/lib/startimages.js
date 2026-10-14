@@ -5,6 +5,7 @@
 //   * never overwrites an approved frame; earlier files are kept on disk; a scene that already has a generated frame is skipped unless forced
 //   * every scene is saved before the next paid call, so a failure part-way keeps (and never re-bills) what was already made
 'use strict';
+const sceneLook = require('./scenelook');
 const fs = require('node:fs');
 const path = require('node:path');
 const { StudioError, nowIso, sha256 } = require('./util');
@@ -59,6 +60,7 @@ function createStartImages({ store, products, router, lib, charRefs, log = () =>
       `SCENE ${scene.id}: ${scene.title || ''}`,
       'VISUAL: ' + (scene.visual || '(not described)'),
       scene.action ? 'ACTION AT THE FIRST FRAME: ' + scene.action : '',
+      ...sceneLook.promptLines(scene, L),
       castDirective(cast, L),
       ...identityLines(cast, L),
       ...ci.lines,

@@ -9,6 +9,7 @@
 //   * Approvals made before v2 keep working exactly as before (legacy whole-object hash) until they are upgraded in place.
 'use strict';
 const { sha256, canonical } = require('./util');
+const { lookHashPart } = require('./scenelook');
 
 const FIELD_LABEL = { characters: '출연 캐릭터', visual: '시각 연출', product: '제품 등장·배치', script: '대사·장면 길이', prompt: '영상 프롬프트', startImage: '시작 이미지' };
 const h = (v) => sha256(canonical(v));
@@ -26,8 +27,8 @@ function sceneFields(ep, s) {
   const p = ep.prompts && ep.prompts[s.id];
   const lines = (ep.lines || []).filter((l) => l.sceneId === s.id).map((l) => ({ id: l.id, speaker: l.speaker, en: l.en, ko: l.ko }));
   return {
-    characters: h(s.characters || []),
-    visual: h(s.visual || ''),
+    characters: h((s.referenceOnly || []).length ? { c: s.characters || [], ro: s.referenceOnly } : (s.characters || [])),
+    visual: h(lookHashPart(s) ? { v: s.visual || '', l: lookHashPart(s) } : (s.visual || '')),
     product: h({ shows: !!s.showsProduct, placement: s.productPlacement || null }),
     script: h({ durationSec: s.durationSec, lines }),
     prompt: h(p ? { video: p.video, negative: p.negative } : null),

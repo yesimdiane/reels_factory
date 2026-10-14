@@ -8,6 +8,7 @@
 // A Gemini call is billable (price not known to the Studio), so it needs an explicit operator click (confirmAi).
 // Nothing is saved if validation fails; edited prompts are never overwritten unless force is set.
 'use strict';
+const sceneLook = require('./scenelook');
 const fs = require('node:fs');
 const path = require('node:path');
 const { StudioError, nowIso, sha256, uid } = require('./util');
@@ -63,6 +64,7 @@ function geminiInstruction(ep, scenes, lib, clipSecOf) {
       `Scene description (approved): ${s.visual}`,
       `Characters selected in the editor: ${(s.characters || []).length ? s.characters.map((c) => (lib.characters.find((x) => x.id === c) || { name: c }).name).join(' + ') : 'NONE'}`,
       `Product visible: ${s.showsProduct ? 'YES' : 'NO'}`,
+      ...sceneLook.promptLines(s, lib),
       lines.length ? 'Approved dialogue in this scene (for acting/expressions only): ' + lines.map((l) => `${l.speaker}: "${l.en}"`).join(' / ') : 'No dialogue.',
     ].join('\n');
   }).join('\n\n');

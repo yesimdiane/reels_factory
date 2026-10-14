@@ -40,6 +40,7 @@ const { createVideoProvider } = require('./providers');
 const { createGenerationService } = require('./generation');
 const { createVoiceService } = require('./voice');
 const { createSfx } = require('./sfx');
+const sceneLook = require('./scenelook');
 const { createSceneFlow } = require('./sceneflow');
 const { createVoiceCatalog } = require('./voicecatalog');
 const { createRenderService } = require('./render');
@@ -504,6 +505,10 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         visual: String(s.visual != null ? s.visual : prev.visual || '').slice(0, 2000),
         action: String(s.action != null ? s.action : prev.action || '').slice(0, 1500),
         emotion: String(s.emotion != null ? s.emotion : prev.emotion || '').slice(0, 200),
+        look: sceneLook.cleanLook(s.look, prev.look),
+        pose: sceneLook.cleanPose(s.pose, prev.pose),
+        referenceOnly: sceneLook.cleanReferenceOnly(s.referenceOnly, Array.isArray(s.characters) ? s.characters.map(String) : prev.characters || [], prev.referenceOnly),
+        elements: sceneLook.cleanElements(s.elements, prev.elements, s.durationSec != null ? s.durationSec : prev.durationSec),
         productPlacement: s.productPlacement !== undefined ? cleanPlacement(s.productPlacement) : prev.productPlacement,
         narration: String(s.narration != null ? s.narration : prev.narration || '').slice(0, 1500),
         placement: String(s.placement != null ? s.placement : prev.placement || '').slice(0, 800),
@@ -979,6 +984,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       const [clean] = sanitizeScenes([incoming], [sc]);
       // identity, order and position in the story never change from a scene save
       Object.assign(sc, clean, { id: sc.id, part: sc.part, beatKey: sc.beatKey, beat: sc.beat });
+      if (incoming.elements !== undefined) { const dv = sceneLook.deriveText(sc.elements); if (dv) { sc.action = dv.action; sc.emotion = dv.emotion; } } // elements are the editable source; action/emotion mirror them
       if (Array.isArray(patch.lines)) {
         const others = ep.lines.filter((l) => l.sceneId !== sceneId);
         const used = new Set(others.map((l) => l.id));
