@@ -279,11 +279,19 @@ function createVoiceCatalog({ store, vault, cfg, runtime, fetchFn = globalThis.f
   function status(charOrId) {
     const c = typeof charOrId === 'string' ? store.characters.get(charOrId) : charOrId;
     const v = c.voice || {};
+    if (v.provider === 'muapi') {
+      // MuAPI ElevenLabs TTS: the voice_id is entered by hand (no catalog is read), so readiness = id present + endpoint confirmed by the operator
+      const confirmed = !!store.settings.get().muapiTtsConfirmed;
+      const base = { characterId: c.id, provider: 'muapi', providerLabel: 'MuAPI TTS', voiceId: v.muapiVoiceId || '', connected: true, links: { settings: '#/settings/voices', characters: '#/settings/characters' } };
+      if (!v.muapiVoiceId) return Object.assign(base, { state: 'missing', ready: false, name: '', message: `${c.name}: MuAPI voice_id가 지정되지 않았습니다.` });
+      if (!confirmed) return Object.assign(base, { state: 'unverified', ready: false, name: v.muapiVoiceId, message: 'MuAPI TTS 엔드포인트가 아직 확인되지 않았습니다 (실제 호출 차단, 목업은 가능).', action: 'connect' });
+      return Object.assign(base, { state: 'ready', ready: true, name: v.muapiVoiceId, message: 'MuAPI TTS · ' + v.muapiVoiceId });
+    }
     const provider = v.provider === 'google' ? 'google' : 'heygen';
     const id = provider === 'google' ? (v.googleVoiceName || '') : (v.heygenVoiceId || '');
     const conn = connection(provider);
     const label = provider === 'google' ? 'Google Cloud TTS' : 'HeyGen';
-    const base = { characterId: c.id, provider, providerLabel: label, voiceId: id, connected: conn.configured, links: { settings: '#/settings', characters: '#/characters' } };
+    const base = { characterId: c.id, provider, providerLabel: label, voiceId: id, connected: conn.configured, links: { settings: '#/settings', characters: '#/settings/characters' } };
     if (!id) return Object.assign(base, { state: 'missing', ready: false, name: '', message: `${c.name}: 목소리가 지정되지 않았습니다.` + (provider === 'heygen' && v.heygenIdentityId ? ' (Identity ID는 Voice ID가 아닙니다.)' : ''), action: 'change' });
     if (!conn.configured) return Object.assign(base, { state: 'not_connected', ready: false, name: v.verifiedName || id, message: `${label}가 연결되어 있지 않습니다.`, action: 'connect' });
     const entry = find(provider, id);

@@ -235,7 +235,7 @@ test('Script Studio reads each character\'s saved voice: provider + voice name, 
   m.s.voiceCatalog.disconnect('google');
   assert.equal(voices().jack.state, 'not_connected'); assert.equal(voices().jack.action, 'connect');
   const ch = m.s.summary().characters.find((c) => c.id === 'jack');
-  assert.equal(ch.voiceInfo.links.settings, '#/settings'); assert.equal(ch.voiceInfo.links.characters, '#/characters');
+  assert.equal(ch.voiceInfo.links.settings, '#/settings'); assert.equal(ch.voiceInfo.links.characters, '#/settings/characters');
 });
 
 test('cost safety: connecting and listing never synthesize; previews are explicit (free in MOCK, confirmed + cached in LIVE); hosted HeyGen samples are free', async () => {

@@ -2,6 +2,7 @@
 // It wires the store, character library, gates, generation, voice, render and publishing services together.
 'use strict';
 const mc = require('./modelcontract');
+const { createAnimGate } = require('./animgate');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
@@ -93,7 +94,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load(), products });
   const brollImages = createBrollImages({ store, products, router, charRefs, sba, lib: () => store.characters.load() });
   const animplan = createAnimPlan({ store, router, sba, charRefs, lib: () => store.characters.load() });
-  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs, audioGate: (ep, sid) => sceneFlow.audioOk(ep, sid), brollSource: (ep, b) => ({ file: sba.brollFile(ep, b), problem: sba.assetHealth(ep, b).problem }) });
+  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs, audioGate: (ep, sid) => sceneFlow.audioOk(ep, sid), extraBlockers: (ep, scenes, model) => animGate.blockers(ep, scenes, model), brollSource: (ep, b) => ({ file: sba.brollFile(ep, b), problem: sba.assetHealth(ep, b).problem }) });
   const aiDiagnostics = createAiDiagnostics({ store });
   const promptSvc = createPromptService({ diagnostics: aiDiagnostics,
     store, cfg, geminiFactory, log,
@@ -112,6 +113,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const renderReadiness = createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer: { plan: (id) => renderer.plan(id) }, providerMode: () => video.mode, getModel: () => modelById(store.models(), store.settings.get().defaultModelId) });
   const brollApi = { approved: (ep) => sba.approvedBroll(ep), file: (ep, b) => sba.brollFile(ep, b), problem: (ep, b) => sba.assetHealth(ep, b).problem };
   const sceneFlow = createSceneFlow({ store, cfg, voice, broll: brollApi, log });
+  const animGate = createAnimGate({ store, sceneFlow });
   const sfx = createSfx({ store, cfg, fetchFn, heygenKey: () => runtime.heygenKey(), log });
   const renderer = createRenderService({ store, cfg, voice, log, broll: brollApi, sceneGate: { renderProblems: (ep) => sceneFlow.renderProblems(ep), hashes: (ep) => sceneFlow.hashes(ep) } });
   const publishing = createPublishingService({ store });
@@ -312,7 +314,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         scenes: Object.fromEntries((ep.scenes || []).map((sc) => {
           const au = sceneFlow.audioState(ep, sc.id);
           au.lines = au.lines.map((l) => Object.assign(l, { url: l.valid ? `/media/audio/${id}/${l.id}` : '' }));
-          return [sc.id, { audio: au, final: sceneFlow.sceneState(ep, sc.id) }];
+          const gm = (() => { try { return modelById(store.models(), (ep.animation && ep.animation[sc.id] && ep.animation[sc.id].modelId) || store.settings.get().defaultModelId); } catch (_) { return null; } })();
+          let ge = null; try { ge = gen.estimate(id, { sceneIds: [sc.id], modelId: gm && gm.id }); } catch (_) { /* shown as blockers in the checklist */ }
+          return [sc.id, { audio: au, final: sceneFlow.sceneState(ep, sc.id), sfxPlan: animGate.sfxState(ep, sc.id), gate: animGate.checklist(ep, sc.id, { model: gm, est: ge }) }];
         })),
         builtinSfx: sfx.BUILTIN,
         heygenConnected: !!runtime.heygenKey(),
@@ -1310,6 +1314,11 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     store.settings.save({ modelVerification: Object.assign({}, cur.modelVerification || {}, { [id]: { level: 'user-entered', at: nowIso(), by } }) });
     return publicSettings();
   }
+  /** Operator states they checked the MuAPI TTS endpoint + parameters in the playground. Free; no network. */
+  function confirmMuapiTts(value = true) {
+    store.settings.save({ muapiTtsConfirmed: !!value, muapiTtsConfirmedAt: value ? nowIso() : '' });
+    return publicSettings();
+  }
   function removeCustomModel(id) {
     const cur = store.settings.get();
     if (!(cur.customModels || []).some((m) => m.id === id)) throw new StudioError('NOT_FOUND', '직접 추가한 모델이 아닙니다.', { status: 404 });
@@ -1352,6 +1361,11 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         }
         if (v.heygenIdentityId !== undefined) c.voice.heygenIdentityId = String(v.heygenIdentityId).trim();
         if (v.speed !== undefined) c.voice.speed = Math.min(2, Math.max(0.5, num(v.speed, 1)));
+        if (v.provider !== undefined && ['heygen', 'google', 'muapi'].includes(v.provider)) c.voice.provider = v.provider;
+        if (v.muapiVoiceId !== undefined) c.voice.muapiVoiceId = String(v.muapiVoiceId).trim().slice(0, 80);
+        // style / emotion are saved per character and reused by every episode; providers that cannot apply them say so in the UI
+        if (v.style !== undefined) c.voice.style = String(v.style).trim().slice(0, 80);
+        if (v.emotion !== undefined) c.voice.emotion = String(v.emotion).trim().slice(0, 80);
       }
     });
     return characterView(store.characters.get(id));
@@ -1484,9 +1498,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
 
   return {
-    exportName, sceneFlow, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    exportName, sceneFlow, animGate, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, deleteStartFrame, saveImagePrompt, resetImagePrompt, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, confirmModel, muapiCheck, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, deleteStartFrame, saveImagePrompt, resetImagePrompt, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, confirmModel, confirmMuapiTts, muapiCheck, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

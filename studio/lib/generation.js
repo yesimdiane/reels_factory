@@ -27,7 +27,7 @@ const AUTH_TTL_MS = 30 * 60 * 1000;
 const ACTIVE = new Set(['preparing', 'submitting', 'processing']);
 const RECOVERABLE = new Set(['processing', 'polling_interrupted', 'download_failed']);
 
-function createGenerationService({ store, provider, cfg, now = () => Date.now(), log = () => {}, composePrompt = (ep, sid, text) => text, charRefs = null, audioGate = null, brollSource = null }) {
+function createGenerationService({ store, provider, cfg, now = () => Date.now(), log = () => {}, composePrompt = (ep, sid, text) => text, charRefs = null, audioGate = null, extraBlockers = null, brollSource = null }) {
   const running = new Set();
   const lib = () => store.characters.load();
 
@@ -89,6 +89,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     else scenes.forEach((s) => { const st = sb.scenes[s.id]; if (st && !st.approved) add('STORYBOARD_SCENE_CHANGED', st.isNew ? `${s.id}: 승인 이후에 추가된 장면입니다.` : `${s.id}: ${st.changed.map((c) => c.label).join(', ')}이(가) 승인 후 바뀌었습니다.`, 'Storyboard에서 이 장면을 확인한 뒤 다시 승인하세요 (다른 장면의 승인은 유지됩니다).'); });
     if (charRefs && provider.mode === 'live') charRefs.validate(ep, scenes).problems.forEach((p) => add(p.code, p.message, '캐릭터 라이브러리에서 실제 참조 이미지를 올리고 승인하거나 장면의 "캐릭터 참조 이미지"에서 고르세요.'));
     if (audioGate) scenes.forEach((s) => { if (!audioGate(ep, s.id)) add('AUDIO_NOT_APPROVED', `${s.id}: 오디오가 승인되지 않았습니다 (영상은 승인된 오디오 길이에 맞춰 만듭니다).`, 'Storyboard의 "오디오 확인 · 승인"에서 오디오를 만들고 들어본 뒤 승인하세요.'); });
+    if (extraBlockers) extraBlockers(ep, scenes, model).forEach((x) => out.push(x));
     scenes.forEach((s) => {
       const p = ep.prompts && ep.prompts[s.id];
       if (!p || !String(p.video || '').trim()) add('NO_PROMPT', `${s.id}: 영상 프롬프트가 없습니다.`, 'Storyboard에서 프롬프트를 만드세요.');

@@ -348,6 +348,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/models', async ({ body }) => S.addCustomModel(body || {}));
   route('POST', '/api/models/:id/confirm', async ({ p }) => S.confirmModel(p.id));
   route('DELETE', '/api/models/:id', async ({ p }) => S.removeCustomModel(p.id));
+  route('POST', '/api/muapi/tts/confirm', async ({ body }) => S.confirmMuapiTts(!(body && body.confirmed === false)));
   route('POST', '/api/muapi/check', async () => S.muapiCheck());
   route('POST', '/api/episodes/:id/storyboard/revoke', async ({ p }) => S.revokeStoryboard(p.id));
   route('PUT', '/api/episodes/:id/spend-limit', async ({ p, body }) => S.setSpendLimit(p.id, body.usd));
@@ -390,6 +391,10 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/scenes/:sid/audio/revoke', async ({ p }) => { await S.sceneFlow.revokeAudio(p.id, p.sid); return ep(p.id); });
   route('POST', '/api/episodes/:id/scenes/:sid/sfx/builtin', async ({ p, body }) => { await S.sfx.addBuiltin(p.id, { name: body.name, sceneId: p.sid, offsetSec: body.offsetSec }); return ep(p.id); });
   route('POST', '/api/episodes/:id/scenes/:sid/sfx/upload', async ({ p, raw, headers, query }) => { await S.sfx.addUpload(p.id, { buffer: raw, filename: decodeURIComponent(headers['x-filename'] || 'sfx.wav'), label: query.label, sceneId: p.sid, offsetSec: query.offsetSec }); return ep(p.id); }, { upload: true });
+  route('POST', '/api/episodes/:id/scenes/:sid/sfx-plan', async ({ p, body }) => { await S.animGate.decideSfx(p.id, p.sid, body && body.mode); return ep(p.id); });
+  route('DELETE', '/api/episodes/:id/scenes/:sid/sfx-plan', async ({ p }) => { await S.animGate.revokeSfx(p.id, p.sid); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/lipsync', async ({ p }) => { await S.animGate.acknowledgeMixOnly(p.id, p.sid); return ep(p.id); });
+  route('DELETE', '/api/episodes/:id/scenes/:sid/lipsync', async ({ p }) => { await S.animGate.clearLipSync(p.id, p.sid); return ep(p.id); });
   route('POST', '/api/episodes/:id/sfx/search', async ({ body }) => S.sfx.searchHeygen(body.query));
   route('POST', '/api/episodes/:id/scenes/:sid/sfx/heygen', async ({ p, body }) => { await S.sfx.addHeygen(p.id, { soundId: body.soundId, sceneId: p.sid, offsetSec: body.offsetSec }); return ep(p.id); });
   route('POST', '/api/episodes/:id/sfx/:fid/update', async ({ p, body }) => { await S.sfx.update(p.id, p.fid, body); return ep(p.id); });

@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { approveWithScenes } = require('./helpers/approve');
-const { approveAllAudio, approveAllScenes } = require('./helpers/scene-flow');
+const { approveAllAudio, approveAllScenes, decideAllGates } = require('./helpers/scene-flow');
 const { png } = require('./helpers/v23');
 const { loadConfig } = require('../renderer/lib/config');
 const { createStudio } = require('../studio/lib/studio');
@@ -64,6 +64,7 @@ test('storyboard: notice click → audio panel → generate/listen/approve → c
     await page.locator(`[data-audio-approve="${target}"]`).click();
     await page.waitForSelector(`[data-audio-revoke="${target}"]`);
     // clip (API; the UI path for clips is covered by scene-clips-browser)
+    await decideAllGates(s, ID);
     const est = s.gen.estimate(ID, { sceneIds: [target] });
     const a = await s.gen.authorize(ID, { sceneIds: [target], confirmUsd: est.totalUsd, confirmUnknown: est.totalUsd == null });
     await (await s.gen.run(ID, a.id)).done;

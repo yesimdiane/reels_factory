@@ -21,3 +21,14 @@ Sidebar (Korean primary, English subtitle), in production order:
 
 ## Regression guard
 `tests/frontend-syntax.test.js` parses every browser module: one stray parenthesis in `ai-settings.js` had blanked the entire Studio.
+
+## Animation Studio gates (PR-2)
+Per scene, before any paid generation (`studio/lib/animgate.js`, UI `views/anim-gates.js`):
+1. 대사 음성 — approved audio (or no dialogue).
+2. 효과음 — approve the SFX plan, or explicitly choose "효과음 필요 없음". Changing the list afterwards makes the decision *stale*.
+3. 립싱크 — no registered model takes audio, and no lip-sync provider is invented: the operator acknowledges that the approved audio is mixed in afterwards (no mouth sync). A model declaring `lipSync` + `audioField` is handled by the model.
+4. 점검 — checklist (image, audio, SFX, lip-sync, prompt, model, endpoint, cost). The server adds `SFX_NOT_DECIDED` / `LIPSYNC_NOT_CHOSEN` to the generation blockers, so the API enforces the same gate as the button.
+
+Per-character voice settings (`views/voice-settings.js`): provider (HeyGen / Google / **MuAPI TTS**), MuAPI `voice_id`, rate, style, emotion — stored on the character and reused by every episode. Only the rate is sent to providers today; style/emotion are saved notes and the UI says so.
+
+MuAPI TTS (`providers/muapi-tts.js`, from #70) is wired into the voice service. In MuAPI live mode it is blocked until the operator confirms the endpoint in Settings (`TTS_UNVERIFIED`) and a voice_id exists; the exact character count must be confirmed; a failed paid line is never retried. Mock mode uses the mock voice.

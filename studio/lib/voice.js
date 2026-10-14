@@ -16,6 +16,7 @@ const { createTtsService, BudgetError } = require('../../renderer/lib/tts');
 const { createHeyGenTts } = require('../../renderer/lib/tts/heygen');
 const { createMockSpeech } = require('./providers/mock-speech');
 const { findVoice } = require('./providers/heygen-voices');
+const { createMuapiTts } = require('./providers/muapi-tts');
 const { parseWav } = require('../../renderer/lib/wav');
 
 function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProvider = null, runtime = null, voices = null }) {
@@ -25,11 +26,15 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
   const mock = createMockSpeech();
   const provider = () => speechProvider || (modeNow() === 'live' ? createHeyGenTts({ apiKey: keyNow(), ffmpeg: cfg.ffmpeg.ffmpeg, fetchFn }) : mock);
   // Each character speaks with the provider/voice saved in the Character Library (HeyGen or Google Cloud TTS); never another character's voice.
-  const providerOf = (char) => (char.voice && char.voice.provider === 'google' ? 'google' : 'heygen');
-  const voiceIdOf = (char) => (providerOf(char) === 'google' ? (char.voice.googleVoiceName || '') : (char.voice.heygenVoiceId || ''));
+  const providerOf = (char) => (char.voice && ['google', 'muapi'].includes(char.voice.provider) ? char.voice.provider : 'heygen');
+  const voiceIdOf = (char) => (providerOf(char) === 'google' ? (char.voice.googleVoiceName || '') : providerOf(char) === 'muapi' ? (char.voice.muapiVoiceId || '') : (char.voice.heygenVoiceId || ''));
+  // MuAPI TTS is paid whenever MuAPI itself is in live mode (its own switch, independent of HeyGen/Google). Mock otherwise.
+  const muapiLive = () => !!(runtime && runtime.muapiMode && runtime.muapiMode() === 'live');
+  const isLive = (char) => (providerOf(char) === 'muapi' ? muapiLive() : modeNow() === 'live');
   const speechFor = (char) => {
     if (speechProvider) return speechProvider;
     if (providerOf(char) === 'google') return modeNow() === 'live' && voices ? voices.googleSpeech() : mock;
+    if (providerOf(char) === 'muapi') return muapiLive() && store.settings.get().muapiTtsConfirmed ? createMuapiTts({ apiKey: runtime.muapiKey(), fetchFn, ffmpeg: cfg.ffmpeg.ffmpeg }) : mock;
     return provider();
   };
 
@@ -68,6 +73,12 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
     const b = [];
     if (!isScriptApproved(ep)) b.push({ code: 'SCRIPT_NOT_APPROVED', message: '대본이 승인되지 않았거나 승인 후 수정되었습니다.', recovery: 'Script Studio에서 대본을 승인하세요.' });
     chars.forEach((c) => {
+      if (providerOf(c) === 'muapi') {
+        if (!muapiLive()) return;
+        if (!c.voice.muapiVoiceId) b.push({ code: 'NO_VOICE_ID', message: `${c.name}: MuAPI ElevenLabs voice_id가 없습니다.`, recovery: '캐릭터 라이브러리 → 음성에서 voice_id를 입력하세요.' });
+        if (!store.settings.get().muapiTtsConfirmed) b.push({ code: 'TTS_UNVERIFIED', message: `${c.name}: MuAPI TTS 엔드포인트가 아직 확인되지 않았습니다.`, recovery: 'MuAPI 플레이그라운드(elevenlabs-tts-turbo-2-5)에서 경로와 파라미터를 확인한 뒤 Settings → 음성 연결에서 "확인함"을 누르세요.' });
+        return;
+      }
       if (modeNow() !== 'live') return;
       if (providerOf(c) === 'google') {
         const st = voices ? voices.status(c) : { ready: false, state: 'not_connected', message: 'Google Cloud TTS를 사용할 수 없습니다.' };
@@ -96,11 +107,13 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
       const a = c ? lineAudio(ep, l) : { valid: false };
       return { lineId: l.id, speaker: l.speaker, chars: [...l.en].length, cached: a.valid, durationSec: a.valid ? a.durationSec : null };
     });
-    const billableChars = modeNow() === 'live' ? lines.filter((l) => !l.cached).reduce((n, l) => n + l.chars, 0) : 0;
+    const liveSpeaker = (id) => { const c = chars.find((x) => x.id === id); return !!c && isLive(c); };
+    const billableChars = lines.filter((l) => !l.cached && liveSpeaker(l.speaker)).reduce((n, l) => n + l.chars, 0);
+    const anyLive = chars.some(isLive);
     const rate = settings.voiceUsdPer1kChars;
-    const usd = modeNow() === 'live' ? (rate != null && rate !== '' ? Math.round((billableChars / 1000) * Number(rate) * 1e6) / 1e6 : null) : 0;
+    const usd = anyLive ? (rate != null && rate !== '' ? Math.round((billableChars / 1000) * Number(rate) * 1e6) / 1e6 : null) : 0;
     const blockers = blockersFor(ep, chars);
-    if (modeNow() === 'live' && billableChars > cfg.maxCharsPerJob) blockers.push({ code: 'TOO_MANY_CHARS', message: `글자 수 ${billableChars}가 작업당 한도 ${cfg.maxCharsPerJob}를 넘습니다.`, recovery: 'RF_TTS_MAX_CHARS_PER_JOB을 조정하거나 대사를 줄이세요.' });
+    if (anyLive && billableChars > cfg.maxCharsPerJob) blockers.push({ code: 'TOO_MANY_CHARS', message: `글자 수 ${billableChars}가 작업당 한도 ${cfg.maxCharsPerJob}를 넘습니다.`, recovery: 'RF_TTS_MAX_CHARS_PER_JOB을 조정하거나 대사를 줄이세요.' });
     const providers = [...new Set(chars.map((c) => speechFor(c).name))];
     return { mode: modeNow(), provider: providers.length > 1 ? 'mixed' : (providers[0] || provider().name), providers, lines, billableChars, usd, usdKnown: usd != null, cachedLines: lines.filter((l) => l.cached).length, blockers, canRun: blockers.length === 0 };
   }
@@ -109,7 +122,7 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
   async function synthesize(epId, { confirmChars, by = 'operator', sceneIds } = {}) {
     const est = estimate(epId, { sceneIds });
     if (est.blockers.length) throw new StudioError('BLOCKED', est.blockers[0].message, { recovery: est.blockers[0].recovery, details: est.blockers, status: 409 });
-    if (modeNow() === 'live' && Number(confirmChars) !== est.billableChars) throw new StudioError('CONFIRM_MISMATCH', `확인한 글자 수(${confirmChars})가 현재 예상(${est.billableChars})과 다릅니다. 새로고침 후 다시 확인하세요.`, { status: 409 });
+    if (est.billableChars > 0 && Number(confirmChars) !== est.billableChars) throw new StudioError('CONFIRM_MISMATCH', `확인한 글자 수(${confirmChars})가 현재 예상(${est.billableChars})과 다릅니다. 새로고침 후 다시 확인하세요.`, { status: 409 });
     const ep0 = store.episodes.get(epId);
     const lib = store.characters.load();
     const results = [];
@@ -130,8 +143,8 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
         continue; // a failed paid line is NOT retried; the operator decides
       }
       await store.episodes.update(epId, (ep) => {
-        ep.voice.lines[line.id] = { key: lineKey(char, line), file: path.relative(store.dir, out.file), durationSec: Math.round(out.duration * 1000) / 1000, speaker: line.speaker, voiceId: voiceIdOf(char), provider: providerOf(char), mock: modeNow() !== 'live', cached: out.cached, at: nowIso(), scriptHash: scriptFingerprint(ep) };
-        if (modeNow() === 'live' && !out.cached) ep.spend.push({ at: nowIso(), kind: 'voice', lineId: line.id, chars: [...line.en].length, estimatedUsd: est.usd == null ? null : Math.round((est.usd * [...line.en].length / Math.max(1, est.billableChars)) * 1e6) / 1e6, actualUsd: null, mock: false });
+        ep.voice.lines[line.id] = { key: lineKey(char, line), file: path.relative(store.dir, out.file), durationSec: Math.round(out.duration * 1000) / 1000, speaker: line.speaker, voiceId: voiceIdOf(char), provider: providerOf(char), mock: !isLive(char), cached: out.cached, at: nowIso(), scriptHash: scriptFingerprint(ep) };
+        if (isLive(char) && !out.cached) ep.spend.push({ at: nowIso(), kind: 'voice', lineId: line.id, chars: [...line.en].length, estimatedUsd: est.usd == null ? null : Math.round((est.usd * [...line.en].length / Math.max(1, est.billableChars)) * 1e6) / 1e6, actualUsd: null, mock: false });
       });
       results.push({ lineId: line.id, status: out.cached ? 'cached' : 'synthesized', durationSec: out.duration });
     }
