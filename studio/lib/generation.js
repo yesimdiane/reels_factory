@@ -101,7 +101,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
         if (img.placeholder && provider.mode === 'live') add('PLACEHOLDER_IMAGE', `${s.id}: 데모용 임시 이미지는 실제(유료) 생성에 쓸 수 없습니다.`, '실제 캐릭터 참조 이미지를 올리고 승인하세요.');
       }
     });
-    if (provider.mode === 'live' && model.verification !== 'verified' && model.verification !== 'docs-example') add('MODEL_UNVERIFIED', '모델 엔드포인트가 확인되지 않았습니다.', 'Muapi 플레이그라운드에서 확인 후 모델 설정을 고치세요.');
+    if (provider.mode === 'live' && !['verified', 'docs-example', 'user-entered'].includes(model.verification)) add('MODEL_UNVERIFIED', '모델 엔드포인트가 확인되지 않았습니다.', 'Settings에서 MuAPI 모델과 엔드포인트를 직접 등록하고, 실제 호출 전에 플레이그라운드에서 경로를 확인하세요.');
     return out;
   }
 
