@@ -4,6 +4,8 @@ import { api } from '../api.js';
 import { readinessCard } from './render-readiness.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, issueList, lockedNotice, videoTabs } from './common.js';
 import { timelineBar } from './voice.js';
+import { hooks } from '../state.js';
+import { VIDEO_TABS, videoTab, setVideoTab, reviewTab, timelineTab, subtitlesTab, soundTab, checklistCard } from './video-studio.js';
 
 function fileButton(label, accept, onFile) {
   const input = h('input', { type: 'file', accept, style: 'display:none', onchange: (e) => { const f = e.target.files[0]; if (f) onFile(f); e.target.value = ''; } });
@@ -20,11 +22,18 @@ export function render() {
   const finals = renders.filter((r) => !r.preview);
   const shown = renders.find((r) => r.current) || renders[0];
   const wrap = h('div', { class: 'stack', style: 'gap:20px' });
-  wrap.append(pageHead('Render Studio', '렌더 스튜디오', '승인된 클립과 음성으로 9:16 영상을 만듭니다. 렌더는 항상 새 버전으로 저장되어 이전 영상을 덮어쓰지 않습니다.', episodePicker()));
+  wrap.append(pageHead('Video Studio', '비디오 스튜디오', '장면 검토 → 타임라인 → 자막 → 사운드 → 최종 렌더. 승인된 클립과 음성으로 9:16 영상을 만듭니다. 렌더는 항상 새 버전으로 저장되어 이전 영상을 덮어쓰지 않습니다.', episodePicker()));
   wrap.append(videoTabs('render'));
   wrap.append(pipelineBar(ep));
   wrap.append(readinessCard(ep));
   if (!plan.canRender) wrap.append(lockedNotice('렌더하려면 아래 항목을 먼저 해결해야 합니다.'));
+  const tab = videoTab(ep);
+  wrap.append(h('div', { class: 'seg', role: 'tablist', 'aria-label': '비디오 스튜디오 단계', 'data-vs-tabs': '', style: 'align-self:flex-start;flex-wrap:wrap' }, VIDEO_TABS.map(([k, l], i) => h('button', { role: 'tab', type: 'button', 'data-vs-tab': k, 'aria-pressed': String(tab === k), onclick: () => setVideoTab(ep, k, hooks.rerender) }, `${i + 1}. ${l}`))));
+  if (tab === 'review') { wrap.append(reviewTab(ep)); return wrap; }
+  if (tab === 'timeline') { wrap.append(timelineTab(ep, hooks.rerender)); return wrap; }
+  if (tab === 'subtitles') { wrap.append(subtitlesTab(ep, hooks.rerender)); return wrap; }
+  if (tab === 'sound') { wrap.append(soundTab(ep, hooks.rerender)); return wrap; }
+  wrap.append(checklistCard(ep));
 
   const start = (preview) => async () => {
     if (!preview) {
@@ -47,22 +56,12 @@ export function render() {
       h('button', { class: 'btn ghost', disabled: !plan.canRender || running, onclick: start(true) }, icon('play'), '미리보기 (540×960)'),
       h('button', { class: 'btn sage', disabled: !plan.canRender || running, onclick: start(false) }, icon('render'), '최종 렌더 (1080×1920)'))));
 
-  left.append(h('div', { class: 'card' },
-    h('div', { class: 'card-head' }, h('h2', null, '효과음'), fileButton('효과음 추가', 'audio/*', async (f) => {
-      const at = prompt('효과음을 넣을 시점(초)', '0');
-      if (at === null) return;
-      await act(() => api.upload(`/api/episodes/${ep.id}/sfx?label=${encodeURIComponent(f.name)}&atSec=${encodeURIComponent(at)}`, f), { ok: '효과음을 추가했습니다' });
-    })),
-    ep.sfx.length ? h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['이름', '시점(초)', '볼륨(dB)'].map((x) => h('th', null, x)))), h('tbody', null, ep.sfx.map((s) => h('tr', null,
-      h('td', null, s.label),
-      h('td', null, h('input', { type: 'number', step: 0.1, min: 0, value: s.atSec, style: 'width:90px', onchange: (e) => act(() => api.put(`/api/episodes/${ep.id}/sfx/${s.id}`, { atSec: Number(e.target.value) })) })),
-      h('td', null, h('input', { type: 'number', step: 1, max: 6, min: -40, value: s.gainDb, style: 'width:90px', onchange: (e) => act(() => api.put(`/api/episodes/${ep.id}/sfx/${s.id}`, { gainDb: Number(e.target.value) })) })))))) : h('p', { class: 'small muted', style: 'margin:0' }, '효과음이 없습니다. 올린 파일은 대사와 함께 믹스되고 전체 음량이 맞춰집니다.')));
   left.append(h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, '렌더 버전')),
     renders.length ? h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['버전', '종류', '체크섬', '상태', ''].map((x) => h('th', null, x)))), h('tbody', null, renders.map((r) => h('tr', null,
       h('td', null, 'v' + r.v),
       h('td', null, chip(r.preview ? '미리보기' : '최종', r.preview ? 'mock' : 'done')),
       h('td', { class: 'mono small' }, (r.sha256 || '').slice(0, 10)),
-      h('td', null, r.current ? chip('승인됨', 'done') : r.stale ? chip('이전 상태', 'attention') : '—'),
+      h('td', null, r.current ? chip('승인됨', 'done') : r.stale ? chip('이전 상태', 'attention') : r.outdatedEdit ? chip('자막·믹스 변경됨 — 다시 렌더', 'attention') : '—'),
       h('td', null, h('div', { class: 'row end', style: 'gap:6px' },
         h('a', { class: 'btn sm ghost', href: r.url, target: '_blank', rel: 'noopener' }, '보기'),
         h('a', { class: 'btn sm ghost', href: r.url + '?download=1' }, icon('download'), '다운로드'))))))))
