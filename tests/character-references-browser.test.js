@@ -29,7 +29,8 @@ test('storyboard: character reference section shows real thumbnails and lets the
     const errors = []; page.on('pageerror', (e) => errors.push(e.message));
     await page.goto(`http://127.0.0.1:${app.address().port}/#/storyboard/${id}`);
     const box = `[data-char-refs="${sid}"]`;
-    await page.waitForSelector(box);
+    const openBox = async () => { await page.waitForSelector(`[data-sb-scene="${sid}"]`); const reopen = page.locator(`[data-sb-reopen="${sid}"]`); if (await reopen.count()) await reopen.click(); /* an approved start image collapses the image/prompt editor */ await page.waitForSelector(box); };
+    await openBox();
     const jack = page.locator(`${box} [data-char-ref="jack"]`);
     assert.match(await jack.innerText(), new RegExp(`jack:${j1.id}`));
     assert.match(await jack.innerText(), /승인됨/);
@@ -47,7 +48,7 @@ test('storyboard: character reference section shows real thumbnails and lets the
     await page.waitForFunction(([b, a]) => { const el = document.querySelector(b); return el && el.innerText.includes(a); }, [box, `jack:${j2.id}`]);
     assert.deepEqual(m.s.store.episodes.get(id).sceneRefs[sid].jack, [j2.id]);
     await page.reload();
-    await page.waitForSelector(box);
+    await openBox();
     assert.match(await page.locator(`${box} [data-char-ref="jack"]`).innerText(), new RegExp(`jack:${j2.id}`), 'survives refresh');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); app.close(); }
