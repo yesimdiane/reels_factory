@@ -655,3 +655,14 @@ body.scene-dragging-body { cursor: grabbing; user-select: none; -webkit-user-sel
 .sb-image-preview .sb-main-img { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: #f4ecdd; border: 2px dashed #d9c9ae; }
 .sb-image-preview img.sb-main-img { border: 2px solid var(--sage); }
 @media (max-width: 640px) { .sb-image-preview { width: 110px; } }
+
+/* phone: tables that hold form controls become stacked cards (the AI task table was unusable at 390 px: the provider select showed only "(") */
+@media (max-width: 640px) {
+  .tbl-stack thead { display: none; }
+  .tbl-stack, .tbl-stack tbody, .tbl-stack tr, .tbl-stack td { display: block; width: 100%; }
+  .tbl-stack tr { padding: 10px 2px 12px; border-bottom: 1px solid var(--line-strong); }
+  .tbl-stack td { border: 0; padding: 4px 0; }
+  .tbl-stack td[data-label]::before { content: attr(data-label); display: block; font-size: 11.5px; letter-spacing: .06em; color: var(--muted); margin-bottom: 2px; }
+  .tbl-stack select, .tbl-stack input[type=text] { width: 100%; }
+  .tbl-stack .btn { width: 100%; justify-content: center; }
+}
