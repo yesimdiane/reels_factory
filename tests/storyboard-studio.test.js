@@ -201,7 +201,8 @@ test('HTTP: motion, draft and B-roll routes', async () => {
 });
 
 test('the Storyboard screen is one scene at a time with the primary actions, a product toggle, 0.5 s beats and an Add Cut chooser', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'studio', 'public', 'js', 'views', 'storyboard.js'), 'utf8');
+  const viewsDir = path.join(__dirname, '..', 'studio', 'public', 'js', 'views');
+  const src = fs.readFileSync(path.join(viewsDir, 'storyboard.js'), 'utf8') + fs.readFileSync(path.join(viewsDir, 'beat-timeline.js'), 'utf8'); // the 0.5 s timeline editor is a shared component
   for (const k of ['data-sb-scene', 'data-sb-save', 'data-sb-approve-image', 'data-sb-regenerate', 'data-sb-next', 'data-sb-add-cut', 'data-product-toggle', 'data-motion-beats', 'data-broll-list']) assert.match(src, new RegExp(k), k);
   assert.match(src, /제품 등장/); assert.match(src, /\+ 컷 추가/); assert.match(src, /B-roll/);
   assert.match(src, /details/, 'advanced parts are collapsed');
