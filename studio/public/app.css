@@ -618,3 +618,20 @@ body.scene-dragging-body { cursor: grabbing; user-select: none; -webkit-user-sel
 /* Rendering readiness: unfinished steps are neutral, only real problems are red */
 .asset-chip.pend { background: var(--paper); border-color: var(--line-strong); color: var(--espresso-2); }
 .pending-note { padding: 8px 12px; border: 1px dashed var(--line-strong); border-radius: 10px; background: var(--paper); font-size: 13px; }
+
+/* ---- approved-scene gallery (Storyboard top) ---- */
+.scene-gallery-strip { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; }
+.gal-item { flex: 0 0 auto; width: 56px; scroll-snap-align: start; }
+.gal-thumb { position: relative; display: block; width: 56px; aspect-ratio: 9 / 16; padding: 0; border-radius: 8px; overflow: hidden; border: 2px solid #e1d6c4; background: #f4ecdd; cursor: pointer; min-height: 0; }
+.gal-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gal-item.approved .gal-thumb { border-color: var(--sage); }
+.gal-item.unapproved .gal-thumb, .gal-item.placeholder .gal-thumb { border-color: var(--clay); }
+.gal-item.missing .gal-thumb { border: 2px dashed var(--rose); background: var(--rose-wash); }
+.gal-item.current .gal-thumb { box-shadow: 0 0 0 3px rgba(127, 146, 114, .45); }
+.gal-empty { display: flex; height: 100%; align-items: center; justify-content: center; text-align: center; font-size: 10px; color: var(--rose); padding: 2px; }
+.gal-badge { position: absolute; font-size: 10px; font-weight: 700; line-height: 1; padding: 2px 4px; border-radius: 8px; }
+.gal-badge.ok { top: 3px; right: 3px; background: var(--sage-deep); color: #fff; }
+.gal-badge.bc { bottom: 3px; right: 3px; background: rgba(60, 45, 30, .78); color: #fff; }
+.gal-meta { display: flex; align-items: center; justify-content: space-between; font-size: 11px; margin-top: 2px; }
+.gal-zoom { border: 0; background: transparent; padding: 0 2px; cursor: pointer; font-size: 12px; min-height: 0; }
+@media (max-width: 640px) { .gal-item, .gal-thumb { width: 64px; } .gal-item { width: 64px; } }

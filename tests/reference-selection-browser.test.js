@@ -75,6 +75,8 @@ test('reference selection, limit dialog and green B-roll card in a browser', { s
     // ---- Storyboard: 3 + 3 shown, then the limit dialog (model max 3)
     await page.goto(base + `#/storyboard/${id}`);
     await page.locator(`[data-sb-tab="${sid}"]`).click();
+    await page.waitForSelector(`[data-sb-scene="${sid}"]`);
+    { const reopen = page.locator(`[data-sb-reopen="${sid}"]`); if (await reopen.count()) await reopen.click(); } // approved start image collapses the editor
     await page.waitForSelector(`[data-char-refs="${sid}"]`);
     assert.match(await page.locator('[data-ref-count="jack"]').textContent(), /선택 3\/3/); assert.match(await page.locator('[data-ref-count="diane"]').textContent(), /선택 3\/3/);
     const before = JSON.stringify([m.s.store.characters.get('jack').referenceSelection, m.s.store.characters.get('diane').referenceSelection]);
