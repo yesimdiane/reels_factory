@@ -128,17 +128,20 @@ function compactCharacterBeats(beats, duration, speechWindows) {
   for (const beat of beats) {
     const ranges = audioEnd.get(String(beat.characterId)) || [];
     const cutPoints = [beat.t0, beat.t1];
+    // Spoken scenes use regular 0.5s motion beats; only speech endings add fractional cuts.
+    if (speechWindows.length) for (let t = Math.ceil((beat.t0 + 0.000001) / STEP) * STEP; t < beat.t1 - 0.000001; t += STEP) cutPoints.push(t);
     for (const w of ranges) if (w.end > beat.t0 + 0.001 && w.end < beat.t1 - 0.001) cutPoints.push(w.end);
     cutPoints.sort((x, y) => x - y);
-    for (let i = 0; i < cutPoints.length - 1; i++) {
-      const t0 = tenths(cutPoints[i]), t1 = tenths(cutPoints[i + 1]);
+    const uniqueCuts = cutPoints.filter((x, i) => !i || x - cutPoints[i - 1] > 0.000001);
+    for (let i = 0; i < uniqueCuts.length - 1; i++) {
+      const t0 = tenths(uniqueCuts[i]), t1 = tenths(uniqueCuts[i + 1]);
       if (t1 <= t0) continue;
       const speaking = ranges.some(w => t0 >= w.start - 0.001 && t0 < w.end - 0.001);
       const { _speak, _listen, _exit, ...clean } = beat;
       const mouth = speaking ? 'mouth moves naturally while audio plays' : 'mouth closed; no lip movement';
       const nose = 'nose remains steady with natural breathing';
       result.push({ ...clean, t0, t1, emotion: String(beat.emotion || 'attentive').trim(),
-        expression: [String(beat.expression || '').replace(/; nose:.*$/i, ''), 'nose: ' + nose, 'mouth: ' + mouth].filter(Boolean).join('; ').slice(0, 300),
+        expression: [String(beat.expression || '').replace(/; mouth shapes the line/gi, '').replace(/; nose:.*$/i, ''), 'nose: ' + nose, 'mouth: ' + mouth].filter(Boolean).join('; ').slice(0, 300),
         body: String(beat.body || 'maintains the established pose').slice(0, 300) });
     }
   }
