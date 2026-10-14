@@ -78,28 +78,32 @@ function createBrollImages({ store, products, router, charRefs, sba, lib }) {
   const currentPrompt = (ep, b) => (b.imageGen && b.imageGen.prompt ? b.imageGen.prompt : draftPrompt(ep, b));
 
   /** Prompt actually sent: the (edited) text + the fixed reference rules + the real image bytes. */
-  function inputs(ep, b) {
+  function inputs(ep, b, exclude = []) {
     const { refs, rp } = reflist(ep, b);
     const bad = refs.find((r) => r.status !== 'approved');
     if (bad) throw new StudioError(bad.type === 'product' ? 'NO_PRODUCT_REF' : 'NO_CHARACTER_REF', `${b.id}: ${bad.message}`, { status: 409, recovery: bad.type === 'product' ? 'Product Studio에서 참조 이미지를 올리고 승인하세요.' : '캐릭터 라이브러리에서 실제 참조 이미지를 올리고 승인하세요.', details: refs.filter((r) => r.status !== 'approved') });
     if (refs.length) charRefs.assertProvider();
-    const images = []; const used = []; let productIds = []; const lines = [];
+    const images = []; const used = []; let productIds = []; const lines = []; const charParts = []; const productParts = [];
     if (rp.chars.length) {
-      const ci = charRefs.inputsFor(ep, Object.assign({}, rp.sc, { characters: rp.chars }));
-      ci.images.forEach((i) => images.push(i)); ci.used.forEach((u) => used.push(u)); ci.lines.forEach((l) => lines.push(l));
+      const ci = charRefs.inputsFor(ep, Object.assign({}, rp.sc, { characters: rp.chars }), { exclude });
+      ci.images.forEach((i) => images.push(i)); ci.used.forEach((u) => used.push(u)); ci.lines.forEach((l) => lines.push(l)); ci.chars.forEach((c) => charParts.push(c));
     }
     if (rp.useProduct) {
-      const files = products.imageFiles(ep.productId, rp.productRefIds);
-      files.forEach((f) => images.push({ label: 'APPROVED product reference (the product must match this exactly: shape, logo, colour, function):', mimeType: f.mimeType, data: fs.readFileSync(f.path).toString('base64') }));
+      const ex = new Set([].concat(exclude || []).map(String));
+      const files = products.imageFiles(ep.productId, rp.productRefIds).filter((f) => !ex.has(`${ep.productId}:${f.id}`));
+      if (!files.length) throw new StudioError('NO_PRODUCT_REF', `${b.id}: 이 요청에서 제품 참조 이미지를 모두 제외했습니다. 제품이 나오는 B-roll에는 제품 참조가 최소 1장 필요합니다.`, { status: 409 });
+      files.forEach((f) => { const buf = fs.readFileSync(f.path); images.push({ label: 'APPROVED product reference (the product must match this exactly: shape, logo, colour, function):', mimeType: f.mimeType, data: buf.toString('base64') }); productParts.push({ assetId: `${ep.productId}:${f.id}`, filename: f.id, url: `/media/product/${ep.productId}/${f.id}`, bytes: buf.length, mime: f.mimeType, name: (ep.product || {}).name }); });
       productIds = files.map((f) => f.id);
       lines.push('Draw the product EXACTLY like the approved product reference image(s). Never add features. Verified facts only: ' + (((ep.product || {}).verifiedFeatures) || []).join('; '));
     } else lines.push('Do NOT show the product.');
+    if (images.length) charRefs.enforce({ chars: charParts, product: productParts }); // model input limits, before any paid call
     const prompt = ['Create ONE vertical 9:16 STILL image: a B-roll insert layered over a short animated comedy video.', currentPrompt(ep, b), ...lines, 'No text, captions, subtitles, speech bubbles, logos or watermarks anywhere in the image.'].join('\n');
     return { images, prompt, refs: used, productIds };
   }
 
   /** Free: everything the UI needs before the button is pressed (draft prompt, reference status, provider support, estimate when sendable). */
   function plan(epId, bid, opts = {}) {
+    let limit = null;
     const ep = store.episodes.get(epId);
     const b = find(ep, bid);
     const { refs, rp } = reflist(ep, b);
@@ -108,8 +112,8 @@ function createBrollImages({ store, products, router, charRefs, sba, lib }) {
     const supported = !refs.length || charRefs.supports(route.provider) || route.provider === 'mock' || !route.provider;
     if (!supported) warnings.push(`선택한 이미지 제공자(${route.provider})는 참조 이미지 입력을 지원하지 않습니다.`);
     let estimate = null;
-    if (!warnings.length) { try { const q = inputs(ep, b); estimate = Object.assign({}, router.estimate('imageGeneration', { inputChars: q.prompt.length, outputTokens: 1500, images: q.images.length }), { count: 1, images: q.images.length }); } catch (e) { warnings.push(e.message); } }
-    return { brollId: bid, prompt: currentPrompt(ep, b), edited: !!(b.imageGen && b.imageGen.prompt), draft: draftPrompt(ep, b), refs, options: { characters: rp.cast, selectedCharacters: rp.chars, product: rp.useProduct, productAvailable: !!rp.sc.showsProduct }, warnings, estimate, scriptApproved: isScriptApproved(ep), route: { provider: route.provider, model: route.model }, approved: b.status === 'approved', hasImage: !!b.imageRef };
+    if (!warnings.length) { try { const q = inputs(ep, b, opts.exclude); estimate = Object.assign({}, router.estimate('imageGeneration', { inputChars: q.prompt.length, outputTokens: 1500, images: q.images.length }), { count: 1, images: q.images.length }); } catch (e) { warnings.push(e.message); if (e.code === 'REF_LIMIT_EXCEEDED' || e.code === 'REF_TOO_LARGE') limit = e.details; } }
+    return { brollId: bid, prompt: currentPrompt(ep, b), edited: !!(b.imageGen && b.imageGen.prompt), draft: draftPrompt(ep, b), refs, options: { characters: rp.cast, selectedCharacters: rp.chars, product: rp.useProduct, productAvailable: !!rp.sc.showsProduct }, warnings, estimate, scriptApproved: isScriptApproved(ep), route: { provider: route.provider, model: route.model }, approved: b.status === 'approved', hasImage: !!b.imageRef, limit, excluded: [].concat(opts.exclude || []) };
   }
 
   async function savePrompt(epId, bid, { prompt, refCharacters, refProduct } = {}) {
@@ -132,7 +136,7 @@ function createBrollImages({ store, products, router, charRefs, sba, lib }) {
     const ep = store.episodes.get(epId);
     const b = find(ep, bid);
     check(b, opts);
-    const q = inputs(ep, b);
+    const q = inputs(ep, b, opts.exclude);
     const est = router.estimate('imageGeneration', { inputChars: q.prompt.length, outputTokens: 1500, images: q.images.length });
     return Object.assign({}, est, { count: 1, brollId: bid, images: q.images.length, replacesApproved: b.status === 'approved', note: 'B-roll 이미지 1장. ' + (est.note || '') });
   }
@@ -147,12 +151,12 @@ function createBrollImages({ store, products, router, charRefs, sba, lib }) {
     return { code: e.code || 'ERROR', message: msg };
   }
 
-  async function generate(epId, bid, { confirm, force = false, overwriteApproved = false, by = 'operator' } = {}) {
+  async function generate(epId, bid, { confirm, force = false, overwriteApproved = false, exclude = [], by = 'operator' } = {}) {
     const ep0 = store.episodes.get(epId);
     gate(ep0);
     const b0 = find(ep0, bid);
     check(b0, { force, overwriteApproved });
-    const q = inputs(ep0, b0); // every pre-flight problem surfaces BEFORE the paid call
+    const q = inputs(ep0, b0, exclude); // every pre-flight problem surfaces BEFORE the paid call
     let out;
     try {
       out = await router.runImage('imageGeneration', { prompt: q.prompt, images: q.images, confirm });

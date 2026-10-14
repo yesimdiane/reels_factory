@@ -281,11 +281,11 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/broll/suggest', async ({ p }) => { const made = await S.sba.suggestBroll(p.id); const v = ep(p.id); v.suggested = made.length; return v; });
   route('POST', '/api/episodes/:id/broll/:bid/status', async ({ p, body }) => { await S.sba.setBrollStatus(p.id, p.bid, body.status); return ep(p.id); });
   route('DELETE', '/api/episodes/:id/broll/:bid', async ({ p }) => { await S.sba.removeBroll(p.id, p.bid); return ep(p.id); });
-  route('GET', '/api/episodes/:id/broll/:bid/image/plan', async ({ p }) => S.brollImages.plan(p.id, p.bid));
+  route('GET', '/api/episodes/:id/broll/:bid/image/plan', async ({ p, query }) => S.brollImages.plan(p.id, p.bid, { exclude: String(query.exclude || '').split(',').filter(Boolean) }));
   route('PUT', '/api/episodes/:id/broll/:bid/image/prompt', async ({ p, body }) => S.brollImages.savePrompt(p.id, p.bid, body || {}));
   route('DELETE', '/api/episodes/:id/broll/:bid/image/prompt', async ({ p }) => S.brollImages.resetPrompt(p.id, p.bid));
-  route('POST', '/api/episodes/:id/broll/:bid/image/estimate', async ({ p, body }) => S.brollImages.estimate(p.id, p.bid, { force: body.force === true, overwriteApproved: body.overwriteApproved === true }));
-  route('POST', '/api/episodes/:id/broll/:bid/image/generate', async ({ p, body }) => { S.assertNotHeld(p.id); await S.brollImages.generate(p.id, p.bid, { confirm: body.confirm, force: body.force === true, overwriteApproved: body.overwriteApproved === true }); return ep(p.id); });
+  route('POST', '/api/episodes/:id/broll/:bid/image/estimate', async ({ p, body }) => S.brollImages.estimate(p.id, p.bid, { force: body.force === true, overwriteApproved: body.overwriteApproved === true, exclude: body.exclude }));
+  route('POST', '/api/episodes/:id/broll/:bid/image/generate', async ({ p, body }) => { S.assertNotHeld(p.id); await S.brollImages.generate(p.id, p.bid, { confirm: body.confirm, force: body.force === true, overwriteApproved: body.overwriteApproved === true, exclude: body.exclude }); return ep(p.id); });
   route('POST', '/api/episodes/:id/broll/:bid/image', async ({ p, raw, headers }) => { await S.sba.uploadBrollImage(p.id, p.bid, raw, decodeURIComponent(headers['x-filename'] || 'broll.png')); return ep(p.id); }, { upload: true });
   // ---- Coupang Partners performance: imported reports only (no scraping, no invented numbers) ----
   route('GET', '/api/performance', async ({ query }) => S.performance.summary({ from: query.from || '', to: query.to || '' }));
@@ -329,13 +329,13 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/storyboard/prompts', async ({ p, body }) => S.rebuildPrompts(p.id, body.sceneIds, { force: !!body.force, mode: body.mode === 'gemini' ? 'gemini' : 'template', confirmAi: body.confirmAi === true }));
   route('PUT', '/api/episodes/:id/scenes/:sid/prompt', async ({ p, body }) => S.savePrompt(p.id, p.sid, body));
   route('GET', '/api/episodes/:id/scenes/:sid/character-refs', async ({ p }) => { const e = S.store.episodes.get(p.id); const sc = e.scenes.find((x) => x.id === p.sid); if (!sc) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다.', { status: 404 }); return { refs: S.charRefs.forScene(e, sc), validation: S.charRefs.validate(e, [sc]) }; });
-  route('PUT', '/api/episodes/:id/scenes/:sid/character-refs/:cid', async ({ p, body }) => { S.assertNotHeld(p.id); return { refs: await S.charRefs.setSceneRef(p.id, p.sid, p.cid, String(body.refId || '')) }; });
+  route('PUT', '/api/episodes/:id/scenes/:sid/character-refs/:cid', async ({ p, body }) => { S.assertNotHeld(p.id); return { refs: await S.charRefs.setSceneRef(p.id, p.sid, p.cid, body.refIds || body.refId) }; });
   route('DELETE', '/api/episodes/:id/scenes/:sid/character-refs/:cid', async ({ p }) => { S.assertNotHeld(p.id); return { refs: await S.charRefs.clearSceneRef(p.id, p.sid, p.cid) }; });
   route('PUT', '/api/episodes/:id/scenes/:sid/start-image', async ({ p, body }) => S.setStartImage(p.id, p.sid, body));
   route('PUT', '/api/episodes/:id/scenes/:sid/title', async ({ p, body }) => S.setSceneTitle(p.id, p.sid, body.title_ko));
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame', async ({ p, raw, headers }) => S.uploadStartFrame(p.id, p.sid, raw, decodeURIComponent(headers['x-filename'] || 'frame.png')), { upload: true });
-  route('POST', '/api/episodes/:id/start-images/estimate', async ({ p, body }) => S.startImages.estimate(p.id, body.sceneIds, { force: body.force === true }));
-  route('POST', '/api/episodes/:id/start-images/generate', async ({ p, body }) => { S.assertNotHeld(p.id); const r = await S.startImages.generate(p.id, body.sceneIds, { confirm: body.confirm, force: body.force === true }); const v = ep(p.id); v.startImageResult = r; return v; });
+  route('POST', '/api/episodes/:id/start-images/estimate', async ({ p, body }) => S.startImages.estimate(p.id, body.sceneIds, { force: body.force === true, exclude: body.exclude }));
+  route('POST', '/api/episodes/:id/start-images/generate', async ({ p, body }) => { S.assertNotHeld(p.id); const r = await S.startImages.generate(p.id, body.sceneIds, { confirm: body.confirm, force: body.force === true, exclude: body.exclude }); const v = ep(p.id); v.startImageResult = r; return v; });
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame/approve', async ({ p, body }) => S.approveStartFrame(p.id, p.sid, body.approved !== false));
   route('POST', '/api/episodes/:id/storyboard/approve', async ({ p }) => S.approveStoryboard(p.id));
   route('PUT', '/api/episodes/:id/spend-limit', async ({ p, body }) => S.setSpendLimit(p.id, body.usd));
@@ -408,6 +408,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('DELETE', '/api/voices/:provider', async ({ p }) => S.voiceCatalog.disconnect(p.provider));
   route('PUT', '/api/characters/:id/voice', async ({ p, body }) => { S.voiceCatalog.assign(p.id, { provider: body.provider, voiceId: body.voiceId }); return S.characterView(S.store.characters.get(p.id)); });
   route('DELETE', '/api/characters/:id/voice', async ({ p, body }) => { S.voiceCatalog.clear(p.id, body && body.provider); return S.characterView(S.store.characters.get(p.id)); });
+  route('PUT', '/api/characters/:id/reference-selection', async ({ p, body }) => { S.store.characters.setReferenceSelection(p.id, body.refIds); return S.characterView(S.store.characters.get(p.id)); });
   route('PUT', '/api/characters/:id/references/:rid', async ({ p, body }) => { S.store.characters.setReferenceKind(p.id, p.rid, body.isSheet !== false); return S.characterView(S.store.characters.get(p.id)); });
   route('PUT', '/api/characters/:id', async ({ p, body }) => S.updateCharacter(p.id, body));
   route('POST', '/api/characters/:id/references', async ({ p, raw, headers, query }) => {

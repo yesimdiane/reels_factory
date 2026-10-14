@@ -207,7 +207,9 @@ function cutsPanel(ep, sc) {
 const IMG_STATE = { ready: ['이미지 준비됨', 'done'], none: ['이미지 필요', 'attention'], missing: ['이미지 파일 없음', 'err'], inaccessible: ['이미지 접근 불가', 'err'], failed: ['생성 실패', 'err'], loading: ['이미지 불러오는 중', 'attention'] };
 const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 function brollRow(ep, b) {
-  const [stLabel, stKind] = BROLL_STATE[b.status] || [b.status, ''];
+  const [stLabel0, stKind0] = BROLL_STATE[b.status] || [b.status, ''];
+  const attn = b.status === 'approved' && b.imageState !== 'ready';
+  const [stLabel, stKind] = attn ? ['승인됨 · 확인 필요', 'attention'] : [stLabel0, stKind0];
   const [imLabel, imKind] = IMG_STATE[b.imageState] || IMG_STATE.none;
   const fileIn = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', style: 'display:none', onchange: async (e) => { const f = e.target.files[0]; if (f) await act(() => api.upload(`/api/episodes/${ep.id}/broll/${b.id}/image`, f), { ok: '이미지를 올렸습니다 (검토 대기)' }); } });
   const imgChip = chip(imLabel, imKind); imgChip.setAttribute('data-broll-image-state', b.imageState || 'none');
@@ -220,7 +222,9 @@ function brollRow(ep, b) {
     img.addEventListener('error', () => { img.style.display = 'none'; stateBox.textContent = '브라우저가 이미지를 불러오지 못했습니다 (접근 불가). 새로고침하거나 이미지를 다시 저장하세요.'; stateBox.className = 'issue err'; imgChip.setAttribute('data-broll-image-state', 'inaccessible'); imgChip.textContent = IMG_STATE.inaccessible[0]; });
   } else stateBox.textContent = b.imageProblem || (b.imageState === 'failed' ? '' : '미리보기 이미지 없음 · AI 이미지 생성 또는 이미지 올리기');
   const refs = (b.refs || []);
-  return h('div', { class: 'beat-row card flat', 'data-broll': b.id },
+  // green only when it is approved AND the image is really usable; an approved B-roll with a missing image is an attention state, never "ready"
+  const cardState = b.status === 'approved' ? (b.imageState === 'ready' ? 'approved' : 'attention') : b.status === 'rejected' ? 'rejected' : 'pending';
+  return h('div', { class: 'beat-row card flat broll-card', 'data-broll': b.id, 'data-broll-state': cardState },
     h('div', { class: 'row between' }, h('b', null, `${b.id} · ${b.kindLabel || b.kind}`), h('div', { class: 'row', style: 'gap:6px' }, chip(stLabel, stKind), imgChip)),
     h('div', { class: 'small muted' }, `${b.insertAtSec}s 에 ${b.durationSec}초 · ${b.effect || '효과 미지정'}${b.note ? ' · ' + b.note : ''} · r${b.rev}`),
     b.needsAttention ? h('div', { class: 'issue err', 'data-broll-attention': b.id }, h('b', null, b.status === 'approved' ? '승인된 B-roll의 이미지를 사용할 수 없습니다 — 확인이 필요합니다. ' : '이미지를 사용할 수 없습니다. '), (b.imageProblem || ''), b.status === 'approved' ? h('div', { class: 'small' }, '승인 기록은 유지되며, 이미지를 다시 저장하기 전까지 이 B-roll이 필요한 렌더링은 막힙니다.') : null) : null,

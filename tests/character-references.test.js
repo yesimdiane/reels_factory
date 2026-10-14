@@ -72,7 +72,7 @@ test('start-image requests carry the actual approved reference bytes for exactly
   [['S1', calls[0]], ['S2', calls[1]]].forEach(([sid, call]) => {
     const cast = ep.scenes.find((x) => x.id === sid).characters;
     const refs = { jack: jr, diane: dr };
-    const sent = call.images.filter((im) => /Character reference for/.test(im.label)).map((im) => im.data);
+    const sent = call.images.filter((im) => /Character reference \d+ of \d+ for/.test(im.label)).map((im) => im.data);
     assert.deepEqual(sent.sort(), cast.map((c) => b64(refBytes(s, c, refs[c]))).sort(), `${sid}: the real image data of exactly the scene cast`);
     cast.forEach((c) => assert.match(call.prompt, new RegExp(`Use the attached ${c === 'jack' ? 'Jack' : 'Diane'} character image \\(${c}:${refs[c].id}\\) as the authoritative visual reference`)));
     assert.match(call.prompt, /Preserve the face, hairstyle/);

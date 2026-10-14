@@ -2,6 +2,7 @@
 // Generated images are saved as "검토 대기" — never approved automatically. Nothing is generated when B-rolls are suggested.
 import { h, chip, modal, toast, fmtUsd } from '../ui.js';
 import { act } from '../state.js';
+import { refLimitDialog } from './common.js';
 import { api } from '../api.js';
 
 export function previewBroll(b) {
@@ -23,7 +24,8 @@ export function previewBroll(b) {
 export async function openBrollAi(ep, b) {
   let plan;
   try { plan = await api.get(`/api/episodes/${ep.id}/broll/${b.id}/image/plan`); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
-  const st = { prompt: plan.prompt, chars: plan.options.selectedCharacters.slice(), product: plan.options.product, overwrite: false };
+  const st = { prompt: plan.prompt, chars: plan.options.selectedCharacters.slice(), product: plan.options.product, overwrite: false, exclude: [] };
+  const replan = async () => api.get(`/api/episodes/${ep.id}/broll/${b.id}/image/plan?exclude=${encodeURIComponent(st.exclude.join(','))}`);
   modal((close) => {
     const status = h('div', { class: 'small', 'data-broll-ai-status': '' });
     const body = h('div', { class: 'stack', style: 'gap:10px' });
@@ -35,6 +37,8 @@ export async function openBrollAi(ep, b) {
         h('div', { class: 'small muted' }, `${b.kindLabel || b.kind} · ${b.insertAtSec}s에 ${b.durationSec}초. 이미지 한 장만 만듭니다 (영상은 만들지 않습니다). 결과는 "검토 대기"로 저장됩니다.`),
         !p.scriptApproved ? h('div', { class: 'issue err' }, '대본이 승인되어야 만들 수 있습니다 (유료 생성).') : null,
         ...p.warnings.map((w) => h('div', { class: 'issue err', 'data-broll-ai-warning': '' }, w)),
+        p.limit ? h('button', { class: 'btn sm clay', type: 'button', 'data-broll-ai-limit': '', onclick: async () => { const r = await refLimitDialog(p.limit, st.exclude); if (r) { st.exclude = r; draw(await replan()); } } }, '참조 이미지 선택 해제 (이 요청만)…') : null,
+        st.exclude.length ? h('div', { class: 'small muted' }, `이번 요청에서 제외: ${st.exclude.length}장 (라이브러리 선택은 그대로)`) : null,
         h('div', { class: 'field' }, h('label', null, '이미지 프롬프트 (수정 가능)'), h('textarea', { rows: 8, 'data-broll-ai-prompt': '', value: st.prompt, oninput: (e) => (st.prompt = e.target.value) }),
           h('div', { class: 'small muted' }, '참조 이미지 첨부 규칙(캐릭터·제품 그대로 유지, 글자 금지)은 자동으로 추가되며 지울 수 없습니다.')),
         h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
@@ -63,7 +67,7 @@ export async function openBrollAi(ep, b) {
         status.textContent = '1/3 프롬프트 저장 중…';
         await api.put(`/api/episodes/${ep.id}/broll/${b.id}/image/prompt`, { prompt: st.prompt, refCharacters: st.chars, refProduct: st.product });
         status.textContent = '2/3 이미지 생성 중… (이미지 모델 호출 1회, 수십 초 걸릴 수 있습니다)';
-        const v = await api.post(`/api/episodes/${ep.id}/broll/${b.id}/image/generate`, { confirm: { paid: true, unknownCost: !!st.unknown }, force: plan.hasImage, overwriteApproved: plan.approved && st.overwrite });
+        const v = await api.post(`/api/episodes/${ep.id}/broll/${b.id}/image/generate`, { confirm: { paid: true, unknownCost: !!st.unknown }, force: plan.hasImage, overwriteApproved: plan.approved && st.overwrite, exclude: st.exclude });
         status.textContent = '3/3 저장된 이미지 확인 중…';
         const made = ((v.scenes || []).flatMap((x) => x.broll || [])).find((x) => x.id === b.id);
         if (!made || made.imageState !== 'ready') throw Object.assign(new Error(made && made.imageProblem ? made.imageProblem : '저장된 이미지를 확인하지 못했습니다.'), { recovery: '자동으로 다시 생성하지 않습니다. 확인 후 직접 다시 시도하세요.' });
