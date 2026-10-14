@@ -5,9 +5,11 @@
 //               video editing and never become extra paid video clips on their own. Edits send an approved item back to review.
 // Nothing here calls an AI or video provider.
 'use strict';
+const fs = require('node:fs');
 const path = require('node:path');
 const { StudioError, nowIso, sha256, safeName } = require('./util');
 const animdraft = require('./animdraft');
+const { sniffImage } = require('./extract');
 
 const STEP = 0.1; // permit precise audio-end cuts; normal motion remains 0.5s
 const KINDS = ['close_up', 'reaction', 'insert', 'broll'];
@@ -16,6 +18,31 @@ const FIELDS = ['character', 'emotion', 'body', 'gaze', 'expression', 'camera'];
 const r1 = (n) => Math.round(n * 1000) / 1000;
 const onGrid = (n) => Math.abs(n / STEP - Math.round(n / STEP)) < 1e-6;
 const fmt = (n) => n.toFixed(1);
+
+
+/** Pixel size from the file header (PNG / JPEG / WebP). null when it cannot be read. */
+function imageSize(buf) {
+  try {
+    if (buf.length > 24 && buf[0] === 0x89 && buf.toString('latin1', 1, 4) === 'PNG') return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    if (buf[0] === 0xff && buf[1] === 0xd8) {
+      let i = 2;
+      while (i + 9 < buf.length) {
+        if (buf[i] !== 0xff) { i += 1; continue; }
+        const m = buf[i + 1];
+        if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+        i += 2 + buf.readUInt16BE(i + 2);
+      }
+      return null;
+    }
+    if (buf.length > 30 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') {
+      const t = buf.toString('latin1', 12, 16);
+      if (t === 'VP8X') return { width: 1 + buf.readUIntLE(24, 3), height: 1 + buf.readUIntLE(27, 3) };
+      if (t === 'VP8L') { const b = buf.readUInt32LE(21); return { width: 1 + (b & 0x3fff), height: 1 + ((b >> 14) & 0x3fff) }; }
+      if (t === 'VP8 ') return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+    }
+  } catch (_) { /* unreadable header */ }
+  return null;
+}
 
 function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
   const sceneOf = (ep, sid) => {
@@ -120,7 +147,23 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
   const nextBrollId = (ep) => 'BR' + (brollOf(ep).reduce((m, b) => Math.max(m, Number((/^BR(\d+)/.exec(b.id) || [0, 0])[1])), 0) + 1);
   /** Stable id of the image that was approved: B-roll id + content hash (or the product/frame it points at). */
   const assetIdOf = (b) => { const r = b.imageRef || {}; return r.type === 'upload' ? `${b.id}:${String(r.sha256 || '').slice(0, 12)}` : r.type === 'product' ? `product:${r.imageId}` : r.type === 'scene_start' ? `startframe:${r.sceneId}` : ''; };
-  const assetStatus = (b) => (b.imageRef ? 'ready' : 'needed');
+  /**
+   * Is the B-roll image REALLY usable? Decided from the file, never from the asset id alone:
+   *   none → no image yet · missing → the reference points at nothing / the file is gone · inaccessible → exists but unreadable or not an image · ready
+   */
+  function assetHealth(ep, b) {
+    const r = b.imageRef;
+    if (!r) return { state: 'none', problem: '' };
+    const file = brollFile(ep, b);
+    if (!file) return { state: 'missing', problem: r.type === 'scene_start' ? `${r.sceneId}에 사용할 시작 프레임 파일이 없습니다.` : r.type === 'product' ? '참조한 제품 이미지를 찾을 수 없습니다.' : 'B-roll 이미지 파일 경로를 찾을 수 없습니다.' };
+    let buf;
+    try { fs.accessSync(file, fs.constants.R_OK); buf = fs.readFileSync(file); } catch (e) { return { state: e && e.code === 'ENOENT' ? 'missing' : 'inaccessible', problem: e && e.code === 'ENOENT' ? '저장된 이미지 파일이 서버에 없습니다.' : '이미지 파일을 읽을 수 없습니다 (권한 또는 경로).' }; }
+    if (!buf.length || !sniffImage(buf)) return { state: 'inaccessible', problem: '저장된 파일이 올바른 이미지가 아닙니다 (비었거나 손상).' };
+    if (r.type === 'upload' && r.sha256 && sha256(buf) !== r.sha256) return { state: 'inaccessible', problem: '이미지 파일이 저장된 체크섬과 다릅니다 (변경 또는 손상).' };
+    const size = imageSize(buf) || {};
+    return { state: 'ready', problem: '', bytes: buf.length, mime: sniffImage(buf).mime, width: size.width || null, height: size.height || null, v: String(r.sha256 || sha256(buf)).slice(0, 12) };
+  }
+  const assetStatus = (b, ep) => (ep ? (assetHealth(ep, b).state === 'ready' ? 'ready' : 'needed') : b.imageRef ? 'ready' : 'needed');
 
   async function saveBroll(id, raw, by = 'operator') {
     let out;
@@ -150,6 +193,7 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
     await store.episodes.update(id, (ep) => {
       const b = brollOf(ep).find((x) => x.id === bid);
       if (!b || b.status === 'removed') throw new StudioError('NOT_FOUND', 'B-roll을 찾을 수 없습니다: ' + bid, { status: 404 });
+      if (status === 'approved' && b.imageRef) { const hh = assetHealth(ep, b); if (hh.state !== 'ready') throw new StudioError('IMAGE_NOT_ACCESSIBLE', `이미지를 사용할 수 없어 승인할 수 없습니다: ${hh.problem}`, { status: 409, recovery: 'AI 이미지 생성 또는 이미지 올리기로 이미지를 다시 저장한 뒤 승인하세요.' }); }
       if (status === 'approved' && !b.imageRef) throw new StudioError('IMAGE_NEEDED', '승인하려면 먼저 이미지가 필요합니다 (참조 선택 또는 업로드).', { status: 409 });
       b.status = status; b.statusBy = by; b.statusAt = nowIso();
       if (status === 'approved') b.approvedAssetId = assetIdOf(b); else delete b.approvedAssetId;
@@ -196,13 +240,10 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
   function approvedBroll(ep) {
     return brollOf(ep).filter((b) => b.status === 'approved' && b.imageRef).sort((a, b) => String(a.sceneId).localeCompare(String(b.sceneId)) || a.insertAtSec - b.insertAtSec);
   }
-  function imageUrl(ep, b) {
-    const r = b.imageRef;
-    if (!r) return '';
-    if (r.type === 'product') return `/media/product/${ep.productId}/${r.imageId}`;
-    if (r.type === 'upload') return `/media/broll/${ep.id}/${b.id}`;
-    if (r.type === 'scene_start') { const sc = (ep.scenes || []).find((x) => x.id === r.sceneId); return sc && sc.startImage && sc.startImage.type === 'upload' ? `/media/startframe/${ep.id}/${sc.id}` : ''; }
-    return '';
+  /** One URL for every kind of reference; the server resolves it through brollFile(). Only handed out when the file is really there. */
+  function imageUrl(ep, b, health) {
+    const hh = health || assetHealth(ep, b);
+    return hh.state === 'ready' ? `/media/broll/${ep.id}/${b.id}?v=${hh.v}` : '';
   }
   /** Absolute path of a B-roll still image, or '' when it cannot be used as an overlay (e.g. a character reference sheet). */
   function brollFile(ep, b) {
@@ -215,9 +256,18 @@ function createStoryboardAssets({ store, dialogueTiming, lib, products }) {
     } catch (_) { return ''; }
     return '';
   }
-  const brollView = (ep) => brollOf(ep).filter((b) => b.status !== 'removed').map((b) => Object.assign({}, b, { asset: assetStatus(b), kindLabel: KIND_LABEL[b.kind], imageUrl: imageUrl(ep, b), assetId: assetIdOf(b), imageGenerated: !!b.generated, imageError: (b.imageGen && b.imageGen.lastError) || null, promptEdited: !!(b.imageGen && b.imageGen.prompt) }));
+  const brollView = (ep) => brollOf(ep).filter((b) => b.status !== 'removed').map((b) => {
+    const hh = assetHealth(ep, b);
+    const gen = b.imageGen || {};
+    return Object.assign({}, b, {
+      asset: hh.state === 'ready' ? 'ready' : 'needed', kindLabel: KIND_LABEL[b.kind], imageUrl: imageUrl(ep, b, hh), assetId: assetIdOf(b),
+      imageState: gen.lastError && hh.state === 'none' ? 'failed' : hh.state, imageProblem: hh.problem, imageInfo: hh.state === 'ready' ? { width: hh.width, height: hh.height, bytes: hh.bytes, mime: hh.mime } : null,
+      needsAttention: (b.status === 'approved' && hh.state !== 'ready') || hh.state === 'inaccessible',
+      imageGenerated: !!b.generated, imageError: gen.lastError || null, promptEdited: !!gen.prompt, imagePrompt: gen.prompt || '',
+    });
+  });
 
-  return { STEP, KINDS, cleanBeats, draftBeats, timelineText, composePrompt, motionOf, saveMotion, draftMotion, saveBroll, setBrollStatus, removeBroll, uploadBrollImage, suggestBroll, approvedBroll, brollView, brollFile };
+  return { STEP, KINDS, assetHealth, cleanBeats, draftBeats, timelineText, composePrompt, motionOf, saveMotion, draftMotion, saveBroll, setBrollStatus, removeBroll, uploadBrollImage, suggestBroll, approvedBroll, brollView, brollFile };
 }
 
 module.exports = { createStoryboardAssets, STEP, KINDS };

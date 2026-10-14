@@ -171,6 +171,12 @@ function createBrollImages({ store, products, router, charRefs, sba, lib }) {
     store.episodes.saveFile(epId, path.join('broll', file), buf);
     if (b0.status === 'approved') await sba.setBrollStatus(epId, bid, 'proposed', by); // replacing an approved image withdraws the approval (explicitly confirmed)
     const saved = await sba.saveBroll(epId, { id: bid, imageRef: { type: 'upload', file, sha256: hash } }, by);
+    const health = sba.assetHealth(store.episodes.get(epId), store.episodes.get(epId).broll.find((y) => y.id === bid));
+    if (health.state !== 'ready') {
+      const e2 = { code: 'IMAGE_NOT_ACCESSIBLE', message: `이미지를 저장했지만 접근할 수 없습니다: ${health.problem}`, at: nowIso() };
+      await store.episodes.update(epId, (x) => { const b = find(x, bid); b.imageGen = Object.assign({}, b.imageGen, { lastError: e2 }); });
+      throw new StudioError('IMAGE_NOT_ACCESSIBLE', e2.message, { status: 500, recovery: '서버 저장소 권한/용량을 확인하고 다시 생성하세요 (자동 재시도하지 않습니다).' });
+    }
     await store.episodes.update(epId, (e) => {
       const x = e.broll.find((y) => y.id === bid);
       x.imageGen = Object.assign({}, x.imageGen, { lastError: undefined });
@@ -179,7 +185,13 @@ function createBrollImages({ store, products, router, charRefs, sba, lib }) {
     store.episodes.audit(epId, 'broll.image.generated', { id: bid, provider: out.provider, model: out.model, file, replacedApproved: b0.status === 'approved' });
     return saved;
   }
-  return { plan, savePrompt, resetPrompt, estimate, generate, draftPrompt, classify };
+  /** Free: what a B-roll card shows next to the image — the prompt text and the reference images that would be attached. */
+  function cardInfo(ep, b) {
+    let refs = [];
+    try { refs = reflist(ep, b).refs; } catch (_) { refs = []; }
+    return { promptText: currentPrompt(ep, b), refs };
+  }
+  return { cardInfo, plan, savePrompt, resetPrompt, estimate, generate, draftPrompt, classify };
 }
 
 module.exports = { createBrollImages };

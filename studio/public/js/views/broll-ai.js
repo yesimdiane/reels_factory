@@ -5,10 +5,19 @@ import { act } from '../state.js';
 import { api } from '../api.js';
 
 export function previewBroll(b) {
-  modal((close) => h('div', { class: 'stack', style: 'gap:10px;align-items:center' },
-    h('h2', { style: 'margin:0' }, `${b.id}${b.assetId ? ' · ' + b.assetId : ''}`),
-    h('img', { src: b.imageUrl, alt: b.id + ' 큰 미리보기', style: 'max-width:100%;max-height:72vh;border-radius:12px' }),
-    h('button', { class: 'btn ghost', type: 'button', onclick: close }, '닫기')), { wide: true });
+  const info = b.imageInfo;
+  modal((close) => {
+    let zoom = false;
+    const img = h('img', { src: b.imageUrl, alt: b.id + ' 큰 미리보기', 'data-broll-full': b.id, style: 'max-width:100%;max-height:72vh;border-radius:12px;cursor:zoom-in' });
+    const box = h('div', { style: 'max-width:100%;max-height:74vh;overflow:auto;text-align:center' }, img);
+    img.onclick = () => { zoom = !zoom; img.style.maxWidth = zoom ? 'none' : '100%'; img.style.maxHeight = zoom ? 'none' : '72vh'; img.style.cursor = zoom ? 'zoom-out' : 'zoom-in'; };
+    img.onerror = () => { box.replaceChildren(h('div', { class: 'issue err' }, '이미지를 불러오지 못했습니다 (접근 불가). 이미지를 다시 저장하세요.')); };
+    return h('div', { class: 'stack', style: 'gap:10px;align-items:center' },
+      h('h2', { style: 'margin:0' }, `${b.id}${b.assetId ? ' · ' + b.assetId : ''}`),
+      box,
+      h('div', { class: 'small muted' }, `${info && info.width ? info.width + '×' + info.height + 'px · ' : ''}${b.imageGenerated ? 'AI 생성' : '업로드'} · ${b.status === 'approved' ? '승인됨' : '검토 대기'} · 이미지를 누르면 원본 크기로 확대/축소`),
+      h('button', { class: 'btn ghost', type: 'button', onclick: close }, '닫기'));
+  }, { wide: true });
 }
 
 export async function openBrollAi(ep, b) {
@@ -49,18 +58,34 @@ export async function openBrollAi(ep, b) {
     async function run() {
       if (plan.estimate && plan.estimate.usd == null && !st.unknown) return toast('가격을 모르는 상태로 진행하려면 체크하세요', { error: true });
       if (plan.approved && !st.overwrite) return toast('승인된 이미지를 교체하려면 체크하세요', { error: true });
-      status.textContent = '생성 중… (이미지 모델 호출 1회)';
       body.querySelectorAll('button').forEach((x) => { x.disabled = true; });
       try {
+        status.textContent = '1/3 프롬프트 저장 중…';
         await api.put(`/api/episodes/${ep.id}/broll/${b.id}/image/prompt`, { prompt: st.prompt, refCharacters: st.chars, refProduct: st.product });
-        await api.post(`/api/episodes/${ep.id}/broll/${b.id}/image/generate`, { confirm: { paid: true, unknownCost: !!st.unknown }, force: plan.hasImage, overwriteApproved: plan.approved && st.overwrite });
-        close(); toast('B-roll 이미지를 만들었습니다 (검토 대기). 확인 후 승인하세요.');
+        status.textContent = '2/3 이미지 생성 중… (이미지 모델 호출 1회, 수십 초 걸릴 수 있습니다)';
+        const v = await api.post(`/api/episodes/${ep.id}/broll/${b.id}/image/generate`, { confirm: { paid: true, unknownCost: !!st.unknown }, force: plan.hasImage, overwriteApproved: plan.approved && st.overwrite });
+        status.textContent = '3/3 저장된 이미지 확인 중…';
+        const made = ((v.scenes || []).flatMap((x) => x.broll || [])).find((x) => x.id === b.id);
+        if (!made || made.imageState !== 'ready') throw Object.assign(new Error(made && made.imageProblem ? made.imageProblem : '저장된 이미지를 확인하지 못했습니다.'), { recovery: '자동으로 다시 생성하지 않습니다. 확인 후 직접 다시 시도하세요.' });
+        showResult(made);
+        await act(async () => null);
+        return;
       } catch (e) {
         status.textContent = '실패: ' + e.message + (e.recovery ? ' — ' + e.recovery : '');
         toast(e.message, { error: true, recovery: e.recovery });
         try { draw(await api.get(`/api/episodes/${ep.id}/broll/${b.id}/image/plan`)); status.textContent = '실패: ' + e.message; } catch (_) { /* keep */ }
       }
       await act(async () => null);
+    }
+    function showResult(made) {
+      body.replaceChildren(
+        h('div', { class: 'small', style: 'color:var(--sage-deep)' }, '이미지를 만들어 저장했고 접근 가능함을 확인했습니다. 자동으로 승인되지 않았습니다 — 확인 후 승인하거나 다시 생성하세요.'),
+        h('img', { src: made.imageUrl, alt: made.id + ' 생성 결과', 'data-broll-ai-result': made.id, style: 'max-width:100%;max-height:60vh;border-radius:12px;display:block;margin:0 auto' }),
+        h('div', { class: 'small muted', style: 'text-align:center' }, `${made.imageInfo && made.imageInfo.width ? made.imageInfo.width + '×' + made.imageInfo.height + 'px · ' : ''}${made.assetId}`),
+        h('div', { class: 'row end', style: 'gap:8px' },
+          h('button', { class: 'btn ghost', type: 'button', onclick: close }, '닫기 (나중에 검토)'),
+          h('button', { class: 'btn ghost', type: 'button', onclick: () => { close(); openBrollAi(ep, made); } }, '다시 생성'),
+          h('button', { class: 'btn sage', type: 'button', 'data-broll-ai-approve': made.id, onclick: async () => { try { await api.post(`/api/episodes/${ep.id}/broll/${made.id}/status`, { status: 'approved' }); close(); toast('승인했습니다'); } catch (e) { toast(e.message, { error: true, recovery: e.recovery }); } await act(async () => null); } }, '승인')));
     }
     draw(plan);
     return h('div', { class: 'stack' }, h('h2', { style: 'margin:0' }, `${b.id} · AI 이미지 생성`), body);

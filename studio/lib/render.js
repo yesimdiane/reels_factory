@@ -91,7 +91,7 @@ async function buildAudioTrack(ffmpeg, items, total, outFile, cwd) {
   await run(ffmpeg, args, { cwd });
 }
 
-function createRenderService({ store, cfg, voice, log = () => {}, broll = { approved: () => [], file: () => '' } }) {
+function createRenderService({ store, cfg, voice, log = () => {}, broll = { approved: () => [], file: () => '', problem: () => '' } }) {
   const active = new Set();
 
   function gather(ep) {
@@ -112,7 +112,7 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
     const overlays = [];
     broll.approved(ep).forEach((b) => {
       const f = broll.file(ep, b);
-      if (!f || !fs.existsSync(f)) return problems.push({ code: 'BROLL_IMAGE_MISSING', message: `${b.id}: B-roll 이미지를 찾을 수 없습니다.`, recovery: 'Storyboard의 컷·B-roll에서 이미지를 다시 지정하거나 B-roll 승인을 취소하세요.' });
+      if (!f || !fs.existsSync(f) || (broll.problem && broll.problem(ep, b))) return problems.push({ code: 'BROLL_IMAGE_MISSING', message: `${b.id}: 승인된 B-roll 이미지를 사용할 수 없습니다${broll.problem ? ' — ' + broll.problem(ep, b) : ''}.`, recovery: 'Storyboard의 컷·B-roll에서 이미지를 다시 지정하거나 B-roll 승인을 취소하세요.' });
       overlays.push({ id: b.id, sceneId: b.sceneId, at: b.insertAtSec, dur: b.durationSec, file: f });
     });
     const audio = {};
