@@ -137,7 +137,7 @@ test('readiness: every pending/blocking item is clickable (has an action to the 
   const open = rd.items.filter((i) => i.severity === 'pending' || i.severity === 'block');
   assert.ok(open.length > 0);
   assert.deepEqual(open.filter((i) => !i.action).map((i) => i.code), [], 'no unclickable notice');
-  assert.ok(open.filter((i) => i.sceneId).every((i) => i.action.view === 'storyboard' && i.action.sceneId === i.sceneId));
+  assert.ok(open.filter((i) => i.sceneId).every((i) => (i.action.view === 'storyboard' || (i.action.view === 'animation' && /^CLIP_/.test(i.code))) && i.action.sceneId === i.sceneId));
   const nostory = open.find((i) => i.code === 'STORYBOARD_NOT_APPROVED');
   assert.equal(nostory.action.view, 'storyboard');
   await s.revokeStoryboard(ID);

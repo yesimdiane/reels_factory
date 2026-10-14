@@ -78,8 +78,8 @@ function createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer, 
     // ---------------------------------------------------------------- stage B: final render (clips, audio, B-roll files)
     const sceneRows = scenes.map((sc) => ({ sceneId: sc.id, clip: clipState(ep, sc) }));
     sceneRows.forEach(({ sceneId, clip }) => {
-      if (clip.state === 'none') add('clips', 'pending', 'CLIP_NOT_GENERATED', `${sceneId}: 영상 클립 생성 대기 — Storyboard에서 영상을 생성하거나 업로드하세요.`, '장면의 "영상 클립 생성 · 승인"에서 영상을 만들거나 기존 클립을 올리세요.', sceneId, 'render');
-      else if (clip.state === 'unapproved') add('clips', 'pending', 'CLIP_AWAITING_APPROVAL', `${sceneId}: 클립 승인 대기 (${clip.versions}개) — Storyboard에서 미리보고 승인하세요.`, '장면의 "영상 클립 생성 · 승인"에서 클립을 확인하고 승인하세요.', sceneId, 'render');
+      if (clip.state === 'none') add('clips', 'pending', 'CLIP_NOT_GENERATED', `${sceneId}: 영상 클립 생성 대기 — 애니메이션 스튜디오에서 영상을 생성하거나 업로드하세요.`, '애니메이션 스튜디오에서 이 장면을 열어 영상을 만들거나 기존 클립을 올리세요.', sceneId, 'render');
+      else if (clip.state === 'unapproved') add('clips', 'pending', 'CLIP_AWAITING_APPROVAL', `${sceneId}: 클립 승인 대기 (${clip.versions}개) — 애니메이션 스튜디오에서 미리보고 승인하세요.`, '애니메이션 스튜디오에서 클립을 확인하고 승인하세요.', sceneId, 'render');
       else if (clip.state === 'broken') add('clips', 'block', 'CLIP_APPROVAL_BROKEN', `${sceneId}: ${clip.problem}`, '애니메이션 스튜디오에서 클립을 다시 승인하세요 (파일은 지워지지 않았습니다).', sceneId, 'render');
     });
     scenes.forEach((sc) => { // an approved clip made from a start image that has since been replaced stays usable but is flagged (nothing is revoked silently)
