@@ -37,7 +37,29 @@ function parts() {
 
   // Muapi connection check + models (explicit buttons only: nothing here runs on page load)
   const chk = h('div', { class: 'small', 'data-muapi-result': '' }, h('span', { class: 'muted' }, '"연결 확인"은 무료 조회(잔액·모델 목록)만 합니다. 영상 생성은 시작되지 않습니다.'));
-  const cm = { id: '', label: '', endpoint: '', durations: '5,10', resolutions: '', neg: true };
+  const cm = { id: '', label: '', endpoint: '', durations: '5', resolutions: '', neg: false };
+  const catalogBox = h('div', { class: 'stack', style: 'gap:8px', 'data-muapi-catalog-import': '' });
+  const showCatalog = (catalog) => {
+    catalogBox.replaceChildren();
+    if (!catalog.length) return;
+    const choice = { id: catalog[0].id };
+    const selector = h('select', { 'data-muapi-catalog-select': '', onchange: (e) => { choice.id = e.target.value; } },
+      catalog.map((m) => h('option', { value: m.id }, (m.name || m.id) + ' · ' + m.id)));
+    catalogBox.append(
+      h('div', { class: 'small muted' }, 'MuAPI 계정에서 조회한 모델입니다. API 목록만으로 영상 지원 여부, 엔드포인트, 길이, 가격을 보장할 수 없습니다.'),
+      h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, selector,
+        h('button', { class: 'btn sm ghost', type: 'button', 'data-muapi-catalog-use': '', onclick: () => {
+          const m = catalog.find((x) => x.id === choice.id);
+          if (!m) return;
+          cm.id = m.id; cm.label = m.name || m.id; cm.endpoint = m.id;
+          const card = catalogBox.closest('[data-muapi-card]');
+          card.querySelector('[data-model-id]').value = cm.id;
+          card.querySelector('[data-model-endpoint]').value = cm.endpoint;
+          card.querySelector('[data-model-label]').value = cm.label;
+          card.querySelector('[data-model-add]').open = true;
+          toast('모델 ID를 입력했습니다. MuAPI 플레이그라운드에서 엔드포인트·길이·지원 기능을 확인한 뒤 직접 추가하세요.');
+        } }, '등록 양식에 가져오기')));
+  };
   const modelRows = (s.models || []).map((m) => h('tr', null, h('td', null, h('b', null, m.label || m.id), m.custom ? chip('직접 추가', 'mock') : null, h('div', { class: 'small muted mono' }, m.endpoint)),
     h('td', null, (m.durations || []).join(' / ') + '초'), h('td', null, (m.resolutions || []).join(' / ') || '미선언'), h('td', null, m.endImageField ? '선언됨' : '미선언'), h('td', null, m.supportsNegativePrompt ? '지원' : '미선언'), h('td', null, m.verification),
     h('td', null, m.custom ? h('button', { class: 'btn sm danger', type: 'button', 'data-model-remove': m.id, onclick: () => act(() => api.del('/api/models/' + encodeURIComponent(m.id)), { ok: '모델을 지웠습니다' }) }, '삭제') : null)));
@@ -47,21 +69,23 @@ function parts() {
         chk.textContent = '확인하는 중…';
         try {
           const r = await api.post('/api/muapi/check');
+          showCatalog(r.catalog || []);
           chk.replaceChildren(r.mode === 'mock' ? h('div', null, chip('MOCK', 'mock'), ' ', r.note) : h('div', { class: 'stack', style: 'gap:4px' }, h('div', null, r.connected ? chip('연결됨', 'done') : chip('연결 안 됨', 'err'), r.balance != null ? ` 잔액 ${r.balance} 크레딧` : ' 잔액: 제공되지 않음'), h('div', { class: 'small muted' }, `Muapi 모델 목록 ${r.catalog.length}개 조회됨 (참고용 — 아래 표의 엔드포인트·길이·해상도는 직접 확인한 값만 쓰입니다)`), ...r.errors.map((e) => h('div', { class: 'issue err' }, `${e.where}: ${e.message}`))));
         } catch (e) { chk.replaceChildren(h('div', { class: 'issue err' }, e.message)); }
       } }, '연결 확인 (무료)')),
     chk,
+    catalogBox,
     h('div', { class: 'small muted' }, 'API 키는 서버 환경변수 MUAPI_API_KEY에만 두며 브라우저로 전달되지 않습니다. 실제(유료) 호출은 RF_MUAPI_MODE=live일 때만 가능합니다.'),
     h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['모델', '길이', '해상도', '끝 프레임', '네거티브', '검증', ''].map((x) => h('th', null, x)))), h('tbody', null, modelRows))),
     h('details', { class: 'scene-section', 'data-model-add': '' }, h('summary', null, h('span', { class: 'section-title' }, '모델 직접 추가'), h('span', { class: 'small muted' }, 'Muapi 플레이그라운드에서 확인한 값만 입력')),
       h('div', { class: 'section-body stack', style: 'gap:8px' },
         h('div', { class: 'grid two', style: 'gap:8px' },
           h('label', { class: 'field' }, h('span', { class: 'small' }, '모델 ID (영문 소문자)'), h('input', { type: 'text', 'data-model-id': '', placeholder: 'veo3-fast', oninput: (e) => (cm.id = e.target.value) })),
-          h('label', { class: 'field' }, h('span', { class: 'small' }, '표시 이름'), h('input', { type: 'text', oninput: (e) => (cm.label = e.target.value) })),
-          h('label', { class: 'field' }, h('span', { class: 'small' }, '엔드포인트 (플레이그라운드의 경로)'), h('input', { type: 'text', 'data-model-endpoint': '', placeholder: 'kling-master', oninput: (e) => (cm.endpoint = e.target.value) })),
+          h('label', { class: 'field' }, h('span', { class: 'small' }, '표시 이름'), h('input', { type: 'text', 'data-model-label': '', oninput: (e) => (cm.label = e.target.value) })),
+          h('label', { class: 'field' }, h('span', { class: 'small' }, '엔드포인트 (플레이그라운드의 경로)'), h('input', { type: 'text', 'data-model-endpoint': '', placeholder: 'seedance-pro-i2v-fast', oninput: (e) => (cm.endpoint = e.target.value) })),
           h('label', { class: 'field' }, h('span', { class: 'small' }, '지원 클립 길이(초, 쉼표)'), h('input', { type: 'text', value: cm.durations, oninput: (e) => (cm.durations = e.target.value) })),
           h('label', { class: 'field' }, h('span', { class: 'small' }, '해상도 (선택, 쉼표 — 문서에 있을 때만)'), h('input', { type: 'text', oninput: (e) => (cm.resolutions = e.target.value) })),
-          h('label', { class: 'row small', style: 'gap:6px;align-items:center' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => (cm.neg = e.target.checked) }), '네거티브 프롬프트 지원')),
+          h('label', { class: 'row small', style: 'gap:6px;align-items:center' }, h('input', { type: 'checkbox', checked: false, onchange: (e) => (cm.neg = e.target.checked) }), '네거티브 프롬프트 지원')),
         h('button', { class: 'btn sm', type: 'button', 'data-model-save': '', onclick: () => act(() => api.post('/api/models', { id: cm.id, label: cm.label, endpoint: cm.endpoint, durations: cm.durations.split(',').map((x) => Number(x.trim())).filter(Boolean), resolutions: cm.resolutions.split(',').map((x) => x.trim()).filter(Boolean), supportsNegativePrompt: cm.neg }), { ok: '모델을 추가했습니다 (검증 수준: 직접 입력 — 첫 실제 생성 전에 가격을 입력하세요)' }) }, '모델 추가')))));
 
   // Spend + prices
