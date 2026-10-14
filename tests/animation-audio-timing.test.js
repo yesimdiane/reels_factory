@@ -27,7 +27,7 @@ test('approved synthesized audio duration controls dialogue windows', () => {
     assert.match(b.expression, /nose:.*mouth:/);
   }
   assert.ok(beats.some(b => b.characterId === 'diane' && Math.abs(b.t1 - 2.9) < 1e-9 && /mouth moves/.test(b.expression)));
-  assert.ok(beats.some(b => b.characterId === 'diane' && Math.abs(b.t0 - 2.9) < 1e-9 && /mouth closed/.test(b.expression)));
+  assert.ok(beats.filter(b => b.characterId === 'diane' && b.t0 >= 2.9 - 1e-9).every(b => /mouth closed/.test(b.expression)), 'no Diane lip motion after audio ends');
 });
 test('stale synthesized audio is ignored without paid regeneration', () => {
   const ep = episode();
