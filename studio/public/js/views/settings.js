@@ -35,6 +35,18 @@ function parts() {
       kv('Gemini (프롬프트 AI)', p.gemini.configured ? chip('키 설정됨 · ' + p.gemini.model, 'done') : chip('키 없음 — 템플릿만', 'attention')),
       h('p', { class: 'small muted', style: 'margin:10px 0 0' }, p.lipSync.note))));
 
+  // Default video model is shared by Animation Studio and B-roll generation.
+  // Changing it never triggers a paid generation or overwrites per-scene choices.
+  const defaultVideoModel = { id: st.defaultModelId || '' };
+  wrap.append(h('div', { class: 'card stack', style: 'gap:12px', 'data-default-video-model': '' },
+    h('div', { class: 'card-head' }, h('h2', null, '영상 생성 기본 AI 모델'),
+      h('button', { class: 'btn sm', type: 'button', 'data-default-model-save': '', onclick: () => act(() => api.put('/api/settings', { defaultModelId: defaultVideoModel.id }), { ok: '영상 기본 모델을 저장했습니다. 기존 장면별 모델 설정은 유지됩니다.' }) }, '기본 모델 저장')),
+    h('label', { class: 'field' }, h('span', { class: 'small' }, 'Animation Studio · B-roll 기본 모델'),
+      h('select', { 'data-default-model-select': '', value: defaultVideoModel.id, onchange: (e) => (defaultVideoModel.id = e.target.value) },
+        (s.models || []).map((m) => h('option', { value: m.id, selected: m.id === defaultVideoModel.id }, (m.label || m.id) + ' · ' + m.id + (m.verification === 'unverified' ? ' (미검증)' : ''))))),
+    h('div', { class: 'small muted' }, '여기서 선택한 모델은 새 영상 생성의 기본값입니다. 장면별로 지정한 모델은 그대로 유지됩니다. 모델을 변경해도 생성이나 과금은 시작되지 않습니다.'),
+    h('div', { class: 'small muted' }, '원하는 모델이 없으면 아래 Muapi 영상 모델의 "모델 직접 추가"에서 플레이그라운드에 표시된 모델 ID와 엔드포인트를 등록하고, 비용 설정도 입력하세요.')));
+
   // Muapi connection check + models (explicit buttons only: nothing here runs on page load)
   const chk = h('div', { class: 'small', 'data-muapi-result': '' }, h('span', { class: 'muted' }, '"연결 확인"은 무료 조회(잔액·모델 목록)만 합니다. 영상 생성은 시작되지 않습니다.'));
   const cm = { id: '', label: '', endpoint: '', durations: '5,10', resolutions: '', neg: true };
