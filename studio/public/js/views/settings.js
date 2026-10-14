@@ -98,7 +98,7 @@ function parts() {
           h('label', { class: 'field' }, h('span', { class: 'small' }, '지원 클립 길이(초, 쉼표)'), h('input', { type: 'text', value: cm.durations, oninput: (e) => (cm.durations = e.target.value) })),
           h('label', { class: 'field' }, h('span', { class: 'small' }, '해상도 (선택, 쉼표 — 문서에 있을 때만)'), h('input', { type: 'text', oninput: (e) => (cm.resolutions = e.target.value) })),
           h('label', { class: 'row small', style: 'gap:6px;align-items:center' }, h('input', { type: 'checkbox', checked: false, onchange: (e) => (cm.neg = e.target.checked) }), '네거티브 프롬프트 지원')),
-        h('button', { class: 'btn sm', type: 'button', 'data-model-save': '', onclick: () => act(() => api.post('/api/models', { id: cm.id, label: cm.label, endpoint: cm.endpoint, durations: cm.durations.split(',').map((x) => Number(x.trim())).filter(Boolean), resolutions: cm.resolutions.split(',').map((x) => x.trim()).filter(Boolean), supportsNegativePrompt: cm.neg }), { ok: '모델을 추가했습니다 (검증 수준: 직접 입력 — 첫 실제 생성 전에 가격을 입력하세요)' }) }, '모델 추가')))));
+        h('button', { class: 'btn sm', type: 'button', 'data-model-save': '', onclick: () => act(() => api.post('/api/models', { id: cm.id, label: cm.label, endpoint: cm.endpoint, durations: cm.durations.split(',').map((x) => Number(x.trim())).filter(Boolean), resolutions: cm.resolutions.split(',').map((x) => x.trim()).filter(Boolean), supportsNegativePrompt: cm.neg }), { ok: '모델을 등록했습니다. Animation Studio에서 선택할 수 있습니다. 첫 생성 전 엔드포인트와 비용을 확인하세요.' }) }, '모델 추가')))));
 
   // Spend + prices
   const f = { limit: st.reelSpendLimitUsd == null ? '' : st.reelSpendLimitUsd, voice: st.voiceUsdPer1kChars == null ? '' : st.voiceUsdPer1kChars, prices: {} };
