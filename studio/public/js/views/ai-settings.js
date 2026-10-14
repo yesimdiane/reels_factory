@@ -1,7 +1,7 @@
 // Settings → AI 연동 / 프롬프트 매니저 / 사용량·한도. Keys are typed here once, sent over HTTPS to the server and never shown again
 // (only "configured · last 4"). Nothing on this page can read a key back.
 import { h, chip, icon, toast, modal, confirmDialog, fmtUsd } from '../ui.js';
-import { act } from '../state.js';
+import { act, state } from '../state.js';
 import { api } from '../api.js';
 import { asyncBlock } from './common.js';
 
@@ -46,9 +46,10 @@ function drawAi(ov) {
 
   // Video generation is a MuAPI task, not a text-model routing task.
   // Reuse the existing registered video-model catalog and persisted defaultModelId.
-  wrap.append(asyncBlock(() => api.get('/api/settings'), (cfg) => {
+  wrap.append((() => {
+    const cfg = state.summary;
     const videoModels = cfg.models || [];
-    const current = cfg.settings?.defaultModelId || cfg.defaultModelId || '';
+    const current = cfg.settings?.defaultModelId || '';
     const pick = { id: current };
     return h('div', { class: 'card stack', style: 'gap:10px', 'data-ai-video-routing': '' },
       h('div', { class: 'card-head' }, h('h2', null, '애니메이션 영상 생성 · MuAPI'),
@@ -61,7 +62,7 @@ function drawAi(ov) {
           if (await call(() => api.put('/api/settings', { defaultModelId: pick.id }), '애니메이션 기본 모델을 저장했습니다')) redo();
         } }, '저장')),
       h('div', { class: 'small muted' }, 'MuAPI 계정 모델을 가져오거나 신규 모델을 등록하려면 아래 MuAPI 연결 · 영상 모델에서 연결 확인을 사용하세요. 모델을 저장해도 영상 생성이나 과금은 시작되지 않습니다.'));
-  }));
+  })());
 
   // ---- pricing ----
   const pairs = new Set();
