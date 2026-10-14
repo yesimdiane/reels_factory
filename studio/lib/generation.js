@@ -27,9 +27,20 @@ const AUTH_TTL_MS = 30 * 60 * 1000;
 const ACTIVE = new Set(['preparing', 'submitting', 'processing']);
 const RECOVERABLE = new Set(['processing', 'polling_interrupted', 'download_failed']);
 
-function createGenerationService({ store, provider, cfg, now = () => Date.now(), log = () => {}, composePrompt = (ep, sid, text) => text, charRefs = null, audioGate = null }) {
+function createGenerationService({ store, provider, cfg, now = () => Date.now(), log = () => {}, composePrompt = (ep, sid, text) => text, charRefs = null, audioGate = null, brollSource = null }) {
   const running = new Set();
   const lib = () => store.characters.load();
+
+  /** The scene as the video model sees it: a per-scene clip-length choice (Animation Studio) replaces the planned duration for model selection only. */
+  function clipTarget(ep, scene) {
+    const o = ep && ep.animation && ep.animation[scene.id];
+    return o && Number(o.durationSec) > 0 ? Object.assign({}, scene, { durationSec: Number(o.durationSec) }) : scene;
+  }
+
+  function resolutionExtra(ep, sceneId, model) {
+    const o = ep.animation && ep.animation[sceneId];
+    return o && o.resolution && (model.resolutions || []).includes(o.resolution) ? { [model.resolutionField || 'resolution']: o.resolution } : {};
+  }
 
   function sceneOf(ep, id) {
     const s = (ep.scenes || []).find((x) => x.id === id);
@@ -107,7 +118,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     const p = ep.prompts && ep.prompts[scene.id];
     const img = startImage(ep, scene);
     if (!p || img.error) return '';
-    return jobKey({ model, prompt: composePrompt(ep, scene.id, p.video), negative: p.negative, clipSec: clipSecFor(model, scene.durationSec), aspectRatio: '9:16', imageSha256: img.sha256 });
+    return jobKey({ model, prompt: composePrompt(ep, scene.id, p.video), negative: p.negative, clipSec: clipSecFor(model, clipTarget(ep, scene).durationSec), aspectRatio: '9:16', imageSha256: img.sha256 });
   }
 
   function pickScenes(ep, sceneIds) {
@@ -140,10 +151,10 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     const settings = store.settings.get();
     const model = modelById(store.models(), modelId || settings.defaultModelId);
     const scenes = pickScenes(ep, sceneIds);
-    const est = estimateRun({ ep, scenes, model, settings, cfg, cached: cachedFor(ep, model) });
+    const est = estimateRun({ ep, scenes: scenes.map((x) => clipTarget(ep, x)), model, settings, cfg, cached: cachedFor(ep, model) });
     const b = blockers(ep, scenes, model);
     if (provider.mode === 'live' && est.unknown) b.push({ code: 'ESTIMATE_UNKNOWN', message: '이 모델의 클립당 가격 추정치가 없습니다. Muapi는 가격표를 공개하지 않습니다.', recovery: 'Muapi 플레이그라운드의 모델 페이지에 표시된 가격을 Settings → 비용에 입력하세요.' });
-    const compat = compatibility(model, scenes);
+    const compat = compatibility(model, scenes.map((x) => clipTarget(ep, x)));
     if (provider.mode === 'live' && !compat.ok) compat.items.filter((i) => !i.ok).forEach((i) => b.push({ code: 'MODEL_INCOMPATIBLE', message: i.message, recovery: '다른 모델을 고르거나 장면 길이를 조정하세요. 유료 호출은 시작하지 않았습니다.' }));
     if (est.withinLimit === false) b.push({ code: 'OVER_LIMIT', message: `예상 비용 $${est.totalUsd}이(가) 릴스 한도 남은 금액 $${est.remainingUsd}을(를) 넘습니다.`, recovery: 'Settings에서 릴스당 한도를 올리거나 장면 수를 줄이세요.' });
     return { mode: provider.mode, provider: provider.name, model: { id: model.id, label: model.label, verification: model.verification }, compat, scenes: scenes.map((s) => s.id), ...est, blockers: b, canAuthorize: b.length === 0 };
@@ -249,7 +260,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     try {
       const hash = sha256File(tmp);
       writeFileAtomic(store.cachePath('clips', job.key + '.mp4'), fs.readFileSync(tmp));
-      const v = await addClipVersion(epId, job.sceneId, tmp, { jobId: job.id, key: job.key, requestId: job.requestId, mock: provider.mode === 'mock', reused: false, modelId: job.modelId, promptHash: job.promptHash });
+      const v = await addClipVersion(epId, job.sceneId, tmp, { jobId: job.id, key: job.key, requestId: job.requestId, mock: provider.mode === 'mock', reused: false, modelId: job.modelId, imageSha256: job.imageSha256, sourceImageLabel: job.sourceImageLabel, promptRev: job.promptRev, clipSec: job.clipSec, aspectRatio: job.aspectRatio, estimatedUsd: job.estimatedUsd, promptHash: job.promptHash });
       await setJob(epId, job.id, { status: 'completed', outputs, clipVersion: v, sha256: hash, error: null });
       return v;
     } finally {
@@ -279,13 +290,13 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       const model = modelById(store.models(), auth && auth.modelId);
       checkAuthorization(ep0, auth, sceneId, model);
       { const sbs = storyboardApprovalStatus(ep0); const st = sbs.scenes[sceneId]; if (!isScriptApproved(ep0) || !sbs.everApproved || (st ? !st.approved : !sbs.approved)) throw new StudioError('NOT_APPROVED', '대본과 이 장면의 스토리보드가 승인 상태여야 합니다.', { status: 403 }); }
-      if ((ep0.generation.jobs || []).some((j) => j.sceneId === sceneId && ACTIVE.has(j.status))) throw new StudioError('ALREADY_RUNNING', `${sceneId}에 진행 중인 작업이 있습니다.`, { status: 409 });
+      if ((ep0.generation.jobs || []).some((j) => j.sceneId === sceneId && !j.brollId && ACTIVE.has(j.status))) throw new StudioError('ALREADY_RUNNING', `${sceneId}에 진행 중인 작업이 있습니다.`, { status: 409 });
       const img = startImage(ep0, scene);
       const prompt = ep0.prompts[sceneId];
-      const clipSec = clipSecFor(model, scene.durationSec);
+      const clipSec = clipSecFor(model, clipTarget(ep0, scene).durationSec);
       const key = keyFor(ep0, scene, model);
-      const est = estimateRun({ ep: ep0, scenes: [scene], model, settings: store.settings.get(), cfg, cached: cachedFor(ep0, model) });
-      job = { id: uid('job'), sceneId, key, modelId: model.id, mode: provider.mode, authorizationId: authId, status: 'preparing', estimatedUsd: est.totalUsd, promptHash: require('./util').sha256(prompt.video), requestId: '', error: null, createdAt: nowIso(), updatedAt: nowIso() };
+      const est = estimateRun({ ep: ep0, scenes: [clipTarget(ep0, scene)], model, settings: store.settings.get(), cfg, cached: cachedFor(ep0, model) });
+      job = { id: uid('job'), sceneId, key, modelId: model.id, mode: provider.mode, authorizationId: authId, status: 'preparing', estimatedUsd: est.totalUsd, promptHash: require('./util').sha256(prompt.video), imageSha256: img.sha256 || '', sourceImageLabel: img.label || '', promptRev: prompt.rev || 1, clipSec, aspectRatio: '9:16', requestId: '', error: null, createdAt: nowIso(), updatedAt: nowIso() };
 
       // 1) Cache hit: reuse, no network, no charge.
       const cachedFile = store.cachePath('clips', key + '.mp4');
@@ -296,7 +307,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
           ep.generation.jobs.push(job);
           ep.generation.authorizations.find((a) => a.id === authId).consumed.push(sceneId);
         });
-        const v = await addClipVersion(epId, sceneId, cachedFile, { jobId: job.id, key, mock: provider.mode === 'mock', reused: true, modelId: model.id });
+        const v = await addClipVersion(epId, sceneId, cachedFile, { jobId: job.id, key, mock: provider.mode === 'mock', reused: true, modelId: model.id, imageSha256: img.sha256 || '', sourceImageLabel: img.label || '', promptRev: prompt.rev || 1, clipSec, aspectRatio: '9:16' });
         await setJob(epId, job.id, { clipVersion: v });
         store.episodes.audit(epId, 'generation.reused', { sceneId, key, clipVersion: v });
         return { sceneId, status: 'reused', clipVersion: v };
@@ -329,7 +340,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       });
       let sub;
       try {
-        sub = await provider.submit({ model, prompt: composePrompt(store.episodes.get(epId), sceneId, prompt.video), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative });
+        sub = await provider.submit({ model, prompt: composePrompt(store.episodes.get(epId), sceneId, prompt.video), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative && model.supportsNegativePrompt !== false ? prompt.negative : undefined, extra: resolutionExtra(ep0, sceneId, model) });
       } catch (e) {
         const definitelyRefused = ['AUTH', 'BAD_REQUEST', 'CREDITS', 'RATE_LIMIT'].includes(e.code);
         await setJob(epId, job.id, { status: definitelyRefused ? 'failed' : 'uncertain', billed: definitelyRefused ? false : null, error: errInfo(e) });
@@ -471,7 +482,146 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     store.episodes.audit(epId, 'clip.' + decision, { sceneId, version, by });
   }
 
-  return { estimate, authorize, run, resume, dismissJob, addManualClip, review, startImage, provider, compatibility, blockers };
+
+  // ------------------------------------------------------------------ B-roll animation (same provider, same job list, same safety rules)
+  // An approved B-roll still can be animated into a short clip. Clips are kept apart from the scene clip (ep.brollClips[brollId]) and never mix
+  // into ep.clips. Billable generation needs the free estimate and an explicit confirmation of that exact amount, exactly like scene clips.
+  const brollOf = (ep, bid) => {
+    const b = (ep.broll || []).find((x) => x.id === bid && x.status !== 'removed');
+    if (!b) throw new StudioError('NOT_FOUND', 'B-roll을 찾을 수 없습니다: ' + bid, { status: 404 });
+    return b;
+  };
+  function brollPrompt(b, text) {
+    const base = String(text || '').trim();
+    if (base) return base.slice(0, 2000);
+    return `Animate this still image with subtle, natural motion (${b.effect || b.note || 'gentle camera push-in'}). Keep the product's shape, colour and details and the illustration style exactly as in the image. No new objects, no text.`;
+  }
+  function brollBlockers(ep, b) {
+    const out = [];
+    if (!isScriptApproved(ep)) out.push({ code: 'SCRIPT_NOT_APPROVED', message: '대본이 승인되지 않았습니다.', recovery: '대본을 승인하세요.' });
+    if (b.status !== 'approved') out.push({ code: 'BROLL_NOT_APPROVED', message: `${b.id}: B-roll 이미지가 승인되지 않았습니다.`, recovery: '스토리보드의 컷 · B-roll에서 이미지를 승인하세요.' });
+    const src = brollSource ? brollSource(ep, b) : { file: '', problem: 'B-roll 이미지를 찾을 수 없습니다.' };
+    if (!src.file || src.problem || !fs.existsSync(src.file)) out.push({ code: 'BROLL_IMAGE_MISSING', message: `${b.id}: 사용할 수 있는 B-roll 이미지가 없습니다${src.problem ? ' — ' + src.problem : ''}.`, recovery: '스토리보드에서 이미지를 다시 지정하세요.' });
+    return { out, src };
+  }
+  function estimateBroll(epId, bid, { modelId } = {}) {
+    const ep = store.episodes.get(epId);
+    const b = brollOf(ep, bid);
+    const settings = store.settings.get();
+    const model = modelById(store.models(), modelId || settings.defaultModelId);
+    const { out } = brollBlockers(ep, b);
+    const est = estimateRun({ ep, scenes: [{ id: 'broll:' + bid, durationSec: b.durationSec }], model, settings, cfg, cached: () => false });
+    if (provider.mode === 'mock') { est.totalUsd = 0; est.unknown = false; est.withinLimit = true; } // the mock provider never bills
+    if (provider.mode === 'live' && est.unknown) out.push({ code: 'ESTIMATE_UNKNOWN', message: '이 모델의 클립당 가격 추정치가 없습니다.', recovery: 'Settings → 비용에 가격을 입력하세요.' });
+    if (est.withinLimit === false) out.push({ code: 'OVER_LIMIT', message: `예상 비용 $${est.totalUsd}이(가) 릴스 한도 남은 금액 $${est.remainingUsd}을(를) 넘습니다.`, recovery: 'Settings에서 한도를 올리세요.' });
+    return { mode: provider.mode, model: { id: model.id, label: model.label }, brollId: bid, clipSec: est.items[0].clipSec, plannedSec: b.durationSec, totalUsd: est.totalUsd, unknown: est.unknown, blockers: out, canGenerate: out.length === 0, prompt: brollPrompt(b, (ep.brollClips && ep.brollClips[bid] && ep.brollClips[bid].prompt) || '') };
+  }
+  /** Validates and checks the confirmation synchronously-ish, then runs in the background: { accepted, done } like run(). */
+  async function generateBroll(epId, bid, opts = {}) {
+    const gk = epId + ':broll:' + bid;
+    if (running.has(gk)) throw new StudioError('ALREADY_RUNNING', `${bid} 생성이 이미 진행 중입니다.`, { status: 409 });
+    const est = estimateBroll(epId, bid, { modelId: opts.modelId });
+    if (est.blockers.length) throw new StudioError('BLOCKED', est.blockers[0].message, { recovery: est.blockers[0].recovery, details: est.blockers, status: 409 });
+    if (est.totalUsd == null) { if (!opts.confirmUnknown) throw new StudioError('CONFIRM_REQUIRED', '가격 추정치가 없습니다. 실제 청구 금액을 알 수 없다는 점을 확인해야 합니다.', { status: 409 }); }
+    else if (Math.abs(Number(opts.confirmUsd) - est.totalUsd) > 1e-9) throw new StudioError('CONFIRM_MISMATCH', `확인한 금액(${opts.confirmUsd})이 현재 예상(${est.totalUsd})과 다릅니다. 다시 확인하세요.`, { status: 409 });
+    const done = runBroll(epId, bid, opts);
+    done.catch(() => {});
+    return { accepted: true, done };
+  }
+  async function runBroll(epId, bid, { modelId, prompt, confirmUsd, confirmUnknown = false, by = 'operator' } = {}) {
+    const gk = epId + ':broll:' + bid;
+    if (running.has(gk)) throw new StudioError('ALREADY_RUNNING', `${bid} 생성이 이미 진행 중입니다.`, { status: 409 });
+    running.add(gk);
+    let job = null;
+    try {
+      const est = estimateBroll(epId, bid, { modelId });
+      if (est.blockers.length) throw new StudioError('BLOCKED', est.blockers[0].message, { recovery: est.blockers[0].recovery, details: est.blockers, status: 409 });
+      if (est.totalUsd == null) { if (!confirmUnknown) throw new StudioError('CONFIRM_REQUIRED', '가격 추정치가 없습니다. 실제 청구 금액을 알 수 없다는 점을 확인해야 합니다.', { status: 409 }); }
+      else if (Math.abs(Number(confirmUsd) - est.totalUsd) > 1e-9) throw new StudioError('CONFIRM_MISMATCH', `확인한 금액(${confirmUsd})이 현재 예상(${est.totalUsd})과 다릅니다. 다시 확인하세요.`, { status: 409 });
+      const ep0 = store.episodes.get(epId);
+      const b = brollOf(ep0, bid);
+      const model = modelById(store.models(), modelId || store.settings.get().defaultModelId);
+      const src = brollBlockers(ep0, b).src;
+      const text = brollPrompt(b, prompt);
+      const imageSha = require('./util').sha256File(src.file);
+      const key = jobKey({ model, prompt: text, negative: '', clipSec: est.clipSec, aspectRatio: '9:16', imageSha256: imageSha });
+      job = { id: uid('job'), sceneId: b.sceneId, brollId: bid, key, modelId: model.id, mode: provider.mode, status: 'preparing', estimatedUsd: est.totalUsd, promptHash: require('./util').sha256(text), imageSha256: imageSha, clipSec: est.clipSec, aspectRatio: '9:16', requestId: '', error: null, createdAt: nowIso(), updatedAt: nowIso() };
+      await store.episodes.update(epId, (ep) => { ep.generation.jobs.push(job); });
+      let imageUrl;
+      try { imageUrl = (await provider.uploadImage(src.file)).url; } catch (e) { await setJob(epId, job.id, { status: 'failed', billed: false, error: errInfo(e) }); throw e; }
+      await store.episodes.update(epId, (ep) => { ep.generation.jobs.find((j) => j.id === job.id).status = 'submitting'; });
+      let sub;
+      try {
+        sub = await provider.submit({ model, prompt: text, imageUrl, aspectRatio: '9:16', duration: est.clipSec });
+      } catch (e) {
+        const refused = ['AUTH', 'BAD_REQUEST', 'CREDITS', 'RATE_LIMIT'].includes(e.code);
+        await setJob(epId, job.id, { status: refused ? 'failed' : 'uncertain', billed: refused ? false : null, error: errInfo(e) });
+        throw e;
+      }
+      await store.episodes.update(epId, (ep) => {
+        const j = ep.generation.jobs.find((x) => x.id === job.id);
+        j.status = 'processing'; j.requestId = sub.requestId;
+        ep.spend.push({ at: nowIso(), kind: 'video', jobId: job.id, sceneId: b.sceneId, brollId: bid, requestId: sub.requestId, estimatedUsd: est.totalUsd, actualUsd: sub.cost && sub.cost.amountUsd != null ? sub.cost.amountUsd : null, mock: provider.mode === 'mock' });
+      });
+      job.requestId = sub.requestId;
+      let r;
+      try { r = await provider.waitForResult(job.requestId); } catch (e) {
+        await setJob(epId, job.id, { status: ['TIMEOUT', 'NETWORK'].includes(e.code) ? 'polling_interrupted' : 'failed', error: errInfo(e) });
+        throw e;
+      }
+      await applyCost(epId, job, r.cost);
+      const tmp = store.episodes.file(epId, 'tmp', job.id + '.mp4');
+      fs.mkdirSync(path.dirname(tmp), { recursive: true });
+      try {
+        try { await provider.download(r.outputs[0], tmp); } catch (e) { await setJob(epId, job.id, { status: 'download_failed', outputs: r.outputs, error: errInfo(e) }); throw e; }
+        const info = await validateClip(tmp);
+        const hash = sha256File(tmp);
+        const size = fs.statSync(tmp).size;
+        const v = await store.episodes.update(epId, (ep) => {
+          ep.brollClips = ep.brollClips || {};
+          const c = (ep.brollClips[bid] = ep.brollClips[bid] || { versions: [], approvedVersion: null });
+          const n = c.versions.length + 1;
+          const rel = path.join('brollclips', bid, 'v' + n + '.mp4');
+          fs.mkdirSync(path.dirname(store.episodes.file(epId, rel)), { recursive: true });
+          fs.copyFileSync(tmp, store.episodes.file(epId, rel));
+          c.prompt = text;
+          c.versions.push({ v: n, file: rel, sha256: hash, size, ...info, status: 'pending_review', createdAt: nowIso(), jobId: job.id, requestId: job.requestId, mock: provider.mode === 'mock', modelId: model.id, imageSha256: imageSha, promptHash: job.promptHash, clipSec: est.clipSec, estimatedUsd: est.totalUsd });
+          return n;
+        });
+        await setJob(epId, job.id, { status: 'completed', outputs: r.outputs, clipVersion: v, sha256: hash, error: null });
+        store.episodes.audit(epId, 'broll.clip.completed', { brollId: bid, version: v, by });
+        return { brollId: bid, status: 'completed', version: v };
+      } finally { fs.rmSync(tmp, { force: true }); }
+    } finally { running.delete(gk); }
+  }
+  async function reviewBroll(epId, bid, version, decision, by = 'operator') {
+    await store.episodes.update(epId, (ep) => {
+      brollOf(ep, bid);
+      const c = ep.brollClips && ep.brollClips[bid];
+      const v = c && c.versions.find((x) => x.v === Number(version));
+      if (!v) throw new StudioError('NOT_FOUND', '클립 버전을 찾을 수 없습니다.', { status: 404 });
+      if (decision === 'approve') {
+        const f = store.episodes.file(epId, v.file);
+        if (!fs.existsSync(f) || sha256File(f) !== v.sha256) throw new StudioError('CHECKSUM', '클립 파일이 기록된 체크섬과 다릅니다.', { status: 409 });
+        c.versions.forEach((x) => x.status === 'approved' && (x.status = 'superseded'));
+        v.status = 'approved'; v.approvedBy = by; v.approvedAt = nowIso(); c.approvedVersion = v.v;
+      } else if (decision === 'unapprove') {
+        if (c.approvedVersion !== v.v) throw new StudioError('NOT_APPROVED', '승인된 버전이 아닙니다.', { status: 409 });
+        v.status = 'pending_review'; c.approvedVersion = null;
+      } else if (decision === 'reject') { v.status = 'rejected'; if (c.approvedVersion === v.v) c.approvedVersion = null; } else throw new StudioError('BAD_DECISION', '승인, 승인 취소 또는 거절만 가능합니다.');
+    });
+    store.episodes.audit(epId, 'broll.clip.' + decision, { brollId: bid, version, by });
+  }
+
+  /** Is the clip version still based on the scene's current start image? Versions made before this was recorded are 'unknown' (never reported stale). */
+  function freshness(ep, scene, version) {
+    if (!version || !version.imageSha256) return { state: 'unknown' };
+    const img = startImage(ep, scene);
+    if (img.error || !img.sha256) return { state: 'unknown' };
+    return version.imageSha256 === img.sha256 ? { state: 'current' } : { state: 'stale', reason: '이 클립을 만든 뒤 시작 이미지가 바뀌었습니다.' };
+  }
+
+  return { estimateBroll, generateBroll, reviewBroll, freshness, estimate, authorize, run, resume, dismissJob, addManualClip, review, startImage, provider, compatibility, blockers };
 }
 
 module.exports = { createGenerationService };

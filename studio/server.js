@@ -340,6 +340,10 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/start-images/generate', async ({ p, body }) => { S.assertNotHeld(p.id); const r = await S.startImages.generate(p.id, body.sceneIds, { confirm: body.confirm, force: body.force === true, exclude: body.exclude }); const v = ep(p.id); v.startImageResult = r; return v; });
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame/approve', async ({ p, body }) => S.approveStartFrame(p.id, p.sid, body.approved !== false));
   route('POST', '/api/episodes/:id/storyboard/approve', async ({ p }) => S.approveStoryboard(p.id));
+  route('PUT', '/api/episodes/:id/scenes/:sid/animation', async ({ p, body }) => S.saveAnimationSettings(p.id, p.sid, body || {}));
+  route('POST', '/api/models', async ({ body }) => S.addCustomModel(body || {}));
+  route('DELETE', '/api/models/:id', async ({ p }) => S.removeCustomModel(p.id));
+  route('POST', '/api/muapi/check', async () => S.muapiCheck());
   route('POST', '/api/episodes/:id/storyboard/revoke', async ({ p }) => S.revokeStoryboard(p.id));
   route('PUT', '/api/episodes/:id/spend-limit', async ({ p, body }) => S.setSpendLimit(p.id, body.usd));
 

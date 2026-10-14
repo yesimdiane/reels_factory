@@ -18,7 +18,8 @@
     "start": "node studio/server.js",
     "deploy:check": "node scripts/deploy-check.js",
     "backup": "node scripts/backup-data.js",
-    "restore": "node scripts/restore-data.js"
+    "restore": "node scripts/restore-data.js",
+    "animation:preflight": "node scripts/animation-preflight.js"
   },
   "engines": {
     "node": ">=20"

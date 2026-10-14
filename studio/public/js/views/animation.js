@@ -2,6 +2,7 @@ import { h, chip, icon, confirmDialog, fmtUsd, toast } from '../ui.js';
 import { state, act, requireEpisode, go } from '../state.js';
 import { api } from '../api.js';
 import { videoSummary } from './video-summary.js';
+import { animationStudio } from './animation-studio.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, modeBanner, issueList, lockedNotice, videoTabs, productRefStrip } from './common.js';
 
 const JOB_LABEL = { preparing: '준비 중', submitting: '제출 중', processing: '생성 중', completed: '완료', failed: '실패', uncertain: '확인 필요', polling_interrupted: '확인 중단', download_failed: '다운로드 실패', dismissed: '닫음' };
@@ -13,20 +14,23 @@ export function animation() {
   const wrap = h('div', { class: 'stack', style: 'gap:20px' });
   wrap.append(pageHead('Animation Studio', '애니메이션 스튜디오', '승인된 캐릭터 이미지로 장면별 9:16 클립을 만듭니다. 생성 전 예상 비용을 확인·승인하고, 만들어진 클립은 하나씩 검토해 승인합니다.', episodePicker()));
   wrap.append(videoTabs('animation'));
-  wrap.append(videoSummary(ep, { startVideo: (sceneIds) => startGeneration(ep, sceneIds) }));
   if (!ep.derived.storyboardApproved) wrap.append(lockedNotice('대본과 스토리보드가 승인되어야 생성을 시작할 수 있습니다.', 'storyboard', '스토리보드로 이동'));
+  wrap.append(animationStudio(ep));
+  // everything below is the multi-scene overview (batch generation with one confirmation, all clips, job history) — collapsed by default
+  const all = h('div', { class: 'stack', style: 'gap:16px' });
+  all.append(videoSummary(ep, { startVideo: (sceneIds) => startGeneration(ep, sceneIds) }));
 
   const g = (state.draft.gen = state.draft.gen || {});
   if (g.forEpisode !== ep.id) { g.forEpisode = ep.id; g.sceneIds = ep.scenes.filter((s) => !s.clips.approvedVersion).map((s) => s.id); g.modelId = state.summary.settings.defaultModelId; g.estimate = null; }
   const panel = h('div', { class: 'card' }, h('div', { class: 'muted' }, '비용을 계산하는 중…'));
-  wrap.append(h('details', { class: 'card', 'data-adv-prep': '' }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '생성 준비 · 모델 · 장면 선택'), h('span', { class: 'small muted' }, '고급')), panel));
+  all.append(h('details', { class: 'card', 'data-adv-prep': '' }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '생성 준비 · 모델 · 장면 선택'), h('span', { class: 'small muted' }, '고급')), panel));
   drawEstimate(ep, g, panel);
 
   const pendingReview = ep.scenes.reduce((n, sc) => n + sc.clips.versions.filter((v) => v.status === 'pending_review').length, 0);
-  wrap.append(h('details', { class: 'card', 'data-clip-review': '', open: pendingReview > 0 || undefined }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '클립 검토'), pendingReview ? chip(`검토 대기 ${pendingReview}`, 'attention') : h('span', { class: 'small muted' }, '승인한 클립만 렌더에 쓰입니다')),
+  all.append(h('details', { class: 'card', 'data-clip-review': '', open: pendingReview > 0 || undefined }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '클립 검토'), pendingReview ? chip(`검토 대기 ${pendingReview}`, 'attention') : h('span', { class: 'small muted' }, '승인한 클립만 렌더에 쓰입니다')),
     h('div', { class: 'scene-grid', style: 'margin-top:12px' }, ep.scenes.map((sc) => clipCard(ep, sc, g)))));
   const jobs = (ep.generation.jobs || []).slice().reverse();
-  wrap.append(h('details', { class: 'card', 'data-job-history': '' }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '작업 내역'), h('span', { class: 'small muted' }, '실패한 유료 작업은 자동으로 다시 실행되지 않습니다.')),
+  all.append(h('details', { class: 'card', 'data-job-history': '' }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '작업 내역'), h('span', { class: 'small muted' }, '실패한 유료 작업은 자동으로 다시 실행되지 않습니다.')),
     jobs.length ? h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['장면', '상태', '요청 ID', '비용 (예상 / 실제)', ''].map((x) => h('th', null, x)))), h('tbody', null, jobs.map((j) => h('tr', null,
       h('td', null, j.sceneId + (j.reused ? ' · 재사용' : '')),
       h('td', null, chip(JOB_LABEL[j.status] || j.status, JOB_KIND[j.status] || ''), j.error && h('div', { class: 'small', style: 'color:var(--rose);margin-top:4px;max-width:420px' }, j.error.message, h('div', { class: 'muted' }, '→ ' + j.error.recovery))),
@@ -36,13 +40,14 @@ export function animation() {
         j.requestId && ['processing', 'polling_interrupted', 'download_failed'].includes(j.status) && !ep.derived.jobsRunning ? h('button', { class: 'btn sm ghost', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/jobs/${j.id}/resume`), { ok: '이어서 확인합니다 (추가 요금 없음)' }) }, '다시 확인') : null,
         ['failed', 'uncertain', 'polling_interrupted', 'download_failed'].includes(j.status) ? h('button', { class: 'btn sm ghost', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/jobs/${j.id}/dismiss`)) }, '닫기') : null))))))
       : h('div', { class: 'muted' }, '아직 생성 작업이 없습니다.')));
+  wrap.append(h('details', { class: 'card', 'data-anim-overview': '' }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '여러 장면 한꺼번에 · 전체 요약 · 작업 내역'), h('span', { class: 'small muted' }, '고급 (일괄 생성도 비용 확인과 승인이 필요합니다)')), h('div', { style: 'margin-top:12px' }, all)));
   return wrap;
 }
 
 /** Cost review first (free estimate), then the explicit confirmation; used by the summary buttons and per-scene retries. */
-export async function startGeneration(ep, sceneIds) {
+export async function startGeneration(ep, sceneIds, opts = {}) {
   if (!sceneIds || !sceneIds.length) return toast('만들 장면이 없습니다', { error: true });
-  const modelId = state.summary.settings.defaultModelId;
+  const modelId = opts.modelId || state.summary.settings.defaultModelId;
   let est;
   try { est = await api.post(`/api/episodes/${ep.id}/generation/estimate`, { sceneIds, modelId }); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
   if (!est.canAuthorize) return toast(est.blockers[0] ? est.blockers[0].message : '지금은 생성할 수 없습니다', { error: true, recovery: est.blockers[0] && est.blockers[0].recovery });
@@ -99,6 +104,8 @@ async function authorizeAndRun(ep, g, est) {
     await api.post(`/api/episodes/${ep.id}/generation/run`, { authorizationId: a.id });
     return null;
   }, { ok: '생성을 시작했습니다' });
+  // a cache hit or a very fast job finishes before the first refresh shows it as running: look again shortly (free, read-only)
+  [1200, 3500].forEach((ms) => setTimeout(() => { if (location.hash.startsWith('#/animation')) act(async () => null); }, ms));
 }
 
 /** opts.onRegenerate(sc): used by the Storyboard panel (it starts the cost review directly instead of selecting the scene on this page). */
@@ -107,7 +114,7 @@ export function clipCard(ep, sc, g, opts = {}) {
   const vs = sc.clips.versions;
   const sel = state.draft[key] != null && vs.some((v) => v.v === state.draft[key]) ? state.draft[key] : (sc.clips.approvedVersion || (vs.length ? vs[vs.length - 1].v : null));
   const cur = vs.find((v) => v.v === sel);
-  const running = (ep.generation.jobs || []).find((j) => j.sceneId === sc.id && ['preparing', 'submitting', 'processing'].includes(j.status));
+  const running = (ep.generation.jobs || []).find((j) => j.sceneId === sc.id && !j.brollId && ['preparing', 'submitting', 'processing'].includes(j.status));
   const fileIn = h('input', { type: 'file', accept: 'video/mp4,video/quicktime', style: 'display:none', onchange: async (e) => { const f = e.target.files[0]; if (f) await act(() => api.upload(`/api/episodes/${ep.id}/clips/${sc.id}/upload`, f), { ok: '클립을 올렸습니다 — 검토 후 승인하세요' }); } });
   return h('div', { class: 'clip-card' + (cur && cur.status === 'approved' ? ' approved' : ''), 'data-clip-card': sc.id, 'data-clip-status': cur ? cur.status : 'none' },
     h('div', { class: 'row between' }, h('b', null, sc.id + ' · ' + (sc.title_ko || sc.title || '').slice(0, 22)), cur ? chip(({ approved: '승인됨', pending_review: '검토 대기', rejected: '거절됨', superseded: '교체됨' })[cur.status] || cur.status, ({ approved: 'done', pending_review: 'attention', rejected: 'err' })[cur.status] || '') : chip(running ? '생성 중' : '클립 없음', running ? 'processing' : '')),
