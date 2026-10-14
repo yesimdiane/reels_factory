@@ -25,11 +25,11 @@ async function setup() {
 }
 const beat = (t0, t1, over = {}) => Object.assign({ t0, t1, character: 'Diane', emotion: 'worried', body: 'raises her right hand', gaze: 'looks left, then right', expression: 'eyebrows lift', camera: '' }, over);
 
-test('movement beats: 0.5 s grid, inside the scene, emotion + at least one motion field, no same-character overlap — scenes are never stretched', async () => {
+test('movement beats: 0.1 s precise grid (default drafts stay on 0.5 s), inside the scene, emotion + at least one motion field, no same-character overlap — scenes are never stretched', async () => {
   const m = await setup();
   const dur = m.s.store.episodes.get(m.id).scenes[0].durationSec;
   const bad = (beats, re) => assert.rejects(m.s.sba.saveMotion(m.id, m.sid, { beats }), (e) => e.code === 'INVALID_MOTION' && re.test(e.message), re.source);
-  await assert.rejects(m.s.sba.saveMotion(m.id, m.sid, { beats: [beat(0, 0.25)] }), (e) => { assert.equal(e.code, 'INVALID_MOTION'); assert.match(e.message, /0\.1초 단위/); return true; });
+  await bad([beat(0, 0.25)], /0\.1초 단위/); // off-grid: rejected with the precise-grid message
   assert.deepEqual(m.s.sba.cleanBeats([beat(0, 0.3)], m.s.store.episodes.get(m.id).scenes[0]).problems, [], '0.3s is a valid edit');
   await bad([beat(1, 1)], /끝 시간은 시작보다/);
   await bad([beat(0, dur + 0.5)], /장면 길이.*벗어납니다/);
