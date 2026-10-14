@@ -29,7 +29,7 @@ test('movement beats: 0.5 s grid, inside the scene, emotion + at least one motio
   const m = await setup();
   const dur = m.s.store.episodes.get(m.id).scenes[0].durationSec;
   const bad = (beats, re) => assert.rejects(m.s.sba.saveMotion(m.id, m.sid, { beats }), (e) => e.code === 'INVALID_MOTION' && re.test(e.message), re.source);
-  await bad([beat(0, 0.25)], /0\.1초 단위/);
+  await assert.rejects(m.s.sba.saveMotion(m.id, m.sid, { beats: [beat(0, 0.25)] }), (e) => { assert.equal(e.code, 'INVALID_MOTION'); assert.match(e.message, /0\.1초 단위/); return true; });
   assert.deepEqual(m.s.sba.cleanBeats([beat(0, 0.3)], m.s.store.episodes.get(m.id).scenes[0]).problems, [], '0.3s is a valid edit');
   await bad([beat(1, 1)], /끝 시간은 시작보다/);
   await bad([beat(0, dur + 0.5)], /장면 길이.*벗어납니다/);
