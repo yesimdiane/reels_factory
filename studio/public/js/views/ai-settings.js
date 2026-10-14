@@ -32,8 +32,8 @@ function drawAi(ov) {
   const videoPick = { id: videoCfg.settings?.defaultModelId || videoModels[0]?.id || '' };
   const videoRow = h('tr', { 'data-ai-video-routing': '' },
     h('td', null, h('b', null, '애니메이션 영상 생성'), h('div', { class: 'small muted' }, 'Animation Studio 기본 모델 · 장면별 변경 가능')),
-    h('td', null, h('span', null, 'muapi')),
-    h('td', null, h('select', { 'data-ai-video-model': '', 'aria-label': '애니메이션 기본 영상 모델', onchange: (e) => { videoPick.id = e.target.value; } },
+    h('td', { 'data-label': '제공자' }, h('span', null, 'muapi')),
+    h('td', { 'data-label': '모델' }, h('select', { 'data-ai-video-model': '', 'aria-label': '애니메이션 기본 영상 모델', onchange: (e) => { videoPick.id = e.target.value; } },
       videoModels.map((m) => h('option', { value: m.id, selected: m.id === videoPick.id }, (m.label || m.id) + ' · ' + m.id)))),
     h('td', null, h('button', { class: 'btn sm', type: 'button', 'data-ai-video-save': '', disabled: !videoModels.length, onclick: async () => {
       if (await call(() => api.put('/api/settings', { defaultModelId: videoPick.id }), '애니메이션 기본 모델을 저장했습니다')) redo();
@@ -43,15 +43,15 @@ function drawAi(ov) {
   const textProv = ov.textProviders;
   wrap.append(h('div', { class: 'card stack', style: 'gap:12px' },
     h('div', { class: 'card-head' }, h('h2', null, '작업별 AI 배정'), h('span', { class: 'small muted' }, '자동으로 다른 제공자로 바뀌지 않습니다. mock = 샘플 응답(요금 없음)')),
-    h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['작업', '제공자', '모델', ''].map((x) => h('th', null, x)))),
+    h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl tbl-stack', 'data-ai-routing-table': '' }, h('thead', null, h('tr', null, ['작업', '제공자', '모델', ''].map((x) => h('th', null, x)))),
       h('tbody', null, ov.routing.map((r) => {
         const f = { provider: r.provider, model: r.model };
         const dl = 'models-' + r.task;
         const prov = ov.providers.find((p) => p.id === f.provider);
         return h('tr', null,
           h('td', null, h('b', null, r.label), h('div', { class: 'small muted' }, TASK_HELP[r.task] || '')),
-          h('td', null, h('select', { 'aria-label': r.label + ' 제공자', onchange: (e) => (f.provider = e.target.value) }, textProv.filter((t) => r.task !== 'imageGeneration' || ['gemini', 'mock'].includes(t)).map((t) => h('option', { value: t, selected: t === f.provider }, t === 'mock' ? 'mock (샘플)' : t)))),
-          h('td', null, h('input', { type: 'text', list: dl, value: f.model, placeholder: '연결 테스트로 불러온 모델', 'aria-label': r.label + ' 모델', oninput: (e) => (f.model = e.target.value) }), h('datalist', { id: dl }, ov.providers.flatMap((p) => (p.models || []).map((m) => h('option', { value: m }))))),
+          h('td', { 'data-label': '제공자' }, h('select', { 'aria-label': r.label + ' 제공자', onchange: (e) => (f.provider = e.target.value) }, textProv.filter((t) => r.task !== 'imageGeneration' || ['gemini', 'mock'].includes(t)).map((t) => h('option', { value: t, selected: t === f.provider }, t === 'mock' ? 'mock (샘플)' : t)))),
+          h('td', { 'data-label': '모델' }, h('input', { type: 'text', list: dl, value: f.model, placeholder: '연결 테스트로 불러온 모델', 'aria-label': r.label + ' 모델', oninput: (e) => (f.model = e.target.value) }), h('datalist', { id: dl }, ov.providers.flatMap((p) => (p.models || []).map((m) => h('option', { value: m }))))),
           h('td', null, h('button', { class: 'btn sm', onclick: async () => { if (await call(() => api.put('/api/ai/routing/' + r.task, f), '저장했습니다')) reload(); } }, '저장')));
         void prov;
       }).concat(videoRow)))),

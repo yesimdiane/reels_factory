@@ -82,3 +82,16 @@ test('Settings → AI 연동 task table has the animation video row with the reg
     assert.equal(s.store.settings.get().defaultModelId, pick);
   });
 });
+
+test('phone width: the AI task table stacks into cards, the animation video row is visible and its controls are usable', { skip, timeout: 120000 }, async () => {
+  await withPage(async ({ page, base }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${base}/#/settings/ai`);
+    const row = page.locator('tr[data-ai-video-routing]');
+    await row.waitFor();
+    assert.match(await row.innerText(), /애니메이션 영상 생성/);
+    const w = await row.locator('select[data-ai-video-model]').evaluate((e) => e.getBoundingClientRect().width);
+    assert.ok(w > 220, 'model select is wide enough to read, was ' + w);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, 'no sideways scroll');
+  });
+});
