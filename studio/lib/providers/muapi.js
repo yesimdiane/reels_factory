@@ -159,7 +159,7 @@ function createMuapiProvider({
     async submit({ model, prompt, imageUrl, aspectRatio = '9:16', duration, negativePrompt, extra = {} }) {
       need();
       if (!model || !model.endpoint) throw new ProviderError('BAD_REQUEST', '모델 엔드포인트가 설정되지 않았습니다.');
-      if (String(model.endpoint).replace(/^\\/?(api\\/v1\\/)?/, '') === 'kling-master') throw new ProviderError('ENDPOINT_UNVERIFIED', 'Legacy kling-master endpoint is not confirmed in the current MuAPI model API documentation. Select the verified Kling 2.1 Standard image-to-video model in Settings before making a paid request.');
+      if (String(model.endpoint).replace(/^\/?(api\/v1\/)?/, '') === 'kling-master') throw new ProviderError('ENDPOINT_UNVERIFIED', 'Legacy kling-master endpoint is not confirmed in the current MuAPI model API documentation. Select the verified Kling 2.1 Standard image-to-video model in Settings before making a paid request.');
       const body = Object.assign({}, model.extraParams || {}, extra, {
         [model.promptField || 'prompt']: prompt,
         [model.imageField || 'image_url']: imageUrl,
