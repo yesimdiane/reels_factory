@@ -20,7 +20,7 @@ const cfg0 = () => loadConfig({ RF_STUDIO_DIR: fs.mkdtempSync(path.join(os.tmpdi
 const hasFfmpeg = (() => { try { return require('node:child_process').spawnSync(cfg0().ffmpeg.ffmpeg, ['-version']).status === 0; } catch { return false; } })();
 const skip = !pw ? 'playwright not installed' : !hasFfmpeg ? 'ffmpeg not installed' : false;
 
-test('storyboard: readiness → scene clip section → generate → preview → approve → readiness moves on (S1–S7+)', { skip, timeout: 240000 }, async () => {
+test('storyboard readiness → Animation Studio scene → generate → preview → approve → readiness moves on (S1–S7+)', { skip, timeout: 240000 }, async () => {
   const cfg = cfg0();
   const prov = createMockVideoProvider({ ffmpeg: cfg.ffmpeg.ffmpeg, pollsUntilDone: 1 });
   const s = createStudio({ cfg, provider: prov });
@@ -46,27 +46,28 @@ test('storyboard: readiness → scene clip section → generate → preview → 
     assert.equal(await page.locator('[data-ready-block]').count(), 0, 'no red errors');
     assert.ok(ids.length >= 7);
     const txt = await page.locator('[data-ready-pend="CLIP_NOT_GENERATED"]').innerText();
-    assert.match(txt, /영상 클립 생성 대기 — Storyboard에서 영상을 생성하거나 업로드하세요/); assert.match(txt, /S7/);
+    assert.match(txt, /영상 클립 생성 대기 — 애니메이션 스튜디오에서 영상을 생성하거나 업로드하세요/); assert.match(txt, /S7/);
     assert.doesNotMatch(await page.locator('[data-render-readiness]').innerText(), /Animation Studio/);
     const target = ids[2];
     await page.locator(`[data-ready-go="CLIP_NOT_GENERATED"][data-ready-scene="${target}"]`).click();
-    await page.waitForSelector(`[data-clips-panel="${target}"]`);
-    assert.equal(await page.locator(`[data-clips-panel="${target}"]`).isVisible(), true, 'the scene\'s clip section opened');
+    await page.waitForSelector(`[data-anim-workspace="${target}"]`);
+    assert.equal(await page.locator(`[data-anim-workspace="${target}"]`).isVisible(), true, 'the readiness link opens that scene in Animation Studio (video generation lives there)');
     // free estimate; nothing is generated yet
-    await page.locator(`[data-clip-estimate="${target}"]`).click();
-    await page.waitForFunction((sid) => /목업|예상 비용|캐시|추정치/.test(document.querySelector(`[data-clip-cost="${sid}"]`).innerText), target);
+    await page.locator(`[data-anim-estimate="${target}"]`).click();
+    await page.waitForFunction((sid) => /목업|예상 비용|캐시|추정치/.test(document.querySelector(`[data-anim-cost="${sid}"]`).innerText), target);
     assert.equal(prov.calls.submit, 0, 'estimating is free');
     // explicit confirmation → generation (mock) → preview
-    await page.locator(`[data-clip-generate="${target}"]`).click();
-    await page.getByRole('button', { name: '시작', exact: true }).click();
-    await page.waitForSelector(`[data-clip-card="${target}"][data-clip-status="pending_review"]`, { timeout: 60000 });
-    assert.equal(await page.locator(`[data-clip-card="${target}"] video`).count(), 1, 'the generated clip can be previewed');
+    await page.locator(`[data-anim-generate="${target}"]`).click();
+    await page.locator('[role=dialog]').getByRole('button', { name: /^시작/ }).click();
+    await page.waitForSelector(`[data-anim-scene="${target}"][data-anim-status="completed"]`, { timeout: 60000 });
+    assert.equal(await page.locator(`[data-anim-right="${target}"] video`).count(), 1, 'the generated clip can be previewed');
     assert.equal(s.store.episodes.get(ID).clips[target].approvedVersion, null, 'never auto-approved');
     assert.equal(prov.calls.submit, 1, 'exactly one generation, started by the click');
     // approve → readiness moves on
-    await page.locator(`[data-clip-card="${target}"] button:has-text("승인")`).first().click();
-    await page.waitForSelector(`[data-clip-card="${target}"][data-clip-status="approved"]`);
+    await page.locator(`[data-anim-approve="${target}"]`).click();
+    await page.waitForSelector(`[data-anim-scene="${target}"][data-anim-status="approved"]`);
     assert.equal(s.store.episodes.get(ID).clips[target].approvedVersion, 1);
+    await page.goto(`http://127.0.0.1:${app.address().port}/#/storyboard/${ID}`);
     await page.reload();
     await page.waitForSelector('[data-render-readiness]');
     const t2 = await page.locator('[data-ready-pend="CLIP_NOT_GENERATED"]').innerText();

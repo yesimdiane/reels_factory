@@ -147,7 +147,7 @@ function sceneCard(ep, sc, i, chars, go) {
   drawRoles();
   seedElements(sd);
   const redrawCamera = () => rerender();
-  { const u = uiState(); const k = `sb:${ep.id}:${sc.id}:look`; if (u.open[k] === undefined) u.open[k] = true; } // the structured image fields are open by default
+  for (const pk of ['look', 'charrefs']) { const u = uiState(); const k = `sb:${ep.id}:${sc.id}:${pk}`; if (u.open[k] === undefined) u.open[k] = true; } // the structured image fields are open by default
   const imageEditors = [
     panel(ep, sc, 'look', '환경 · 캐릭터 · 포즈 · 동작 · 감정', '', h('div', { class: 'stack', style: 'gap:10px' },
       h('div', { class: 'eyebrow' }, '환경'), lookFields(sd, sdDirty),
@@ -197,7 +197,7 @@ function sceneCard(ep, sc, i, chars, go) {
     panel(ep, sc, 'compose', '효과음 · 씬 합본 · 최종 승인', composeBadge(ep, sc), composePanelBody(ep, sc)),
     panel(ep, sc, 'advanced', '고급 설정', '', h('div', { class: 'stack', style: 'gap:8px' },
       h('div', { class: 'small' }, `장면 길이 ${sc.durationSec}초 (대본 스튜디오에서 수정 · 승인에 영향)`),
-      h('div', { class: 'small', 'data-dialogue-estimate': sc.id }, (() => { const t = (ep.derived.timing.scenes || []).find((x) => x.sceneId === sc.id); const a = t && t.actual; return a && a.complete ? `실측 대사 ${a.needSec.toFixed(1)}초` : '대사 길이: 오디오를 만들면 실측으로 표시됩니다'; })()),
+      h('div', { class: 'small', 'data-dialogue-estimate': sc.id }, (() => { const t = ((ep.derived.timing || {}).scenes || []).find((x) => x.sceneId === sc.id); const a = t && t.actual; return a && a.complete ? `실측 대사 ${a.needSec.toFixed(1)}초` : '대사 길이: 오디오를 만들면 실측으로 표시됩니다'; })()),
       h('div', { class: 'small muted' }, '0.5초 비트 타임라인은 ② 애니메이션 · 오디오 준비의 같은 편집기입니다. 장면 순서 변경과 시각 설명 수정은 대본 스튜디오에서 합니다.'))),
   ];
   const shownPanels = [imageSection, prepSection, brollSection, ...tail];

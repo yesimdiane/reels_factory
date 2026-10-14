@@ -6,7 +6,11 @@ import { goToScenePanel } from './scene-nav.js';
 
 const STAGE_KIND = { ready: 'done', done: 'done', pending: '', waiting: '', blocked: 'err' };
 const ranges = (ids) => ids.join(', ');
-const jump = (ep, a) => { if (a.view === 'storyboard') goToScenePanel(ep, a.sceneId, a.panel); else go(a.view, ep.id); };
+const jump = (ep, a) => {
+  if (a.view === 'storyboard') goToScenePanel(ep, a.sceneId, a.panel);
+  else if (a.view === 'animation' && a.sceneId) goToScenePanel(ep, a.sceneId, 'clips'); // opens that scene in Animation Studio
+  else go(a.view, ep.id);
+};
 // the whole notice is clickable (keyboard too), not only its button
 const clickable = (ep, a, attrs, ...kids) => h('div', Object.assign({}, attrs, a ? { role: 'button', tabindex: '0', style: (attrs.style || '') + ';cursor:pointer', title: (a.label || '이동') + ' — 클릭하면 해당 부분으로 이동합니다', onclick: (e) => { if (e.target.closest('button')) return; jump(ep, a); }, onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(ep, a); } } } : {}), ...kids);
 const goBtn = (ep, a, code, sceneId) => (a ? h('button', { class: 'btn sm ghost', type: 'button', 'data-ready-go': code, 'data-ready-scene': sceneId || '', onclick: () => jump(ep, a) }, a.label || '이동') : null);
