@@ -8,6 +8,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { spawnSync } = require('node:child_process');
 const { approveWithScenes } = require('./helpers/approve');
+const { approveAllAudio, approveAllScenes } = require('./helpers/scene-flow');
 const { loadConfig } = require('../renderer/lib/config');
 const { createStudio } = require('../studio/lib/studio');
 const { createMockVideoProvider } = require('../studio/lib/providers/mock');
@@ -26,6 +27,7 @@ function make({ env, failWhen } = {}) {
 }
 async function ready(s) {
   await approveWithScenes(s, 'EP01');
+  await approveAllAudio(s, 'EP01');
   await s.rebuildPrompts('EP01');
   await s.loadDemoReferences();
   await s.approveStoryboard('EP01');
@@ -132,6 +134,7 @@ async function throughVoiceAndClips(s) {
 test('approved B-roll is layered over its scene in the render (real FFmpeg); edits make the render stale; a missing image blocks', { skip: !hasFfmpeg }, async () => {
   const { s, cfg } = make();
   await throughVoiceAndClips(s);
+  await approveAllScenes(s, 'EP01');
   const plain = await (await s.renderer.render('EP01', { preview: true })).done;
   assert.equal(plain.cutsHash, '', 'no B-roll: the fingerprint is unchanged for older renders');
   // B-roll from an uploaded still image
@@ -139,6 +142,7 @@ test('approved B-roll is layered over its scene in the render (real FFmpeg); edi
   await s.sba.uploadBrollImage('EP01', b.id, realPng(cfg.ffmpeg.ffmpeg, 'red'), 'cut.png');
   await s.sba.setBrollStatus('EP01', b.id, 'approved');
   assert.equal(vs(s).broll.approved, 1);
+  await approveAllScenes(s, 'EP01');
   const withB = await (await s.renderer.render('EP01', { preview: true })).done;
   assert.ok(withB.cutsHash, 'the render records the B-roll in its fingerprint');
   const file = (v) => s.store.episodes.file('EP01', s.store.episodes.get('EP01').renders.find((r) => r.v === v).file);
@@ -162,6 +166,7 @@ test('approved B-roll is layered over its scene in the render (real FFmpeg); edi
 test('outputs persist and download with the episode id in the filename; the summary offers them', { skip: !hasFfmpeg }, async () => {
   const { s, cfg } = make();
   await throughVoiceAndClips(s);
+  await approveAllScenes(s, 'EP01');
   assert.equal(s.renderer.plan('EP01').canRender, true);
   const rec = await (await s.renderer.render('EP01', { preview: false })).done;
   const st = vs(s);

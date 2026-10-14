@@ -36,24 +36,52 @@ function identityLines(characterIds, lib) {
   }).filter(Boolean);
 }
 
-/** Problems in a prompt that would break the cast / sheet rules. Returns [{code,message}]. */
-function lintCast(text, scene, lib) {
-  const t = String(text || '');
-  const lower = t.toLowerCase();
+const esc = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const clausesOf = (text) => String(text || '').toLowerCase().split(/[.\n;!?]+|,\s*(?=(?:but|and|while|so)\b)/).map((x) => x.trim()).filter(Boolean);
+
+/**
+ * Is this clause an EXCLUSION of the character (e.g. "Keep Diane outside the frame", "without Diane", "Diane is not in this scene",
+ * "do not show Diane") or an identity-only mention — as opposed to a request to show them?
+ */
+function isExcludedMention(clause, name) {
+  const n = esc(name.toLowerCase());
+  const W = '(?:\\w+[\\s,\'-]+){0,4}';
+  return new RegExp(`\\b(?:no|not|never|without|exclude|excluding|except|avoid|omit|omitting|minus)\\s+${W}${n}\\b`).test(clause)
+    || new RegExp(`\\bkeep\\s+${n}\\b[^.]*\\b(?:out|outside|away|off)\\b`).test(clause)
+    || new RegExp(`\\b${n}\\b\\s+${W}(?:is|are|stays|remains|must stay|should stay|will stay)?\\s*(?:not|never)?\\s*(?:outside|out of|off[- ]?screen|absent|excluded|not (?:in|visible|present|shown|appear\\w*)|nowhere)`).test(clause)
+    || new RegExp(`\\b(?:do not|don't|never|must not|should not|shouldn't|cannot|can't)\\s+${W}(?:show|include|add|introduce|render|draw|depict|feature|bring|put)\\s+${W}${n}\\b`).test(clause)
+    || new RegExp(`\\b(?:leave|leaving)\\s+${n}\\s+out\\b`).test(clause)
+    || new RegExp(`\\b${n}\\b[^.]*\\b(?:identity|appearance)\\s+(?:reference|only)\\b`).test(clause)
+    || new RegExp(`\\b(?:identity|appearance)\\s+(?:reference|only)\\b[^.]*\\b${n}\\b`).test(clause);
+}
+const SHEET_TERMS = '(?:character sheet|reference sheet|turnaround|expression grid|collage|colou?r swatch(?:es)?)';
+/** A reference-sheet term inside a prohibition ("do not draw a character sheet", "no collage", "keep the sheet out of frame") is fine; inside an instruction it is not. */
+function isSheetProhibition(clause) {
+  return /\b(?:no|not|never|without|avoid|don't|do not|must not|should not|shouldn't|instead of|rather than|isn't|aren't)\b/.test(clause) || /\bkeep\b[^.]*\b(?:out|outside|away|off)\b/.test(clause) || /\b(?:forbidden|prohibited|banned)\b/.test(clause);
+}
+
+/**
+ * Problems in a prompt that would break the cast / sheet rules. Returns [{code,message}].
+ *   text      : the prompt body (positive sections)
+ *   opts.negative : the negative prompt / "negative additions". Everything in it is a prohibition: characters and sheet words listed there are not requests.
+ * Exclusions ("Keep Diane outside the frame"), identity-only mentions and prohibitions never count as violations; a character who is not in the
+ * scene but is described as present, a duplicated character, and an instruction to draw a reference sheet / collage do.
+ */
+function lintCast(text, scene, lib, opts = {}) {
   const sel = new Set(scene.characters || []);
   const out = [];
+  const body = String(text || '').replace(/important character reference rule:[\s\S]*?example comic panels on the sheet are not scene content\./i, '');
+  const clauses = clausesOf(body.split('\n').filter((l) => !/^\s*cast:/i.test(l)).join('\n'));
   (lib.characters || []).forEach((c) => {
-    const mentioned = new RegExp('\\b' + c.name.toLowerCase() + '\\b').test(lower);
-    // Only flag when the unselected character is described as present; the CAST line itself names them as absent.
-    const body = lower.split('\n').filter((l) => !/^cast:/.test(l) && !/do not (introduce|add)|must not appear|never show/.test(l)).join('\n');
-    if (!sel.has(c.id) && new RegExp('\\b' + c.name.toLowerCase() + '\\b').test(body)) out.push({ code: 'UNSELECTED_CHARACTER', message: `${c.name}는 이 장면에서 선택되지 않았는데 프롬프트에 등장합니다.` });
-    if (new RegExp('(two|2|twin|duplicate|another|second)\\s+' + c.name.toLowerCase() + '\\b').test(lower)) out.push({ code: 'DUPLICATE_CHARACTER', message: `${c.name}가 두 명 이상 등장하도록 쓰여 있습니다.` });
-    void mentioned;
+    const n = esc(c.name.toLowerCase());
+    const named = new RegExp(`\\b${n}\\b`);
+    if (!sel.has(c.id) && clauses.some((cl) => named.test(cl) && !isExcludedMention(cl, c.name))) out.push({ code: 'UNSELECTED_CHARACTER', message: `${c.name}는 이 장면에서 선택되지 않았는데 프롬프트에 등장합니다.` });
+    if (clauses.some((cl) => new RegExp(`(two|2|twin|duplicate|another|second)\\s+${n}\\b`).test(cl) && !/\b(?:no|not|never|without|avoid|don't|do not)\b/.test(cl))) out.push({ code: 'DUPLICATE_CHARACTER', message: `${c.name}가 두 명 이상 등장하도록 쓰여 있습니다.` });
   });
-  if (/(character sheet|reference sheet|turnaround|expression grid|collage|color swatch|colour swatch)/.test(lower.replace(/important character reference rule:[\s\S]*?example comic panels on the sheet are not scene content\./i, '').replace(/^.*(do not|never|no)\b.*$/gim, ''))) {
+  if (clauses.some((cl) => new RegExp(SHEET_TERMS).test(cl) && !isSheetProhibition(cl))) {
     out.push({ code: 'SHEET_IN_SCENE', message: '레퍼런스 시트·콜라주·표정 그리드를 장면에 그리라는 표현이 있습니다.' });
   }
   return out;
 }
 
-module.exports = { SHEET_RULE, IDENTITY, castDirective, identityLines, lintCast };
+module.exports = { SHEET_RULE, IDENTITY, castDirective, identityLines, lintCast, isExcludedMention };

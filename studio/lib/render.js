@@ -91,7 +91,28 @@ async function buildAudioTrack(ffmpeg, items, total, outFile, cwd) {
   await run(ffmpeg, args, { cwd });
 }
 
-function createRenderService({ store, cfg, voice, log = () => {}, broll = { approved: () => [], file: () => '', problem: () => '' } }) {
+/**
+ * Video filter chains of ONE scene: the approved clip scaled/padded/trimmed to the scene length, the insert (close-up) cuts cropped from
+ * the same clip, then the approved B-roll stills laid over their time windows. Scene length, dialogue and audio timing never change.
+ * Shared by the final render and the per-scene composite, so what is approved per scene is what gets rendered.
+ */
+function sceneVideoChains({ i, clipIn, dur, clipDurationSec, inserts, overlays, overlayIn, W, H, fps }) {
+  const chains = [];
+  const pad = Math.max(0, dur - clipDurationSec) + 0.05;
+  const baseLabel = inserts.length ? `b${i}` : `v${i}`;
+  chains.push(`[${clipIn}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${fps},setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=${pad.toFixed(3)},trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS[${baseLabel}]`);
+  if (inserts.length) chains.push(...sceneInsertChains({ base: baseLabel, out: `v${i}`, inserts, W, H, fps, dur }).chains);
+  let from = `v${i}`;
+  overlays.forEach((o, k) => {
+    const to = `v${i}o${k}`;
+    chains.push(`[${overlayIn(o)}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,format=yuv420p,fps=${fps},trim=duration=${o.dur.toFixed(3)},setpts=PTS-STARTPTS+${o.at.toFixed(3)}/TB[bro${i}_${k}]`);
+    chains.push(`[${from}][bro${i}_${k}]overlay=enable='between(t,${o.at.toFixed(3)},${(o.at + o.dur).toFixed(3)})':eof_action=pass:format=auto[${to}]`);
+    from = to;
+  });
+  return { chains, label: from };
+}
+
+function createRenderService({ store, cfg, voice, log = () => {}, broll = { approved: () => [], file: () => '', problem: () => '' }, sceneGate = null }) {
   const active = new Set();
 
   function gather(ep) {
@@ -101,7 +122,7 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
     (ep.scenes || []).forEach((s) => {
       const c = ep.clips[s.id];
       const v = c && c.approvedVersion && c.versions.find((x) => x.v === c.approvedVersion);
-      if (!v) return problems.push({ code: 'CLIP_NOT_APPROVED', message: `${s.id}: 승인된 클립이 없습니다.`, recovery: 'Animation Studio에서 클립을 승인하세요.' });
+      if (!v) return problems.push({ code: 'CLIP_NOT_APPROVED', message: `${s.id}: 승인된 클립이 없습니다.`, recovery: 'Storyboard의 장면별 "영상 클립 생성 · 승인"에서 클립을 생성·업로드·승인하세요.' });
       const f = store.episodes.file(ep.id, v.file);
       if (!fs.existsSync(f)) return problems.push({ code: 'CLIP_MISSING', message: `${s.id}: 클립 파일이 없습니다.`, recovery: '클립을 다시 생성하거나 업로드하세요.' });
       if (sha256File(f) !== v.sha256) return problems.push({ code: 'CLIP_CHECKSUM', message: `${s.id}: 클립 파일이 승인된 파일과 다릅니다 (체크섬 불일치).`, recovery: '클립을 다시 승인하세요.' });
@@ -118,9 +139,11 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
     const audio = {};
     (ep.lines || []).forEach((l) => {
       const a = voice.lineAudio(ep, l);
-      if (!a.valid) problems.push({ code: 'NO_AUDIO', message: `대사 ${l.id}: 현재 대본에 맞는 음성이 없습니다.`, recovery: 'Voice Studio에서 음성을 생성하세요.' });
+      if (!a.valid) problems.push({ code: 'NO_AUDIO', sceneId: l.sceneId, message: `대사 ${l.id}: 현재 대본에 맞는 음성이 없습니다.`, recovery: 'Voice Studio에서 음성을 생성하세요.' });
       else audio[l.id] = a;
     });
+    // every scene needs its own final approval (clip + audio + cuts + sound effects) — see sceneflow.js
+    if (sceneGate) sceneGate.renderProblems(ep).forEach((p) => problems.push(p));
     return { problems, clips, audio, overlays };
   }
 
@@ -155,7 +178,9 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
       const items = tl.lines.map((l) => ({ file: g.audio[l.id].file, start: l.start, gainDb: 0 }));
       (ep.sfx || []).forEach((s) => {
         const f = store.episodes.file(epId, s.file);
-        if (fs.existsSync(f) && s.atSec < tl.total) items.push({ file: f, start: s.atSec, gainDb: Number(s.gainDb || -6) });
+        const sc0 = s.sceneId && tl.scenes.find((x) => x.id === s.sceneId);
+        const at = s.sceneId ? (sc0 ? sc0.start + Number(s.offsetSec || 0) : -1) : Number(s.atSec || 0); // scene-bound effects follow their scene
+        if (fs.existsSync(f) && at >= 0 && at < tl.total) items.push({ file: f, start: at, gainDb: Number(s.gainDb || -6) });
       });
       await buildAudioTrack(cfg.ffmpeg.ffmpeg, items, tl.total, path.join(work, 'audio.wav'), work);
 
@@ -170,23 +195,11 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
       tl.scenes.forEach((s, i) => {
         const last = i === tl.scenes.length - 1;
         const dur = s.duration + (last ? tl.cta.duration : 0);
-        const pad = Math.max(0, dur - g.clips[s.id].durationSec) + 0.05;
         const sc = (ep.scenes || []).find((x) => x.id === s.id) || {};
-        const inserts = sc.inserts || [];
-        const baseLabel = inserts.length ? `b${i}` : `v${i}`;
-        chains.push(`[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${fps},setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=${pad.toFixed(3)},trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS[${baseLabel}]`);
-        // insert shots (close-ups) are cropped from the SAME clip at the SAME timestamps: scene length, dialogue and audio timing do not change
-        if (inserts.length) chains.push(...sceneInsertChains({ base: baseLabel, out: `v${i}`, inserts, W, H, fps, dur }).chains);
-        // approved B-roll: a still image laid over this scene for its time window (the scene length, dialogue and audio never change)
-        overlays.filter((o) => o.sceneId === s.id).forEach((o) => {
-          const k = overlays.indexOf(o);
-          const inIdx = tl.scenes.length + 1 + k;
-          const from = sceneOut[i] || `v${i}`;
-          const to = `v${i}o${k}`;
-          chains.push(`[${inIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,format=yuv420p,fps=${fps},trim=duration=${o.dur.toFixed(3)},setpts=PTS-STARTPTS+${o.at.toFixed(3)}/TB[bro${k}]`);
-          chains.push(`[${from}][bro${k}]overlay=enable='between(t,${o.at.toFixed(3)},${(o.at + o.dur).toFixed(3)})':eof_action=pass:format=auto[${to}]`);
-          sceneOut[i] = to;
-        });
+        const mine = overlays.filter((o) => o.sceneId === s.id);
+        const r = sceneVideoChains({ i, clipIn: i, dur, clipDurationSec: g.clips[s.id].durationSec, inserts: sc.inserts || [], overlays: mine, overlayIn: (o) => tl.scenes.length + 1 + overlays.indexOf(o), W, H, fps });
+        chains.push(...r.chains);
+        sceneOut[i] = r.label;
       });
       const fontsArg = cfg.fontsDir ? `:fontsdir=${cfg.fontsDir.replace(/([:\\'])/g, '\\$1')}` : '';
       chains.push(tl.scenes.map((_, i) => `[${sceneOut[i] || 'v' + i}]`).join('') + `concat=n=${tl.scenes.length}:v=1:a=0[vc]`, `[vc]ass=subs.ass${fontsArg}[vout]`);
@@ -210,7 +223,7 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
         const rel = path.join('renders', 'v' + n + (preview ? '-preview' : '') + '.mp4');
         fs.mkdirSync(path.dirname(store.episodes.file(epId, rel)), { recursive: true });
         fs.copyFileSync(out, store.episodes.file(epId, rel));
-        const r = { v: n, file: rel, sha256: hash, size: fs.statSync(out).size, durationSec: Math.round(info.duration * 100) / 100, width: W, height: H, preview: !!preview, scriptHash: scriptFingerprint(e), cutsHash: cutsFingerprint(e), clipRefs: Object.fromEntries(Object.entries(g.clips).map(([k, c]) => [k, { v: c.v, sha256: c.sha256 }])), hasMockClips: Object.values(g.clips).some((c) => c.mock), mockVoice: Object.values(g.audio).some((x) => x.mock), warnings: tl.warnings.map((w) => w.message), font: fontName, createdAt: nowIso(), by };
+        const r = { v: n, file: rel, sha256: hash, size: fs.statSync(out).size, durationSec: Math.round(info.duration * 100) / 100, width: W, height: H, preview: !!preview, scriptHash: scriptFingerprint(e), cutsHash: cutsFingerprint(e), clipRefs: Object.fromEntries(Object.entries(g.clips).map(([k, c]) => [k, { v: c.v, sha256: c.sha256 }])), sceneHashes: sceneGate ? sceneGate.hashes(e) : {}, hasMockClips: Object.values(g.clips).some((c) => c.mock), mockVoice: Object.values(g.audio).some((x) => x.mock), warnings: tl.warnings.map((w) => w.message), font: fontName, createdAt: nowIso(), by };
         e.renders.push(r);
         e.renderJob = { status: 'done', v: n, finishedAt: nowIso() };
         return r;
@@ -252,6 +265,11 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
       if (r.preview) throw new StudioError('PREVIEW', '미리보기 렌더는 최종 승인할 수 없습니다. 최종 렌더를 만드세요.', { status: 409 });
       if (!isScriptApproved(ep)) throw new StudioError('SCRIPT_NOT_APPROVED', '대본 승인이 유효하지 않습니다.', { status: 409 });
       if (r.scriptHash !== scriptFingerprint(ep)) throw new StudioError('STALE', '이 렌더는 현재 대본과 다릅니다. 다시 렌더하세요.', { status: 409 });
+      if (sceneGate && r.sceneHashes) {
+        const now = sceneGate.hashes(ep);
+        const bad = Object.keys(now).filter((k) => r.sceneHashes[k] !== now[k]);
+        if (bad.length) throw new StudioError('STALE', `이 렌더 이후 장면(${bad.join(', ')})이 바뀌었습니다. 다시 렌더하세요.`, { status: 409 });
+      }
       const f = store.episodes.file(epId, r.file);
       if (!fs.existsSync(f) || sha256File(f) !== r.sha256) throw new StudioError('CHECKSUM', '렌더 파일이 기록된 체크섬과 다릅니다.', { status: 409 });
       ep.approvals.final = { v: r.v, sha256: r.sha256, by, at: nowIso() };
@@ -270,4 +288,4 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
   return { plan, render, approveFinal, revokeFinal };
 }
 
-module.exports = { createRenderService, buildDialogueAss, wrap, clean };
+module.exports = { createRenderService, buildDialogueAss, buildAudioTrack, sceneVideoChains, wrap, clean };

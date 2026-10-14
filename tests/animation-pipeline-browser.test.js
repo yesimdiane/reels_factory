@@ -30,8 +30,9 @@ test('storyboard: readiness card + scene-specific animation + 애니메이션 �
     await page.goto(`http://127.0.0.1:${app.address().port}/#/storyboard/${id}`);
     await page.waitForSelector('[data-render-readiness]');
     const card = await page.locator('[data-render-readiness]').innerText();
-    assert.match(card, /렌더링 준비 상태/); assert.match(card, /영상 생성 막힘/);
-    assert.ok(await page.locator('[data-ready-block="CLIP_NOT_APPROVED"]').count() >= 1, 'the render blocker is named');
+    assert.match(card, /렌더링 준비 상태/); assert.match(card, /영상 생성/);
+    assert.ok(await page.locator('[data-ready-pend="CLIP_NOT_GENERATED"]').count() >= 1, 'missing clips are a neutral next step');
+    assert.equal(await page.locator('[data-ready-block="CLIP_NOT_GENERATED"]').count(), 0, 'and not a red error');
     await page.locator(`[data-sb-tab="${sid}"]`).click();
     await page.locator('[data-panel="motion"] summary').click();
     const rows = page.locator('[data-motion-beats] [data-beat]');

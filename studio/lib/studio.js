@@ -27,6 +27,8 @@ const { createStartImages } = require('./startimages');
 const { createCharRefs } = require('./charrefs');
 const { createBrollImages } = require('./brollimages');
 const { createAnimPlan } = require('./animplan');
+const approvalsMod = require('./approvals');
+const { createAiDiagnostics } = require('./aidiag');
 const { createRenderReadiness } = require('./renderready');
 const { createProjects } = require('./projects');
 const { createTranslator } = require('./translate');
@@ -37,11 +39,13 @@ const { createIntegrations } = require('./integrations');
 const { createVideoProvider } = require('./providers');
 const { createGenerationService } = require('./generation');
 const { createVoiceService } = require('./voice');
+const { createSfx } = require('./sfx');
+const { createSceneFlow } = require('./sceneflow');
 const { createVoiceCatalog } = require('./voicecatalog');
 const { createRenderService } = require('./render');
 const { createPromptService } = require('./promptgen');
 const { createPublishingService, checklist: publishChecklist, validate: validatePublishing } = require('./publishing');
-const { dialogueTiming, checkTitleKo, sceneTitle, validateScript, pipeline, isScriptApproved, isStoryboardApproved, scriptFingerprint, storyboardFingerprint, totalPlannedSec } = require('./episode');
+const { dialogueTiming, checkTitleKo, sceneTitle, validateScript, pipeline, isScriptApproved, isStoryboardApproved, storyboardApprovalStatus, scriptFingerprint, storyboardFingerprint, totalPlannedSec } = require('./episode');
 const { lintPrompt } = require('./prompts');
 const { lintCast, SHEET_RULE } = require('./charrules');
 const { clipSecFor, modelById, limitFor, spentUsd } = require('./budget');
@@ -87,8 +91,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load(), products });
   const brollImages = createBrollImages({ store, products, router, charRefs, sba, lib: () => store.characters.load() });
   const animplan = createAnimPlan({ store, router, sba, charRefs, lib: () => store.characters.load() });
-  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs });
-  const promptSvc = createPromptService({
+  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs, audioGate: (ep, sid) => sceneFlow.audioOk(ep, sid) });
+  const aiDiagnostics = createAiDiagnostics({ store });
+  const promptSvc = createPromptService({ diagnostics: aiDiagnostics,
     store, cfg, geminiFactory, log,
     available: () => router.routeFor('storyboardPrompts').provider !== 'mock' && !!keys.get(router.routeFor('storyboardPrompts').provider),
     composeExtra: () => { const c = prompts.compose('storyboard', {}); return { text: c.text, versions: c.versions }; },
@@ -103,7 +108,10 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   runtime.setGoogleReady(() => voiceCatalog.googleReady());
   const voice = createVoiceService({ store, cfg, fetchFn, speechProvider, runtime, voices: voiceCatalog });
   const renderReadiness = createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer: { plan: (id) => renderer.plan(id) }, providerMode: () => video.mode, getModel: () => modelById(store.models(), store.settings.get().defaultModelId) });
-  const renderer = createRenderService({ store, cfg, voice, log, broll: { approved: (ep) => sba.approvedBroll(ep), file: (ep, b) => sba.brollFile(ep, b), problem: (ep, b) => sba.assetHealth(ep, b).problem } });
+  const brollApi = { approved: (ep) => sba.approvedBroll(ep), file: (ep, b) => sba.brollFile(ep, b), problem: (ep, b) => sba.assetHealth(ep, b).problem };
+  const sceneFlow = createSceneFlow({ store, cfg, voice, broll: brollApi, log });
+  const sfx = createSfx({ store, cfg, fetchFn, heygenKey: () => runtime.heygenKey(), log });
+  const renderer = createRenderService({ store, cfg, voice, log, broll: brollApi, sceneGate: { renderProblems: (ep) => sceneFlow.renderProblems(ep), hashes: (ep) => sceneFlow.hashes(ep) } });
   const publishing = createPublishingService({ store });
   store.episodes.seedDemo();
   // Projects / scene approvals / Image Development hand-off (no AI or video provider is wired in: nothing here can spend money).
@@ -258,6 +266,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         scriptApproved: isScriptApproved(ep),
         scriptChangedSinceApproval: !!(ep.approvals.script && !isScriptApproved(ep)),
         storyboardApproved: isStoryboardApproved(ep),
+        storyboardApproval: (({ everApproved, legacy, scenes, reasons, changedScenes }) => ({ everApproved, legacy, scenes, reasons, changedScenes }))(storyboardApprovalStatus(ep)),
         storyboardChangedSinceApproval: !!(ep.approvals.storyboard && !isStoryboardApproved(ep)),
         validation,
         project: { id: ep.projectId || '', name: (projects.ensureProject(ep) || {}).name || '' },
@@ -294,6 +303,15 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       formula: formulaView(ep),
       renders: ep.renders.map((r) => Object.assign({}, r, { url: `/media/render/${id}/${r.v}`, current: !!(ep.approvals.final && ep.approvals.final.v === r.v) })),
       sfx: ep.sfx,
+      sceneFlow: {
+        scenes: Object.fromEntries((ep.scenes || []).map((sc) => {
+          const au = sceneFlow.audioState(ep, sc.id);
+          au.lines = au.lines.map((l) => Object.assign(l, { url: l.valid ? `/media/audio/${id}/${l.id}` : '' }));
+          return [sc.id, { audio: au, final: sceneFlow.sceneState(ep, sc.id) }];
+        })),
+        builtinSfx: sfx.BUILTIN,
+        heygenConnected: !!runtime.heygenKey(),
+      },
       timeline: used,
     });
     view.derived.header = episodeHeader(ep, view.derived);
@@ -1161,9 +1179,16 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       if (missing.length) throw new StudioError('NO_PROMPT', `프롬프트가 없는 장면: ${missing.map((s) => s.id).join(', ')}`, { recovery: '"프롬프트 만들기"를 누르세요.', status: 409 });
       const bad = ep.scenes.filter((s) => lintPrompt(ep.prompts[s.id].video, ep).length);
       if (bad.length) throw new StudioError('PRODUCT_CLAIM', `확인되지 않은 제품 주장이 있는 장면: ${bad.map((s) => s.id).join(', ')}`, { status: 409 });
-      ep.approvals.storyboard = { hash: storyboardFingerprint(ep), by, at: nowIso() };
+      ep.approvals.storyboard = approvalsMod.makeRecord(ep, by, nowIso());
     });
     store.episodes.audit(id, 'storyboard.approved', { by });
+    return episodeView(id);
+  }
+
+  /** "승인 취소": the storyboard goes back to unapproved. Nothing is deleted (prompts, images, clips stay); clip approvals stay as they were. */
+  async function revokeStoryboard(id, by = 'operator') {
+    await store.episodes.update(id, (ep) => { ep.approvals.storyboard = null; });
+    store.episodes.audit(id, 'storyboard.revoked', { by });
     return episodeView(id);
   }
 
@@ -1287,6 +1312,16 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       if (!au || !au.valid) throw new StudioError('NOT_FOUND', '음성이 없습니다.', { status: 404 });
       return au.file;
     }
+    if (kind === 'composite') {
+      const st = sceneFlow.sceneState(ep, b);
+      if (!st.composite) throw new StudioError('NOT_FOUND', '이 장면의 합본이 없습니다.', { status: 404 });
+      return store.episodes.file(a, st.composite.file);
+    }
+    if (kind === 'sfx') {
+      const x = (ep.sfx || []).find((y) => y.id === b);
+      if (!x) throw new StudioError('NOT_FOUND', '효과음을 찾을 수 없습니다.', { status: 404 });
+      return store.episodes.file(a, x.file);
+    }
     if (kind === 'broll') {
       const bi = (ep.broll || []).find((x) => x.id === b && x.imageRef && x.status !== 'removed');
       const h = bi ? sba.assetHealth(ep, bi) : null;
@@ -1305,9 +1340,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
 
   return {
-    exportName, cfg, characterView, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    exportName, sceneFlow, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, revokeStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

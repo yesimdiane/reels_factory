@@ -100,7 +100,7 @@ function schedulePoll() {
   clearTimeout(poll);
   const ep = state.episode;
   const busy = ep && (ep.derived.jobsRunning || (ep.derived.render.job && ep.derived.render.job.status === 'running'));
-  if (busy && ['animation', 'voice', 'render', 'review', 'overview'].includes(state.view)) {
+  if (busy && ['animation', 'voice', 'render', 'review', 'overview', 'storyboard'].includes(state.view)) {
     poll = setTimeout(async () => {
       try {
         const activeEl = document.activeElement;

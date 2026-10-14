@@ -5,6 +5,7 @@
 // hand-off, episode / scene duplication and reusable scene templates.
 // It never calls an AI or video provider: nothing here can spend money.
 'use strict';
+const approvalsMod = require('./approvals');
 const fs = require('node:fs');
 const path = require('node:path');
 const { StudioError, nowIso, sha256, canonical, readJson, writeJsonAtomic } = require('./util');
@@ -75,7 +76,10 @@ function createProjects({ store, episodeIds, lib, endings, products, log = () =>
     const done = [];
     store.episodes.list().forEach((e) => {
       const ep = clone(e);
-      const changed = SA.migrateSceneApprovals(ep, lib());
+      let changed = SA.migrateSceneApprovals(ep, lib());
+      // storyboard approvals made before the per-scene record: still valid → upgraded in place (same approver/time), nothing else changes
+      const sb = ep.approvals && ep.approvals.storyboard;
+      if (sb && sb.v !== 2 && approvalsMod.status(ep, scriptFingerprint).approved) { ep.approvals.storyboard = Object.assign(approvalsMod.makeRecord(ep, sb.by, sb.at), { upgradedFrom: 'v1' }); changed = true; }
       const needsProject = !e.projectId;
       if (!changed && !needsProject) return;
       const file = store.episodes.file(e.id, 'episode.json');

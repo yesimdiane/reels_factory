@@ -5,9 +5,11 @@
 const BASE = 'https://generativelanguage.googleapis.com/v1beta/models/';
 
 class GeminiError extends Error {
-  constructor(message) {
+  /** kind: 'network' | 'http' | 'malformed' (unreadable/empty/truncated JSON) · finishReason when the API reported one */
+  constructor(message, extra = {}) {
     super(message);
     this.name = 'GeminiError';
+    Object.assign(this, extra);
   }
 }
 
@@ -34,7 +36,7 @@ function createGeminiClient({ apiKey, model, fetchImpl = fetch, timeoutMs = 1200
           signal: ctl.signal,
         });
       } catch (e) {
-        throw new GeminiError('Gemini API에 연결하지 못했습니다: ' + e.message);
+        throw new GeminiError('Gemini API에 연결하지 못했습니다: ' + e.message, { kind: 'network' });
       } finally {
         clearTimeout(timer);
       }
@@ -44,16 +46,18 @@ function createGeminiClient({ apiKey, model, fetchImpl = fetch, timeoutMs = 1200
         try {
           detail = JSON.parse(text).error.message;
         } catch {}
-        throw new GeminiError(`Gemini API 오류 (HTTP ${res.status}): ${String(detail).slice(0, 300)}`);
+        throw new GeminiError(`Gemini API 오류 (HTTP ${res.status}): ${String(detail).slice(0, 300)}`, { kind: 'http', status: res.status });
       }
       let out;
+      let finishReason = '';
       try {
         const j = JSON.parse(text);
         const c = (j.candidates || [])[0];
-        if (!c || !c.content || !c.content.parts || !c.content.parts[0]) throw new Error('빈 응답' + (c && c.finishReason ? ' (' + c.finishReason + ')' : ''));
+        finishReason = (c && c.finishReason) || '';
+        if (!c || !c.content || !c.content.parts || !c.content.parts[0]) throw new Error('빈 응답' + (finishReason ? ' (' + finishReason + ')' : ''));
         out = JSON.parse(c.content.parts.map((p) => p.text || '').join(''));
       } catch (e) {
-        throw new GeminiError('Gemini 응답을 읽을 수 없습니다: ' + e.message);
+        throw new GeminiError('Gemini 응답을 읽을 수 없습니다: ' + e.message, { kind: 'malformed', finishReason, truncated: finishReason === 'MAX_TOKENS' });
       }
       return out;
     },

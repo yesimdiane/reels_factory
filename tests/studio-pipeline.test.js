@@ -1,6 +1,7 @@
 // Studio V2: gates, cost controls, caching, review/checksum, voice rules, render and publishing — all in MOCK mode.
 'use strict';
 const { approveWithScenes } = require('./helpers/approve');
+const { approveAllAudio, approveAllScenes } = require('./helpers/scene-flow');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -20,6 +21,7 @@ function make({ env, provider } = {}) {
 }
 async function readyForGeneration(s) {
   await approveWithScenes(s, 'EP01');
+  await approveAllAudio(s, 'EP01');
   await s.rebuildPrompts('EP01');
   await s.loadDemoReferences();
   await s.approveStoryboard('EP01');
@@ -53,6 +55,7 @@ test('seed: Episode 01 matches the brief and characters follow the rules', () =>
 test('script validation: Diane never says 오빠; unverified product claims are rejected; edits revoke approval', async () => {
   const { s } = make();
   await approveWithScenes(s, 'EP01');
+  await approveAllAudio(s, 'EP01');
   assert.equal(s.episodeView('EP01').derived.scriptApproved, true);
   const lines = s.episodeView('EP01').lines.map((l) => ({ ...l }));
   lines[0].ko = '오빠 이것 봐!';
@@ -213,15 +216,18 @@ test('end to end in mock mode: voices cached per character, render, final approv
   assert.equal(again.billableChars, 0);
   const dirs = fs.readdirSync(path.join(cfg.studioDir, 'cache', 'voice'));
   assert.ok(dirs.includes('jack') && dirs.includes('diane'), 'separate cache per character: ' + dirs);
+  await approveAllScenes(s, 'EP01');
   const plan = s.renderer.plan('EP01');
   assert.ok(plan.canRender, JSON.stringify(plan.problems));
   assert.ok(plan.timeline.total > 30);
+  await approveAllScenes(s, 'EP01');
   const rec = await (await s.renderer.render('EP01', { preview: true })).done;
   assert.equal(rec.width, 540);
   assert.equal(rec.height, 960);
   await assert.rejects(s.publishing.approve('EP01'), (e) => e.code === 'FINAL_NOT_APPROVED');
   await s.renderer.approveFinal('EP01', rec.v).catch((e) => assert.ok(e.code)); // previews cannot be approved as final
   assert.equal(s.episodeView('EP01').approvals.final, null, 'a preview render can not be the approved final');
+  await approveAllScenes(s, 'EP01');
   const fin = await (await s.renderer.render('EP01', { preview: false })).done;
   assert.equal(fin.v, 2, 'renders are new versions, never overwrites');
   assert.equal(fin.height, 1920);

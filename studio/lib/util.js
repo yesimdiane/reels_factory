@@ -54,6 +54,7 @@ class StudioError extends Error {
     this.status = extra.status || 400;
     this.recovery = extra.recovery || '';
     this.details = extra.details;
+    if (extra.correlationId) this.correlationId = extra.correlationId;
   }
 }
 
