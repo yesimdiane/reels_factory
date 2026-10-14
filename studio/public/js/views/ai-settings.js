@@ -26,6 +26,19 @@ function drawAi(ov) {
 
   ov.providers.forEach((p) => wrap.append(providerCard(p, ov, reload)));
 
+  // MuAPI video belongs in the same task allocation table, not a separate card below it.
+  const videoCfg = state.summary || {};
+  const videoModels = videoCfg.models || [];
+  const videoPick = { id: videoCfg.settings?.defaultModelId || videoModels[0]?.id || '' };
+  const videoRow = h('tr', { 'data-ai-video-routing': '' },
+    h('td', null, h('b', null, '애니메이션 영상 생성'), h('div', { class: 'small muted' }, 'Animation Studio 기본 모델 · 장면별 변경 가능')),
+    h('td', null, h('span', null, 'muapi')),
+    h('td', null, h('select', { 'data-ai-video-model': '', 'aria-label': '애니메이션 기본 영상 모델', onchange: (e) => { videoPick.id = e.target.value; } },
+      videoModels.map((m) => h('option', { value: m.id, selected: m.id === videoPick.id }, (m.label || m.id) + ' · ' + m.id)))),
+    h('td', null, h('button', { class: 'btn sm', type: 'button', 'data-ai-video-save': '', disabled: !videoModels.length, onclick: async () => {
+      if (await call(() => api.put('/api/settings', { defaultModelId: videoPick.id }), '애니메이션 기본 모델을 저장했습니다')) redo();
+    } }, '저장')));
+
   // ---- routing ----
   const textProv = ov.textProviders;
   wrap.append(h('div', { class: 'card stack', style: 'gap:12px' },
@@ -41,28 +54,8 @@ function drawAi(ov) {
           h('td', null, h('input', { type: 'text', list: dl, value: f.model, placeholder: '연결 테스트로 불러온 모델', 'aria-label': r.label + ' 모델', oninput: (e) => (f.model = e.target.value) }), h('datalist', { id: dl }, ov.providers.flatMap((p) => (p.models || []).map((m) => h('option', { value: m }))))),
           h('td', null, h('button', { class: 'btn sm', onclick: async () => { if (await call(() => api.put('/api/ai/routing/' + r.task, f), '저장했습니다')) reload(); } }, '저장')));
         void prov;
-      })))),
+      }).concat(videoRow))))),
     h('p', { class: 'small muted', style: 'margin:0' }, '모델 ID는 하드코딩하지 않습니다. 각 제공자의 "연결 테스트"가 계정의 실제 모델 목록을 불러오고, 목록에 없는 모델은 저장되지 않습니다.')));
-
-  // Video generation is a MuAPI task, not a text-model routing task.
-  // Reuse the existing registered video-model catalog and persisted defaultModelId.
-  wrap.append((() => {
-    const cfg = state.summary;
-    const videoModels = cfg.models || [];
-    const current = cfg.settings?.defaultModelId || '';
-    const pick = { id: current };
-    return h('div', { class: 'card stack', style: 'gap:10px', 'data-ai-video-routing': '' },
-      h('div', { class: 'card-head' }, h('h2', null, '애니메이션 영상 생성 · MuAPI'),
-        h('span', { class: 'small muted' }, 'Animation Studio 기본 모델 · 장면별 선택 가능')),
-      h('div', { class: 'row', style: 'gap:10px;align-items:end;flex-wrap:wrap' },
-        h('label', { class: 'field', style: 'flex:1;min-width:220px' }, h('span', { class: 'small' }, '기본 영상 모델'),
-          h('select', { 'data-ai-video-model': '', onchange: (e) => { pick.id = e.target.value; } },
-            videoModels.map((m) => h('option', { value: m.id, selected: m.id === pick.id }, (m.label || m.id) + ' · ' + m.id)))),
-        h('button', { class: 'btn sm', type: 'button', 'data-ai-video-save': '', disabled: !videoModels.length, onclick: async () => {
-          if (await call(() => api.put('/api/settings', { defaultModelId: pick.id }), '애니메이션 기본 모델을 저장했습니다')) redo();
-        } }, '저장')),
-      h('div', { class: 'small muted' }, 'MuAPI 계정 모델을 가져오거나 신규 모델을 등록하려면 아래 MuAPI 연결 · 영상 모델에서 연결 확인을 사용하세요. 모델을 저장해도 영상 생성이나 과금은 시작되지 않습니다.'));
-  })());
 
   // ---- pricing ----
   const pairs = new Set();
