@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { approveWithScenes } = require('./helpers/approve');
-const { approveAllAudio, approveAllScenes } = require('./helpers/scene-flow');
+const { approveAllAudio, approveAllScenes, decideAllGates } = require('./helpers/scene-flow');
 const { png } = require('./helpers/v23');
 const { loadConfig } = require('../renderer/lib/config');
 const { createStudio } = require('../studio/lib/studio');
@@ -34,7 +34,7 @@ async function upToStoryboard(s) {
 }
 const R = (s) => s.renderReadiness.check(s.store.episodes.get(ID));
 const open = (r, stage) => r.items.filter((i) => i.stage === stage && (i.severity === 'block' || i.severity === 'pending'));
-const authorize = (s, sceneIds) => { const est = s.gen.estimate(ID, { sceneIds }); return s.gen.authorize(ID, { sceneIds, confirmUsd: est.totalUsd, confirmUnknown: est.totalUsd == null }); };
+const authorize = async (s, sceneIds) => { await decideAllGates(s, ID); const est = s.gen.estimate(ID, { sceneIds }); return s.gen.authorize(ID, { sceneIds, confirmUsd: est.totalUsd, confirmUnknown: est.totalUsd == null }); };
 async function generateAndApprove(s, sid) {
   const a = await authorize(s, [sid]);
   await (await s.gen.run(ID, a.id)).done;
@@ -112,6 +112,7 @@ test('material edits invalidate only the changed scene, name the field, and neve
   assert.deepEqual(sb.changedScenes, [b]); assert.deepEqual(sb.scenes[b].changed.map((x) => x.field), ['visual']);
   assert.match(sb.reasons[0], new RegExp(`${b}: 시각 연출이\\(가\\) 승인 후 바뀌었습니다`));
   assert.equal(sb.scenes[a].approved, true); assert.equal(sb.scenes[c].approved, true, 'unrelated scenes keep their approval');
+  await decideAllGates(s, ID);
   const blockers = s.gen.estimate(ID, { sceneIds: ids }).blockers.filter((x) => /STORYBOARD/.test(x.code));
   assert.deepEqual(blockers.map((x) => x.code), ['STORYBOARD_SCENE_CHANGED']); assert.match(blockers[0].message, new RegExp(`^${b}: 시각 연출`));
   assert.equal(s.gen.estimate(ID, { sceneIds: [a] }).canAuthorize, true, 'an unchanged approved scene still generates');

@@ -102,6 +102,9 @@ function parts() {
       ];
     })()),
     h('div', { class: 'small muted' }, '잔액 조회가 성공해도 모델 엔드포인트가 동작한다는 뜻은 아닙니다. 연결 확인은 무료 조회만 하며 영상 생성은 시작하지 않습니다.'),
+    h('div', { class: 'row small', style: 'gap:8px;flex-wrap:wrap;align-items:center', 'data-muapi-tts': '' }, h('b', null, 'MuAPI TTS (ElevenLabs)'),
+      chip(st.muapiTtsConfirmed ? '엔드포인트 확인함' : '미확인 — 실제 호출 차단', st.muapiTtsConfirmed ? 'done' : 'attention'),
+      h('button', { class: 'btn sm ghost', type: 'button', 'data-muapi-tts-confirm': '', onclick: async () => { if (st.muapiTtsConfirmed) return act(() => api.post('/api/muapi/tts/confirm', { confirmed: false }), { ok: '확인을 취소했습니다' }); if (await confirmDialog({ title: 'MuAPI TTS를 플레이그라운드에서 확인했나요?', body: 'elevenlabs-tts-turbo-2-5 엔드포인트와 요청 파라미터(prompt, voice_id, speed)를 MuAPI 플레이그라운드에서 직접 확인했다는 표시입니다. 이 앱은 음성 요청을 보내지 않습니다. 실제 음성 생성은 글자 수 확인 후에만 시작됩니다.' })) act(() => api.post('/api/muapi/tts/confirm', {}), { ok: '확인됨으로 표시했습니다' }); } }, st.muapiTtsConfirmed ? '확인 취소' : '플레이그라운드에서 확인함')),
     catalogBox,
     h('div', { class: 'small muted' }, 'API 키는 서버 환경변수 MUAPI_API_KEY에만 두며 브라우저로 전달되지 않습니다. 실제(유료) 호출은 RF_MUAPI_MODE=live일 때만 가능합니다.'),
     h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['모델', '길이', '해상도', '끝 프레임', '네거티브', '검증', ''].map((x) => h('th', null, x)))), h('tbody', null, modelRows))),

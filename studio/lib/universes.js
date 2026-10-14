@@ -245,7 +245,9 @@ function createUniverseService({ store, episodes = () => [], storylabCasts = () 
       const c = lib.characters.find((x) => x.id === id);
       if (!c) { out.push({ code: 'UNKNOWN_CHARACTER', characterId: id, message: `캐릭터 ${id}을(를) 라이브러리에서 찾을 수 없습니다.` }); return; }
       if (!(c.references || []).some((r) => r.approved)) out.push({ code: 'NO_REFERENCE', characterId: id, message: `${c.name}: 승인된 참조 이미지가 없습니다.`, recovery: '캐릭터 라이브러리에서 참조 이미지를 올리고 승인하세요.' });
-      if (needsVoice) {
+      if (needsVoice && c.voice && c.voice.provider === 'muapi') {
+        if (!c.voice.muapiVoiceId) out.push({ code: 'NO_VOICE', characterId: id, message: `${c.name}: MuAPI voice_id가 없습니다.` });
+      } else if (needsVoice) {
         if (!c.voice || !c.voice.heygenVoiceId) out.push({ code: 'NO_VOICE', characterId: id, message: `${c.name}: Voice ID가 없습니다.` + (c.voice && c.voice.heygenIdentityId ? ' (Identity ID는 Voice ID가 아닙니다.)' : ''), recovery: 'HeyGen Voice ID를 입력하고 확인하세요. 다른 캐릭터의 목소리로 대체하지 않습니다.' });
         else if (!c.voice.verified) out.push({ code: 'VOICE_UNVERIFIED', characterId: id, message: `${c.name}: Voice ID가 확인되지 않았습니다.` });
       }

@@ -8,6 +8,7 @@ import { state, act, hooks } from '../state.js';
 import { api } from '../api.js';
 import { startGeneration } from './animation.js';
 import { goToScenePanel } from './scene-nav.js';
+import { gatesPanel } from './anim-gates.js';
 
 const uiState = () => { state.ui = state.ui || { open: {} }; state.ui.anim = state.ui.anim || {}; return state.ui.anim; };
 const rerender = () => hooks.rerender();
@@ -91,8 +92,10 @@ function leftColumn(ep, sc) {
   const saveBtn = h('button', { class: 'btn sm', type: 'button', 'data-anim-prompt-save': sc.id, onclick: async () => { await act(() => api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/prompt`, { video: d.video, negative: d.negative }), { ok: '프롬프트를 저장했습니다 (직접 수정은 자동으로 덮어쓰지 않습니다)' }); } }, '프롬프트 저장');
   const refreshSave = () => { saveBtn.disabled = !dirty(); genBtn.disabled = !canGenerate(); };
   const running = (ep.generation.jobs || []).some((j) => j.sceneId === sc.id && !j.brollId && ACTIVE_JOB.has(j.status));
-  const canGenerate = () => !running && !dirty() && !!sc.prompt && !!imgOk;
-  const genBtn = h('button', { class: 'btn clay', type: 'button', 'data-anim-generate': sc.id, disabled: !canGenerate(), title: dirty() ? '프롬프트를 먼저 저장하세요' : '비용 확인과 승인 단계를 거쳐야 시작됩니다', onclick: () => startGeneration(ep, [sc.id], { modelId: model.id }) }, icon('play'), sc.clips.versions.length ? '새 버전 생성…' : '생성…');
+  const gateInfo = ((ep.sceneFlow && ep.sceneFlow.scenes && ep.sceneFlow.scenes[sc.id]) || {}).gate;
+  const gateReady = !gateInfo || gateInfo.ready;
+  const canGenerate = () => !running && !dirty() && !!sc.prompt && !!imgOk && gateReady;
+  const genBtn = h('button', { class: 'btn clay', type: 'button', 'data-anim-generate': sc.id, disabled: !canGenerate(), title: !gateReady ? '"생성 전 단계" 점검 항목을 먼저 끝내세요' : dirty() ? '프롬프트를 먼저 저장하세요' : '비용 확인과 승인 단계를 거쳐야 시작됩니다', onclick: () => startGeneration(ep, [sc.id], { modelId: model.id }) }, icon('play'), sc.clips.versions.length ? '새 버전 생성…' : '생성…');
   refreshSave();
   return h('div', { class: 'stack', style: 'gap:12px', 'data-anim-left': sc.id },
     h('div', { class: 'card flat stack', style: 'gap:6px' }, h('b', { class: 'small' }, '시작 이미지 (스토리보드에서 승인된 이미지)'),
@@ -205,6 +208,7 @@ export function animationStudio(ep) {
     nav(ep, cur),
     h('section', { class: 'card stack', style: 'gap:10px', 'data-anim-workspace': sc.id },
       h('div', { class: 'row between', style: 'flex-wrap:wrap;gap:8px' }, h('div', null, h('div', { class: 'eyebrow' }, `${sc.id} · 계획 ${sc.durationSec}초`), h('h2', { style: 'margin:2px 0 0' }, sc.title_ko || sc.title)), h('span', { class: 'small muted' }, '스토리보드의 승인된 이미지 → 이 장면의 클립 → 비디오 스튜디오에서 조립')),
+      gatesPanel(ep, sc),
       h('div', { class: 'anim-cols' }, leftColumn(ep, sc), rightColumn(ep, sc))),
     brollSection(ep, sc));
 }

@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { approveWithScenes } = require('./helpers/approve');
-const { approveAllAudio, approveAllScenes } = require('./helpers/scene-flow');
+const { approveAllAudio, approveAllScenes, decideAllGates } = require('./helpers/scene-flow');
 const { png } = require('./helpers/v23');
 const { loadConfig } = require('../renderer/lib/config');
 const { createStudio } = require('../studio/lib/studio');
@@ -44,7 +44,7 @@ test('audio: per-scene generation, approval, stale detection, revoke; video gene
   // before any audio: the scene is blocked (pending, neutral) with a precise message and a way to the audio panel
   let est = s.gen.estimate(ID, { sceneIds: [sid] });
   assert.equal(est.canAuthorize, false);
-  assert.deepEqual(est.blockers.map((b) => b.code), ['AUDIO_NOT_APPROVED']);
+  assert.deepEqual(est.blockers.map((b) => b.code).filter((c) => c !== 'SFX_NOT_DECIDED' && c !== 'LIPSYNC_NOT_CHOSEN'), ['AUDIO_NOT_APPROVED']); // the SFX / lip-sync decisions are separate gates (animation-gates.test.js)
   const rd = s.renderReadiness.check(s.store.episodes.get(ID));
   const item = rd.items.find((i) => i.code === 'AUDIO_NOT_APPROVED' && i.sceneId === sid);
   assert.equal(item.severity, 'pending'); assert.equal(item.cat, 'audio'); assert.deepEqual([item.action.view, item.action.panel, item.action.sceneId], ['storyboard', 'audio', sid]);
@@ -60,6 +60,7 @@ test('audio: per-scene generation, approval, stale detection, revoke; video gene
   await assert.rejects(s.sceneFlow.approveAudio(ID, other), (e) => e.code === 'AUDIO_INCOMPLETE');
   await s.sceneFlow.approveAudio(ID, sid);
   assert.equal(s.sceneFlow.audioState(s.store.episodes.get(ID), sid).state, 'approved');
+  await decideAllGates(s, ID);
   est = s.gen.estimate(ID, { sceneIds: [sid] });
   assert.equal(est.canAuthorize, true, JSON.stringify(est.blockers));
   // revoke → blocked again, audio files are kept
@@ -137,7 +138,7 @@ test('readiness: every pending/blocking item is clickable (has an action to the 
   const open = rd.items.filter((i) => i.severity === 'pending' || i.severity === 'block');
   assert.ok(open.length > 0);
   assert.deepEqual(open.filter((i) => !i.action).map((i) => i.code), [], 'no unclickable notice');
-  assert.ok(open.filter((i) => i.sceneId).every((i) => (i.action.view === 'storyboard' || (i.action.view === 'animation' && /^CLIP_/.test(i.code))) && i.action.sceneId === i.sceneId));
+  assert.ok(open.filter((i) => i.sceneId).every((i) => (i.action.view === 'storyboard' || (i.action.view === 'animation' && /^(CLIP_|SFX_NOT_DECIDED|LIPSYNC_NOT_CHOSEN)/.test(i.code))) && i.action.sceneId === i.sceneId));
   const nostory = open.find((i) => i.code === 'STORYBOARD_NOT_APPROVED');
   assert.equal(nostory.action.view, 'storyboard');
   await s.revokeStoryboard(ID);

@@ -5,6 +5,7 @@ import { api } from '../api.js';
 import { pageHead } from './common.js';
 import { charCard } from './settings.js';
 import { voicePicker } from './voice-connections.js';
+import { voiceSettings } from './voice-settings.js';
 import { profileModal, universeModal } from './character-profile.js';
 
 /** The reference section stays open across the re-render that follows every selection / approval / upload. */
@@ -39,6 +40,7 @@ export function characters() {
             h('button', { class: 'btn sm ghost', type: 'button', onclick: () => profileModal({ character: f, universes: U, characters: full, onDone: rerender }) }, '프로필 편집'),
             h('button', { class: 'btn sm ghost danger', type: 'button', onclick: async () => { if (await confirmDialog({ title: `${c.name}을(를) 삭제할까요?`, body: '쓰는 에피소드가 없을 때만 삭제됩니다. 참조 이미지 파일은 서버에 남습니다.', confirm: '삭제', tone: 'danger' })) call(() => api.del('/api/characters/' + c.id), '삭제했습니다'); } }, '삭제')),
           voicePicker(f),
+          voiceSettings(f),
           keepOpen(f.id, h('details', { class: 'small', open: !!(state.charOpen || {})[f.id] }, h('summary', { style: 'cursor:pointer;min-height:36px;display:flex;align-items:center' }, '참조 이미지'), charCard(f))));
       }).concat([h('button', { type: 'button', class: 'cast-add', onclick: () => profileModal({ universeId: u.id, universes: U, characters: full, onDone: rerender }) }, '＋ 캐릭터 추가')]))));
   });
