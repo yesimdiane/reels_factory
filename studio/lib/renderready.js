@@ -82,6 +82,12 @@ function createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer, 
       else if (clip.state === 'unapproved') add('clips', 'pending', 'CLIP_AWAITING_APPROVAL', `${sceneId}: 클립 승인 대기 (${clip.versions}개) — Storyboard에서 미리보고 승인하세요.`, '장면의 "영상 클립 생성 · 승인"에서 클립을 확인하고 승인하세요.', sceneId, 'render');
       else if (clip.state === 'broken') add('clips', 'block', 'CLIP_APPROVAL_BROKEN', `${sceneId}: ${clip.problem}`, '장면의 "영상 클립 생성 · 승인"에서 클립을 다시 승인하세요 (파일은 지워지지 않았습니다).', sceneId, 'render');
     });
+    scenes.forEach((sc) => { // an approved clip made from a start image that has since been replaced stays usable but is flagged (nothing is revoked silently)
+      const c = (ep.clips || {})[sc.id];
+      const v = c && c.approvedVersion && (c.versions || []).find((x) => x.v === c.approvedVersion);
+      const fr = v && gen.freshness ? gen.freshness(ep, sc, v) : null;
+      if (fr && fr.state === 'stale') add('clips', 'warn', 'CLIP_STALE_IMAGE', `${sc.id}: 승인된 클립(v${v.v})을 만든 뒤 시작 이미지가 바뀌었습니다. 영상이 새 이미지와 다를 수 있습니다.`, '애니메이션 스튜디오에서 새 이미지로 다시 생성하거나, 그대로 써도 되면 클립 승인을 유지하세요.', sc.id, 'render');
+    });
     const known = new Set(scenes.map((s) => s.id));
     Object.keys(ep.clips || {}).filter((k) => !known.has(k) && ((ep.clips[k] || {}).versions || []).length).forEach((k) => add('clips', 'warn', 'ORPHAN_CLIPS', `장면 "${k}"에 연결된 클립이 있지만 현재 대본에는 그 장면이 없습니다 (삭제하지 않고 보관 중).`, '', k, 'render'));
     let plan = { problems: [] };
@@ -94,7 +100,7 @@ function createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer, 
     });
 
     // where to go: every finding points at the scene and the collapsible Storyboard section where it is fixed
-    const PANEL = { CLIP_NOT_GENERATED: 'clips', CLIP_AWAITING_APPROVAL: 'clips', CLIP_APPROVAL_BROKEN: 'clips', CLIP_MISSING: 'clips', CLIP_CHECKSUM: 'clips', CUTS_NOT_APPROVED: 'cuts', BROLL_IMAGE_MISSING: 'cuts', NO_ANIMATION: 'motion', INVALID_ANIMATION: 'motion', ANIMATION_GENERIC: 'motion', ANIMATION_SHORT: 'motion', NO_PROMPT: 'prompt', PROMPT_TOO_SHORT: 'prompt', AUDIO_NOT_APPROVED: 'audio', NO_AUDIO: 'audio', SCENE_NOT_APPROVED: 'compose' };
+    const PANEL = { CLIP_NOT_GENERATED: 'clips', CLIP_AWAITING_APPROVAL: 'clips', CLIP_APPROVAL_BROKEN: 'clips', CLIP_MISSING: 'clips', CLIP_CHECKSUM: 'clips', CUTS_NOT_APPROVED: 'cuts', BROLL_IMAGE_MISSING: 'cuts', CLIP_STALE_IMAGE: 'clips', NO_ANIMATION: 'motion', INVALID_ANIMATION: 'motion', ANIMATION_GENERIC: 'motion', ANIMATION_SHORT: 'motion', NO_PROMPT: 'prompt', PROMPT_TOO_SHORT: 'prompt', AUDIO_NOT_APPROVED: 'audio', NO_AUDIO: 'audio', SCENE_NOT_APPROVED: 'compose' };
     items.forEach((i) => {
       if (i.sceneId) i.action = { view: 'storyboard', sceneId: i.sceneId, panel: PANEL[i.code] || (/^CHARACTER_REF/.test(i.code) ? 'charrefs' : ''), label: '이 장면으로 이동' };
       else if (i.cat === 'script') i.action = { view: 'script', label: '대본으로 이동' };

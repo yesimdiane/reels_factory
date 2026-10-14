@@ -74,7 +74,7 @@ function labCard(s) {
 
 
 // ---- workflow board: Product → Story Lab → Episode → Script → Storyboard → Video (one glance, one current step) ----
-const STAGES = [['products', '제품 스튜디오', 'products'], ['storylab', '스토리랩', 'storylab'], ['episodes', '에피소드', 'episodes'], ['script', '대본 스튜디오', 'script'], ['storyboard', '스토리보드', 'storyboard'], ['animation', '비디오 스튜디오', 'video']];
+const STAGES = [['products', '제품 스튜디오', 'products'], ['storylab', '스토리랩', 'storylab'], ['episodes', '에피소드', 'episodes'], ['script', '대본 스튜디오', 'script'], ['storyboard', '스토리보드', 'storyboard'], ['animation', '애니메이션 스튜디오', 'animation'], ['render', '비디오 스튜디오', 'render']];
 function stageDone(s, ep) {
   const step = (k) => ep && ep.derived.steps.find((x) => x.key === k);
   return [
@@ -83,6 +83,7 @@ function stageDone(s, ep) {
     !!ep,
     !!(ep && ep.derived.scriptApproved),
     !!(step('storyboard') && step('storyboard').state === 'done'),
+    !!(step('clips') && step('clips').state === 'done'),
     !!(step('review') && step('review').state === 'done'),
   ];
 }
@@ -93,7 +94,7 @@ function workflowBoard(s, ep) {
     h('div', { class: 'row between' }, h('div', null, h('div', { class: 'eyebrow' }, 'Reels Factory · 스튜디오 아웃라인'), h('h2', { style: 'margin:2px 0 0' }, '제작 워크플로')), ep ? chip(ep.displayId || ep.id, 'mono') : null),
     h('div', { class: 'wf-grid' }, STAGES.map(([key, label, ic], i) => h('a', { class: 'wf-card' + (i === cur ? ' current' : '') + (done[i] ? ' done' : ''), href: '#/' + key + (['products', 'storylab'].includes(key) ? (state.productId ? '/' + state.productId : '') : ['episodes'].includes(key) ? '' : (ep ? '/' + ep.id : '')), 'aria-current': i === cur ? 'step' : null, 'data-stage': key },
       h('div', { class: 'wf-top' }, icon(ic), h('span', { class: 'wf-name' }, label)),
-      h('div', { class: 'wf-bottom' }, h('span', { class: 'wf-num' }, `${i + 1} / 6`), done[i] ? h('span', { class: 'wf-check', 'aria-label': '완료' }, icon('check')) : null)))));
+      h('div', { class: 'wf-bottom' }, h('span', { class: 'wf-num' }, `${i + 1} / ${STAGES.length}`), done[i] ? h('span', { class: 'wf-check', 'aria-label': '완료' }, icon('check')) : null)))));
 }
 
 // ---- current step panel: the latest story waiting for approval (or the next action) ----

@@ -91,7 +91,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load(), products });
   const brollImages = createBrollImages({ store, products, router, charRefs, sba, lib: () => store.characters.load() });
   const animplan = createAnimPlan({ store, router, sba, charRefs, lib: () => store.characters.load() });
-  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs, audioGate: (ep, sid) => sceneFlow.audioOk(ep, sid) });
+  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs, audioGate: (ep, sid) => sceneFlow.audioOk(ep, sid), brollSource: (ep, b) => ({ file: sba.brollFile(ep, b), problem: sba.assetHealth(ep, b).problem }) });
   const aiDiagnostics = createAiDiagnostics({ store });
   const promptSvc = createPromptService({ diagnostics: aiDiagnostics,
     store, cfg, geminiFactory, log,
@@ -218,7 +218,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     }
     const readiness = projects.readiness(ep);
     const sceneLinks = projects.sceneLinks(ep);
-    const brollCards = sba.brollView(ep).map((b) => Object.assign(b, brollImages.cardInfo(ep, b)));
+    const brollCards = sba.brollView(ep).map((b) => Object.assign(b, brollImages.cardInfo(ep, b), { clip: (() => { const c = (ep.brollClips || {})[b.id]; return { approvedVersion: c ? c.approvedVersion : null, versions: c ? c.versions.map((v) => Object.assign({}, v, { url: `/media/brollclip/${id}/${b.id}/${v.v}` })) : [] }; })() }));
     const sceneViews = ep.scenes.map((s) => {
       const img = gen.startImage(ep, s);
       const clips = ep.clips[s.id] || { versions: [], approvedVersion: null };
@@ -238,7 +238,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         charRefs: charRefs.forScene(ep, s),
         charRefsStale: charRefs.frameStale(ep, s),
         startImageInfo: img.error ? { error: img.error } : { fileName: (s.startImage && s.startImage.name) || '', label: img.label, generated: !!img.generated, approved: img.approved, placeholder: img.placeholder, url: img.characterId ? `/media/ref/${img.characterId}/${img.refId}` : `/media/startframe/${id}/${s.id}` },
-        clips: { approvedVersion: clips.approvedVersion, versions: clips.versions.map((v) => Object.assign({}, v, { url: `/media/clip/${id}/${s.id}/${v.v}` })) },
+        clips: { approvedVersion: clips.approvedVersion, versions: clips.versions.map((v) => Object.assign({}, v, { url: `/media/clip/${id}/${s.id}/${v.v}`, freshness: gen.freshness(ep, s, v) })) },
+        animationSettings: (ep.animation || {})[s.id] || {},
+        animationPrompt: ep.prompts[s.id] ? animplan.compose(ep, s.id, ep.prompts[s.id].video) : '',
         line: ep.lines.filter((l) => l.sceneId === s.id).map((l) => l.id),
         approval: readiness.scenes.find((x) => x.sceneId === s.id),
         cutInfo: cutInfoFor(ep, s),
@@ -1192,6 +1194,66 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return episodeView(id);
   }
 
+  // ---------- Animation Studio: per-scene clip settings, operator-entered models, MuAPI connection check ----------
+  async function saveAnimationSettings(id, sceneId, patch, by = 'operator') {
+    await store.episodes.update(id, (ep) => {
+      if (!ep.scenes.some((x) => x.id === sceneId)) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다.', { status: 404 });
+      ep.animation = ep.animation || {};
+      const cur = Object.assign({}, ep.animation[sceneId] || {});
+      const model = patch.modelId ? modelById(store.models(), patch.modelId) : modelById(store.models(), cur.modelId || store.settings.get().defaultModelId);
+      if (patch.modelId !== undefined) { if (patch.modelId) cur.modelId = patch.modelId; else delete cur.modelId; }
+      if (patch.durationSec !== undefined) {
+        if (patch.durationSec === null || patch.durationSec === '') delete cur.durationSec;
+        else {
+          const d = Number(patch.durationSec);
+          if (!(model.durations || []).includes(d)) throw new StudioError('BAD_DURATION', `이 모델은 ${(model.durations || []).join(' / ')}초 클립만 지원합니다.`, { status: 422 });
+          cur.durationSec = d;
+        }
+      }
+      if (patch.resolution !== undefined) {
+        if (!patch.resolution) delete cur.resolution;
+        else if (!(model.resolutions || []).includes(String(patch.resolution))) throw new StudioError('BAD_RESOLUTION', '이 모델 설정에 선언된 해상도가 아닙니다.', { status: 422 });
+        else cur.resolution = String(patch.resolution);
+      }
+      if (Object.keys(cur).length) ep.animation[sceneId] = Object.assign(cur, { updatedAt: nowIso() }); else delete ep.animation[sceneId];
+    });
+    store.episodes.audit(id, 'animation.settings', { sceneId, by });
+    return episodeView(id);
+  }
+  function addCustomModel(spec, by = 'operator') {
+    const id = String(spec.id || '').trim();
+    if (!/^[a-z0-9][a-z0-9._-]{1,50}$/.test(id)) throw new StudioError('BAD_MODEL', '모델 ID는 영문 소문자·숫자·-_. 2–51자입니다.', { status: 422 });
+    if (store.models().some((m) => m.id === id)) throw new StudioError('BAD_MODEL', '이미 있는 모델 ID입니다.', { status: 409 });
+    const endpoint = String(spec.endpoint || '').trim().replace(/^\/+/, '');
+    if (!/^[A-Za-z0-9][A-Za-z0-9/_.-]{1,100}$/.test(endpoint) || endpoint.includes('..')) throw new StudioError('BAD_MODEL', '엔드포인트는 Muapi 플레이그라운드에 표시된 경로(예: kling-master)여야 합니다.', { status: 422 });
+    const durations = [...new Set((spec.durations || []).map(Number).filter((d) => d > 0 && d <= 30))].sort((a, b) => a - b);
+    if (!durations.length) throw new StudioError('BAD_MODEL', '지원하는 클립 길이(초)를 하나 이상 입력하세요.', { status: 422 });
+    const m = { id, label: String(spec.label || id).slice(0, 80), provider: 'muapi', endpoint, mode: 'image-to-video', promptField: 'prompt', imageField: String(spec.imageField || 'image_url').slice(0, 40), durations, aspectRatios: (spec.aspectRatios && spec.aspectRatios.length ? spec.aspectRatios : ['9:16']).map(String), supportsNegativePrompt: !!spec.supportsNegativePrompt, lipSync: false, verification: 'user-entered', notes: String(spec.notes || '').slice(0, 300) };
+    if (Array.isArray(spec.resolutions) && spec.resolutions.length) { m.resolutions = spec.resolutions.map(String).slice(0, 8); m.resolutionField = String(spec.resolutionField || 'resolution').slice(0, 40); }
+    store.settings.save({ customModels: (store.settings.get().customModels || []).concat(m) });
+    return publicSettings();
+  }
+  function removeCustomModel(id) {
+    const cur = store.settings.get();
+    if (!(cur.customModels || []).some((m) => m.id === id)) throw new StudioError('NOT_FOUND', '직접 추가한 모델이 아닙니다.', { status: 404 });
+    if (cur.defaultModelId === id) throw new StudioError('IN_USE', '기본 모델은 지울 수 없습니다. 다른 모델을 기본으로 정한 뒤 지우세요.', { status: 409 });
+    store.settings.save({ customModels: cur.customModels.filter((m) => m.id !== id) });
+    return publicSettings();
+  }
+  /** Explicit, free check (balance + model catalog). Never called on page load; mock mode answers locally without any network call. */
+  async function muapiCheck() {
+    if (video.mode !== 'live') return { mode: 'mock', connected: false, note: 'MOCK 모드입니다: Muapi에 연결하지 않으며 요금이 없습니다. 실제 사용은 서버 환경변수 MUAPI_API_KEY와 RF_MUAPI_MODE=live가 필요합니다.' };
+    const out = { mode: 'live', connected: false, balance: null, catalog: [], errors: [] };
+    try { const b = await video.balance(); out.balance = b.balance; out.connected = true; } catch (e) { out.errors.push({ where: 'balance', code: e.code || 'ERROR', message: e.message }); }
+    try {
+      const c = await video.listModels();
+      const list = Array.isArray(c) ? c : (c && (c.models || c.data)) || [];
+      out.catalog = list.slice(0, 200).map((m) => (typeof m === 'string' ? { id: m } : { id: String(m.id || m.name || m.endpoint || ''), name: String(m.name || m.title || '') })).filter((m) => m.id);
+      out.connected = true;
+    } catch (e) { out.errors.push({ where: 'catalog', code: e.code || 'ERROR', message: e.message }); }
+    return out;
+  }
+
   async function setSpendLimit(id, usd) {
     const v = usd === null || usd === '' ? null : Number(usd);
     if (v !== null && !(v >= 0)) throw new StudioError('BAD_VALUE', '한도는 0 이상의 숫자여야 합니다.');
@@ -1312,6 +1374,11 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       if (!au || !au.valid) throw new StudioError('NOT_FOUND', '음성이 없습니다.', { status: 404 });
       return au.file;
     }
+    if (kind === 'brollclip') {
+      const v = (((ep.brollClips || {})[b] || {}).versions || []).find((x) => x.v === Number(c));
+      if (!v) throw new StudioError('NOT_FOUND', 'B-roll 클립을 찾을 수 없습니다.', { status: 404 });
+      return store.episodes.file(a, v.file);
+    }
     if (kind === 'composite') {
       const st = sceneFlow.sceneState(ep, b);
       if (!st.composite) throw new StudioError('NOT_FOUND', '이 장면의 합본이 없습니다.', { status: 404 });
@@ -1342,7 +1409,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   return {
     exportName, sceneFlow, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, revokeStoryboard, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, muapiCheck, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

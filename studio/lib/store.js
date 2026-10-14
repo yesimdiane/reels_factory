@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS = {
   modelEstimates: {}, // { [modelId]: { usdByDuration: { "5": number, "10": number } } }  operator-entered; never invented
   voiceUsdPer1kChars: null, // operator-entered HeyGen estimate; null = unknown
   defaultModelId: 'kling-master',
+  customModels: [], // operator-entered video models (endpoint + declared capabilities); never auto-discovered
   render: { font: '', fontSize: 60, burnDisclosure: false, previewWidth: 540 },
   // V2.3: AI routing / models / operator-entered prices / spend limits (UTC day & month). Keys are NOT here (encrypted vault).
   ai: { routing: {}, models: {}, pricing: {}, limits: { dailyUsd: null, monthlyUsd: null } },
@@ -47,7 +48,8 @@ function createStore({ dir, seedDir = SEED_DIR }) {
   };
 
   // ---------- model registry (read-only seed) ----------
-  const models = () => readJson(path.join(seedDir, 'models.json'), { models: [] }).models;
+  // seed models + operator-entered models (settings.customModels, verification 'user-entered'); both go through the same provider adapter
+  const models = () => readJson(path.join(seedDir, 'models.json'), { models: [] }).models.concat((settings.get().customModels || []).map((m) => Object.assign({}, m, { custom: true })));
 
   // ---------- characters ----------
   const characters = {

@@ -37,10 +37,10 @@ export function modeBanner(summary) {
   return h('div', { class: 'stack', style: 'gap:10px' }, warn, h('div', { class: 'banner live' }, chip('LIVE', 'live'), h('div', null, h('b', null, '영상 실제 모드 — 유료 호출이 가능합니다'), '비용 확인과 명시적 승인 없이는 어떤 생성도 실행되지 않습니다. 실패한 유료 작업은 자동으로 다시 실행되지 않습니다.')));
 }
 
-/** Sub-navigation of the Video Studio (animation → voice → render). */
+/** Production sub-navigation: Animation Studio (clips) → Voice → Video Studio (assembly). */
 export function videoTabs(active) {
-  const tabs = [['animation', '애니메이션'], ['voice', '보이스'], ['render', '렌더']];
-  return h('div', { class: 'seg', role: 'tablist', 'aria-label': '비디오 스튜디오' }, tabs.map(([k, label]) => h('button', { role: 'tab', 'aria-pressed': active === k ? 'true' : 'false', onclick: () => { location.hash = '#/' + k + (state.episodeId ? '/' + state.episodeId : ''); } }, label)));
+  const tabs = [['animation', '애니메이션 스튜디오'], ['voice', '보이스'], ['render', '비디오 스튜디오']];
+  return h('div', { class: 'seg', role: 'tablist', 'aria-label': '영상 제작 단계' }, tabs.map(([k, label]) => h('button', { role: 'tab', 'aria-pressed': active === k ? 'true' : 'false', onclick: () => { location.hash = '#/' + k + (state.episodeId ? '/' + state.episodeId : ''); } }, label)));
 }
 
 /**

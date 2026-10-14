@@ -29,16 +29,16 @@ export const NAV = [
   ['episodes', '에피소드', 'Episodes', episodes, true],
   ['script', '대본 스튜디오', 'Script Studio', script, true],
   ['storyboard', '스토리보드', 'Storyboard', storyboard, true],
-  ['animation', '비디오 스튜디오', 'Video Studio', animation, true],
+  ['animation', '애니메이션 스튜디오', 'Animation Studio', animation, true],
+  ['render', '비디오 스튜디오', 'Video Studio', render, true],
   ['voice', '보이스', 'Voice', voice, false],
-  ['render', '렌더', 'Render', render, false],
   ['review', '최종 검토', 'Review', review, true],
   ['publishing', '게시', 'Publishing', publishing, true],
   ['autodm', '자동 DM', 'Auto-DM', autodm, true],
   ['settings', '설정', 'Settings', settings, true],
 ];
-const ICON = { animation: 'video', autodm: 'publishing' };
-const VIDEO_GROUP = ['animation', 'voice', 'render'];
+const ICON = { autodm: 'publishing' };
+const VIDEO_GROUP = ['voice', 'render']; // Video Studio = voice + assembly (Animation Studio is its own step)
 const TAB_VIEWS = ['overview', 'products', 'storylab', 'script', 'animation', 'settings'];
 const PRODUCT_VIEWS = ['products', 'storylab'];
 const EP_HEADER_VIEWS = ['script', 'storyboard', 'animation', 'voice', 'render', 'review', 'publishing', 'autodm'];
@@ -50,7 +50,7 @@ function parseHash() {
   const [, view = 'overview', id = ''] = location.hash.split('/');
   return { view: NAV.some((n) => n[0] === view) ? view : 'overview', id };
 }
-const active = (key) => state.view === key || (key === 'animation' && VIDEO_GROUP.includes(state.view));
+const active = (key) => state.view === key || (key === 'render' && VIDEO_GROUP.includes(state.view));
 const hrefFor = (key) => '#/' + key + (PRODUCT_VIEWS.includes(key) ? (state.productId ? '/' + state.productId : '') : state.episodeId && !NO_ID_VIEWS.includes(key) ? '/' + state.episodeId : '');
 
 function drawShell() {
