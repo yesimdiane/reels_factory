@@ -1293,6 +1293,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       if (!f) throw new StudioError('BAD_MODEL', `요청 필드 이름이 올바르지 않습니다 (${key}).`, { status: 422 });
       fields[key] = f;
     }
+    const imageAsList = !!spec.imageAsList;
+    if (imageAsList && fields.imageField === 'image_url') fields.imageField = 'images_list';
     let extraParams;
     try { extraParams = mc.cleanExtra(spec.extraParams); } catch (e) { throw new StudioError('BAD_MODEL', '고정 파라미터(JSON)가 올바르지 않습니다: ' + e.message, { status: 422 }); }
     const mode = spec.mode === 'text-to-video' ? 'text-to-video' : 'image-to-video';
@@ -1302,6 +1304,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       { durations, aspectRatios: (spec.aspectRatios && spec.aspectRatios.length ? spec.aspectRatios : ['9:16']).map(String), supportsNegativePrompt: !!spec.supportsNegativePrompt, lipSync: false,
         // the operator vouches for the endpoint only by ticking "confirmed in the playground"; otherwise it stays unverified and live generation is blocked
         verification: spec.confirmed ? 'user-entered' : 'unverified', notes: String(spec.notes || '').slice(0, 300) });
+    if (imageAsList) m.imageAsList = true;
     if (Object.keys(extraParams).length) m.extraParams = extraParams;
     if (cost != null) m.costEstimateUsd = cost;
     if (Array.isArray(spec.resolutions) && spec.resolutions.length) { m.resolutions = spec.resolutions.map(String).slice(0, 8); m.resolutionField = mc.field(spec.resolutionField, 'resolution') || 'resolution'; }
@@ -1309,6 +1312,8 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return publicSettings();
   }
   /** Operator states they checked this model's endpoint + parameters in the MuAPI playground. Free; no network. */
+  /** Endpoint names from the official muapi-cli registry (read-only seed). A starting point for the registration form, never proof an endpoint works. */
+  function muapiCliModels() { return JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'seed', 'muapi-cli-i2v.json'), 'utf8')); }
   function confirmModel(id, by = 'operator') {
     const m = store.models().find((x) => x.id === id);
     if (!m) throw new StudioError('NOT_FOUND', '등록된 모델이 아닙니다.', { status: 404 });
@@ -1503,7 +1508,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   return {
     exportName, sceneFlow, animGate, videoEdit, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, deleteStartFrame, saveImagePrompt, resetImagePrompt, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, confirmModel, confirmMuapiTts, muapiCheck, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, deleteStartFrame, saveImagePrompt, resetImagePrompt, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, confirmModel, muapiCliModels, confirmMuapiTts, muapiCheck, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

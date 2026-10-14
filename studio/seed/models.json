@@ -3,19 +3,26 @@
   "models": [
     {
       "id": "kling-master",
-      "label": "Kling Master · image-to-video",
+      "label": "Kling v2.1 Master · image-to-video",
       "provider": "muapi",
-      "endpoint": "kling-master",
+      "endpoint": "kling-v2.1-master-i2v",
       "mode": "image-to-video",
       "promptField": "prompt",
       "imageField": "image_url",
-      "durations": [5, 10],
-      "aspectRatios": ["16:9", "9:16", "1:1"],
+      "durations": [
+        5,
+        10
+      ],
+      "aspectRatios": [
+        "16:9",
+        "9:16",
+        "1:1"
+      ],
       "supportsNegativePrompt": true,
       "lipSync": false,
       "verification": "unverified",
-      "docsUrl": "https://muapi.ai/docs/kling",
-      "notes": "Request example in the official Kling guide: POST /api/v1/kling-master with prompt, image_url, duration (5 or 10). aspect_ratio (16:9, 9:16, 1:1) and negative_prompt are listed in the parameter table. The docs do not list a price."
+      "docsUrl": "https://muapi.ai/cli",
+      "notes": "Endpoint from the official muapi-cli registry (I2V_MODELS['kling-master'] = kling-v2.1-master-i2v). The earlier value 'kling-master' was copied from a text-to-video docs example and is not the image-to-video endpoint. Durations 5/10 s and 9:16 come from the Kling guide. Still unverified until you confirm it in the MuAPI playground or a real job completes. The docs do not list a price."
     }
   ]
 }

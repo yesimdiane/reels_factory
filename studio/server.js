@@ -349,6 +349,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/models/:id/confirm', async ({ p }) => S.confirmModel(p.id));
   route('DELETE', '/api/models/:id', async ({ p }) => S.removeCustomModel(p.id));
   route('POST', '/api/muapi/tts/confirm', async ({ body }) => S.confirmMuapiTts(!(body && body.confirmed === false)));
+  route('GET', '/api/muapi/cli-models', async () => S.muapiCliModels());
   route('POST', '/api/muapi/check', async () => S.muapiCheck());
   route('POST', '/api/episodes/:id/storyboard/revoke', async ({ p }) => S.revokeStoryboard(p.id));
   route('PUT', '/api/episodes/:id/spend-limit', async ({ p, body }) => S.setSpendLimit(p.id, body.usd));
