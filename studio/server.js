@@ -338,6 +338,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/start-images/generate', async ({ p, body }) => { S.assertNotHeld(p.id); const r = await S.startImages.generate(p.id, body.sceneIds, { confirm: body.confirm, force: body.force === true, exclude: body.exclude }); const v = ep(p.id); v.startImageResult = r; return v; });
   route('POST', '/api/episodes/:id/scenes/:sid/start-frame/approve', async ({ p, body }) => S.approveStartFrame(p.id, p.sid, body.approved !== false));
   route('POST', '/api/episodes/:id/storyboard/approve', async ({ p }) => S.approveStoryboard(p.id));
+  route('POST', '/api/episodes/:id/storyboard/revoke', async ({ p }) => S.revokeStoryboard(p.id));
   route('PUT', '/api/episodes/:id/spend-limit', async ({ p, body }) => S.setSpendLimit(p.id, body.usd));
 
   // ---- animation ----
@@ -371,6 +372,21 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/final/revoke', async ({ p }) => { await S.renderer.revokeFinal(p.id); return ep(p.id); });
   route('POST', '/api/episodes/:id/sfx', async ({ p, raw, headers, query }) => S.uploadSfx(p.id, raw, decodeURIComponent(headers['x-filename'] || 'sfx.wav'), query.label, query.atSec), { upload: true });
   route('PUT', '/api/episodes/:id/sfx/:fid', async ({ p, body }) => S.updateSfx(p.id, p.fid, body));
+  // ---- scene pipeline: audio check/approval, sound effects, scene composite, scene final approval, revoke ----
+  route('POST', '/api/episodes/:id/scenes/:sid/audio/estimate', async ({ p }) => S.voice.estimate(p.id, { sceneIds: [p.sid] }));
+  route('POST', '/api/episodes/:id/scenes/:sid/audio/run', async ({ p, body }) => { await S.voice.synthesize(p.id, { confirmChars: body.confirmChars, sceneIds: [p.sid] }); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/audio/approve', async ({ p }) => { await S.sceneFlow.approveAudio(p.id, p.sid); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/audio/revoke', async ({ p }) => { await S.sceneFlow.revokeAudio(p.id, p.sid); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/sfx/builtin', async ({ p, body }) => { await S.sfx.addBuiltin(p.id, { name: body.name, sceneId: p.sid, offsetSec: body.offsetSec }); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/sfx/upload', async ({ p, raw, headers, query }) => { await S.sfx.addUpload(p.id, { buffer: raw, filename: decodeURIComponent(headers['x-filename'] || 'sfx.wav'), label: query.label, sceneId: p.sid, offsetSec: query.offsetSec }); return ep(p.id); }, { upload: true });
+  route('POST', '/api/episodes/:id/sfx/search', async ({ body }) => S.sfx.searchHeygen(body.query));
+  route('POST', '/api/episodes/:id/scenes/:sid/sfx/heygen', async ({ p, body }) => { await S.sfx.addHeygen(p.id, { soundId: body.soundId, sceneId: p.sid, offsetSec: body.offsetSec }); return ep(p.id); });
+  route('POST', '/api/episodes/:id/sfx/:fid/update', async ({ p, body }) => { await S.sfx.update(p.id, p.fid, body); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/compose', async ({ p }) => { await S.sceneFlow.buildComposite(p.id, p.sid); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/final/approve', async ({ p }) => { await S.sceneFlow.approveScene(p.id, p.sid); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/final/revoke', async ({ p }) => { await S.sceneFlow.revokeScene(p.id, p.sid); return ep(p.id); });
+  route('GET', '/media/composite/:a/:b', async ({ p }) => ({ file: S.mediaFile('composite', p.a, p.b) }));
+  route('GET', '/media/sfx/:a/:b', async ({ p }) => ({ file: S.mediaFile('sfx', p.a, p.b) }));
 
   // ---- ManyChat (token vault, connection test, Auto-DM campaign records; never creates anything in ManyChat) ----
   route('GET', '/api/manychat', async () => ({ connection: S.manychat.connection(), campaigns: S.manychat.list() }));

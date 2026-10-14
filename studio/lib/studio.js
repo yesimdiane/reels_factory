@@ -39,6 +39,8 @@ const { createIntegrations } = require('./integrations');
 const { createVideoProvider } = require('./providers');
 const { createGenerationService } = require('./generation');
 const { createVoiceService } = require('./voice');
+const { createSfx } = require('./sfx');
+const { createSceneFlow } = require('./sceneflow');
 const { createVoiceCatalog } = require('./voicecatalog');
 const { createRenderService } = require('./render');
 const { createPromptService } = require('./promptgen');
@@ -89,7 +91,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load(), products });
   const brollImages = createBrollImages({ store, products, router, charRefs, sba, lib: () => store.characters.load() });
   const animplan = createAnimPlan({ store, router, sba, charRefs, lib: () => store.characters.load() });
-  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs });
+  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs, audioGate: (ep, sid) => sceneFlow.audioOk(ep, sid) });
   const aiDiagnostics = createAiDiagnostics({ store });
   const promptSvc = createPromptService({ diagnostics: aiDiagnostics,
     store, cfg, geminiFactory, log,
@@ -106,7 +108,10 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   runtime.setGoogleReady(() => voiceCatalog.googleReady());
   const voice = createVoiceService({ store, cfg, fetchFn, speechProvider, runtime, voices: voiceCatalog });
   const renderReadiness = createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer: { plan: (id) => renderer.plan(id) }, providerMode: () => video.mode, getModel: () => modelById(store.models(), store.settings.get().defaultModelId) });
-  const renderer = createRenderService({ store, cfg, voice, log, broll: { approved: (ep) => sba.approvedBroll(ep), file: (ep, b) => sba.brollFile(ep, b), problem: (ep, b) => sba.assetHealth(ep, b).problem } });
+  const brollApi = { approved: (ep) => sba.approvedBroll(ep), file: (ep, b) => sba.brollFile(ep, b), problem: (ep, b) => sba.assetHealth(ep, b).problem };
+  const sceneFlow = createSceneFlow({ store, cfg, voice, broll: brollApi, log });
+  const sfx = createSfx({ store, cfg, fetchFn, heygenKey: () => runtime.heygenKey(), log });
+  const renderer = createRenderService({ store, cfg, voice, log, broll: brollApi, sceneGate: { renderProblems: (ep) => sceneFlow.renderProblems(ep), hashes: (ep) => sceneFlow.hashes(ep) } });
   const publishing = createPublishingService({ store });
   store.episodes.seedDemo();
   // Projects / scene approvals / Image Development hand-off (no AI or video provider is wired in: nothing here can spend money).
@@ -298,6 +303,15 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       formula: formulaView(ep),
       renders: ep.renders.map((r) => Object.assign({}, r, { url: `/media/render/${id}/${r.v}`, current: !!(ep.approvals.final && ep.approvals.final.v === r.v) })),
       sfx: ep.sfx,
+      sceneFlow: {
+        scenes: Object.fromEntries((ep.scenes || []).map((sc) => {
+          const au = sceneFlow.audioState(ep, sc.id);
+          au.lines = au.lines.map((l) => Object.assign(l, { url: l.valid ? `/media/audio/${id}/${l.id}` : '' }));
+          return [sc.id, { audio: au, final: sceneFlow.sceneState(ep, sc.id) }];
+        })),
+        builtinSfx: sfx.BUILTIN,
+        heygenConnected: !!runtime.heygenKey(),
+      },
       timeline: used,
     });
     view.derived.header = episodeHeader(ep, view.derived);
@@ -1171,6 +1185,13 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return episodeView(id);
   }
 
+  /** "승인 취소": the storyboard goes back to unapproved. Nothing is deleted (prompts, images, clips stay); clip approvals stay as they were. */
+  async function revokeStoryboard(id, by = 'operator') {
+    await store.episodes.update(id, (ep) => { ep.approvals.storyboard = null; });
+    store.episodes.audit(id, 'storyboard.revoked', { by });
+    return episodeView(id);
+  }
+
   async function setSpendLimit(id, usd) {
     const v = usd === null || usd === '' ? null : Number(usd);
     if (v !== null && !(v >= 0)) throw new StudioError('BAD_VALUE', '한도는 0 이상의 숫자여야 합니다.');
@@ -1291,6 +1312,16 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       if (!au || !au.valid) throw new StudioError('NOT_FOUND', '음성이 없습니다.', { status: 404 });
       return au.file;
     }
+    if (kind === 'composite') {
+      const st = sceneFlow.sceneState(ep, b);
+      if (!st.composite) throw new StudioError('NOT_FOUND', '이 장면의 합본이 없습니다.', { status: 404 });
+      return store.episodes.file(a, st.composite.file);
+    }
+    if (kind === 'sfx') {
+      const x = (ep.sfx || []).find((y) => y.id === b);
+      if (!x) throw new StudioError('NOT_FOUND', '효과음을 찾을 수 없습니다.', { status: 404 });
+      return store.episodes.file(a, x.file);
+    }
     if (kind === 'broll') {
       const bi = (ep.broll || []).find((x) => x.id === b && x.imageRef && x.status !== 'removed');
       const h = bi ? sba.assetHealth(ep, bi) : null;
@@ -1309,9 +1340,9 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
 
   return {
-    exportName, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    exportName, sceneFlow, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, approveStoryboard, revokeStoryboard, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }
