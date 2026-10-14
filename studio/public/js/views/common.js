@@ -1,6 +1,7 @@
 import { h, chip, stateLabel, icon, modal, fmtUsd, toast } from '../ui.js';
 import { state, go, selectEpisode } from '../state.js';
 import { api } from '../api.js';
+import { refTile, openFull } from './ref-gallery.js';
 
 export const VIEW_FOR_STEP = { product: 'products', concept: 'storylab', script: 'script', approval: 'script', storyboard: 'storyboard', estimate: 'animation', animation: 'animation', clips: 'animation', voice: 'voice', render: 'render', review: 'review', publish: 'publishing' };
 const NEXT_LABEL = {
@@ -110,12 +111,48 @@ export function productRefStrip(ep) {
  * "시작 이미지 만들기": AI start frames for the given scenes (all scenes when sceneIds is empty).
  * Shows the cost, needs explicit confirmation, saves UNAPPROVED frames that the operator approves one by one.
  */
+/**
+ * Over the model's image-input limit: nothing is trimmed for the user. This dialog lists every reference that would be sent (by filename) and lets
+ * the user deselect some FOR THIS REQUEST ONLY. Resolves with the assetIds to exclude, or null when cancelled. The Character Library is not touched.
+ */
+export function refLimitDialog(d, pre = []) {
+  return new Promise((resolve) => {
+    const ex = new Set(pre);
+    const max = d.limit && d.limit.maxImages;
+    modal((close) => {
+      const body = h('div', { class: 'stack', style: 'gap:10px' });
+      const draw = () => {
+        const kept = d.refs.filter((r) => !ex.has(r.assetId));
+        const perChar = {}; d.refs.filter((r) => r.type === 'character').forEach((r) => { perChar[r.characterId] = (perChar[r.characterId] || 0) + (ex.has(r.assetId) ? 0 : 1); });
+        const emptyChar = Object.keys(perChar).find((k) => perChar[k] === 0);
+        const productAll = d.refs.some((r) => r.type === 'product') && !d.refs.some((r) => r.type === 'product' && !ex.has(r.assetId));
+        const ok = (max == null || kept.length <= max) && !emptyChar && !productAll;
+        const group = (title, list) => list.length ? h('div', { class: 'stack', style: 'gap:6px' }, h('b', { class: 'small' }, title), h('div', { class: 'ref-compact-grid' }, list.map((r) => refTile({ id: r.assetId, url: r.url, filename: r.filename, selected: !ex.has(r.assetId), onOpen: () => openFull(r.url, r.filename), onToggle: () => { if (ex.has(r.assetId)) ex.delete(r.assetId); else ex.add(r.assetId); draw(); } })))) : null;
+        const chars = [...new Set(d.refs.filter((r) => r.type === 'character').map((r) => r.characterId))];
+        body.replaceChildren(
+          h('div', { class: 'issue warn', 'data-ref-limit-warning': '' }, `선택한 참조 이미지 ${kept.length}장 / 이 모델의 한도 ${max}장${d.limit && d.limit.model ? ' (' + d.limit.model + ')' : ''}. ${kept.length > max ? (kept.length - max) + '장 더 선택 해제해야 합니다.' : '한도 안입니다.'}`),
+          h('div', { class: 'small muted' }, '체크를 해제한 이미지는 이번 요청에서만 빠집니다. 캐릭터 라이브러리의 선택은 바뀌지 않고, 자동으로 빼거나 다른 이미지로 바꾸지 않습니다. 각 캐릭터는 최소 1장, 제품은 최소 1장이 남아야 합니다.'),
+          ...chars.map((cid) => group(`${(d.refs.find((r) => r.characterId === cid) || {}).name} · 선택 ${perChar[cid]}장`, d.refs.filter((r) => r.type === 'character' && r.characterId === cid))),
+          group(`제품 참조 · ${d.refs.filter((r) => r.type === 'product' && !ex.has(r.assetId)).length}장`, d.refs.filter((r) => r.type === 'product')),
+          h('div', { class: 'row end', style: 'gap:8px' }, h('button', { class: 'btn ghost', type: 'button', onclick: () => { close(); resolve(null); } }, '취소'), h('button', { class: 'btn sage', type: 'button', 'data-ref-limit-apply': '', disabled: !ok, onclick: () => { close(); resolve([...ex]); } }, '이 요청에 적용')));
+      };
+      draw();
+      return h('div', { class: 'stack' }, h('h2', { style: 'margin:0' }, '참조 이미지가 모델 한도를 넘습니다'), body);
+    });
+  });
+}
+
 export async function makeStartImages(ep, sceneIds = [], { force = false, after } = {}) {
   const route = ((state.summary.ai || {}).routing || []).find((r) => r.task === 'imageGeneration') || { provider: 'mock' };
   if (!ep.derived.scriptApproved) return toast('대본을 먼저 승인하세요. (유료 이미지 생성은 대본 승인 후에만 가능합니다)', { error: true });
   if (route.provider !== 'gemini') return toast('이미지 생성 제공자가 연결되지 않았습니다. Settings → AI 연동에서 Gemini 키와 이미지 생성 모델을 "제품 이미지 생성" 작업에 지정하세요.', { error: true });
-  let est;
-  try { est = await api.post(`/api/episodes/${ep.id}/start-images/estimate`, { sceneIds, force }); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
+  let est; let exclude = [];
+  for (;;) {
+    try { est = await api.post(`/api/episodes/${ep.id}/start-images/estimate`, { sceneIds, force, exclude }); break; } catch (e) {
+      if (e.code === 'REF_LIMIT_EXCEEDED' && e.details && e.details.refs) { const r = await refLimitDialog(e.details, exclude); if (!r) return; exclude = r; continue; }
+      return toast(e.message, { error: true, recovery: e.recovery });
+    }
+  }
   if (!est.count) return toast(est.skipped && est.skipped.length ? '새로 만들 장면이 없습니다: ' + est.skipped.map((x) => x.sceneId + ' (' + x.reason + ')').join(' / ') : '만들 장면이 없습니다.');
   const c = await confirmPaid({ title: `장면 ${est.count}개 시작 이미지 만들기 (유료일 수 있음)`, est, confirmLabel: '생성',
     body: h('div', { class: 'small stack', style: 'gap:6px' },
@@ -124,7 +161,7 @@ export async function makeStartImages(ep, sceneIds = [], { force = false, after 
       h('div', { class: 'muted' }, '만들어진 이미지는 "미승인" 상태로 저장됩니다. 스토리보드에서 하나씩 확인하고 승인해야 영상 생성에 쓰입니다.')) });
   if (!c) return;
   try {
-    const v = await api.post(`/api/episodes/${ep.id}/start-images/generate`, { sceneIds, force, confirm: c });
+    const v = await api.post(`/api/episodes/${ep.id}/start-images/generate`, { sceneIds, force, confirm: c, exclude });
     const r = v.startImageResult || { generated: [], skipped: [], failed: null };
     if (r.failed) toast(`${r.generated.length}개 만들었고 ${r.failed.sceneId}에서 멈췄습니다: ${r.failed.message}`, { error: true, recovery: r.failed.recovery });
     else toast(`시작 이미지 ${r.generated.length}개를 만들었습니다. 스토리보드에서 확인 후 승인하세요.`);

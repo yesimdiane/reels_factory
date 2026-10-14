@@ -37,19 +37,22 @@ function createStartImages({ store, products, router, lib, charRefs, log = () =>
   }
 
   /** Inputs for one scene. Throws (before any paid call) when the cast has no approved, non-placeholder character reference. */
-  function inputs(ep, scene) {
+  function inputs(ep, scene, exclude = []) {
     const L = lib();
     const cast = scene.characters || [];
     // the ACTUAL approved image bytes of the characters in this scene (validated first; throws before any paid call)
-    const ci = charRefs.inputsFor(ep, scene);
+    const ci = charRefs.inputsFor(ep, scene, { exclude });
     const images = ci.images.slice();
     const used = ci.used;
-    let productIds = [];
+    let productIds = []; const productParts = [];
     if (scene.showsProduct && ep.productId && ep.productRefs && (ep.productRefs.imageIds || []).length) {
-      const files = products.imageFiles(ep.productId, ep.productRefs.imageIds.slice(0, MAX_PRODUCT_REFS));
-      files.forEach((f) => images.push({ label: 'APPROVED product reference (the product must match this exactly: shape, logo, colour, function):', mimeType: f.mimeType, data: fs.readFileSync(f.path).toString('base64') }));
+      const ex = new Set([].concat(exclude || []).map(String));
+      const files = products.imageFiles(ep.productId, ep.productRefs.imageIds.slice(0, MAX_PRODUCT_REFS)).filter((f) => !ex.has(`${ep.productId}:${f.id}`));
+      if (!files.length) throw new StudioError('NO_PRODUCT_REF', `${scene.id}: 이 요청에서 제품 참조 이미지를 모두 제외했습니다. 제품이 나오는 장면에는 제품 참조가 최소 1장 필요합니다.`, { status: 409 });
+      files.forEach((f) => { const buf = fs.readFileSync(f.path); images.push({ label: 'APPROVED product reference (the product must match this exactly: shape, logo, colour, function):', mimeType: f.mimeType, data: buf.toString('base64') }); productParts.push({ assetId: `${ep.productId}:${f.id}`, filename: f.id, url: `/media/product/${ep.productId}/${f.id}`, bytes: buf.length, mime: f.mimeType, name: (ep.product || {}).name }); });
       productIds = files.map((f) => f.id);
     }
+    try { charRefs.enforce({ chars: ci.chars, product: productParts }); } catch (e) { if (e.details) e.details.sceneId = scene.id; e.message = `${scene.id}: ${e.message}`; throw e; } // model input limits, before any paid call
     const facts = scene.showsProduct ? (ep.product.verifiedFeatures || []) : [];
     const prompt = [
       'Create ONE vertical 9:16 illustration: the FIRST FRAME of a short animated comedy scene, in a clean 2D anime / Korean webtoon style (ink outlines, flat cel shading, expressive faces).',
@@ -73,7 +76,7 @@ function createStartImages({ store, products, router, lib, charRefs, log = () =>
     let unknown = false;
     let est = null;
     const scenes = targets.map((s) => {
-      const q = inputs(ep, s);
+      const q = inputs(ep, s, opts.exclude);
       est = router.estimate('imageGeneration', { inputChars: q.prompt.length, outputTokens: 1500, images: q.images.length });
       if (est.usd == null) unknown = true; else usd += est.usd;
       return { sceneId: s.id, images: q.images.length };
@@ -82,12 +85,12 @@ function createStartImages({ store, products, router, lib, charRefs, log = () =>
     return Object.assign({}, est, { usd: unknown ? null : Math.round(usd * 1e6) / 1e6, count: targets.length, scenes, skipped, note: `장면 ${targets.length}개 × 이미지 1장 (장면당 별도 호출). ` + (est.note || '') });
   }
 
-  async function generate(epId, sceneIds, { confirm, force = false, by = 'operator' } = {}) {
+  async function generate(epId, sceneIds, { confirm, force = false, exclude = [], by = 'operator' } = {}) {
     const ep0 = store.episodes.get(epId);
     gate(ep0);
     const { targets, skipped } = plan(ep0, sceneIds, { force });
     if (!targets.length) return { generated: [], skipped, failed: null };
-    targets.forEach((s) => inputs(ep0, s)); // all pre-flight problems surface BEFORE the first paid call
+    targets.forEach((s) => inputs(ep0, s, exclude)); // all pre-flight problems surface BEFORE the first paid call
     const generated = [];
     let failed = null;
     for (const scene of targets) {
@@ -95,7 +98,7 @@ function createStartImages({ store, products, router, lib, charRefs, log = () =>
       gate(ep);
       const cur = ep.scenes.find((x) => x.id === scene.id);
       if (!cur || (hasFrame(cur) && cur.startImage.approved)) { skipped.push({ sceneId: scene.id, reason: '진행 중에 승인된 프레임이 생겨 건너뜁니다.' }); continue; }
-      const q = inputs(ep, cur);
+      const q = inputs(ep, cur, exclude);
       let out;
       try {
         out = await router.runImage('imageGeneration', { prompt: q.prompt, images: q.images, confirm });

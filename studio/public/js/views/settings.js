@@ -6,6 +6,7 @@ import { aiIntegrations, promptManager, usagePanel } from './ai-settings.js';
 import { presetManager } from './script-prompt.js';
 import { endingManager } from './ending-settings.js';
 import { manychatCard } from './manychat-settings.js';
+import { refGallery } from './ref-gallery.js';
 import { voiceConnections } from './voice-connections.js';
 
 function kv(k, v) { return h('div', { class: 'row between', style: 'padding:6px 0;border-bottom:1px solid var(--line)' }, h('span', { class: 'muted' }, k), h('span', null, v)); }
@@ -101,13 +102,7 @@ export function charCard(c) {
     input, icon('upload'), ' 참조 이미지를 끌어놓거나 클릭해서 올리기 (PNG·JPG·WebP)');
   return h('div', { class: 'card stack', style: 'gap:12px' },
     h('div', { class: 'row between' }, h('div', { class: 'row' }, charAvatar(c, true), h('div', null, h('h3', null, c.name + ' · ' + c.nameKo), h('div', { class: 'small muted' }, c.role))), chip(c.references.some((r) => r.approved) ? '승인된 참조 있음' : '승인된 참조 없음', c.references.some((r) => r.approved) ? 'done' : 'attention')),
-    h('div', { class: 'ref-grid' }, c.references.map((r) => h('figure', { class: 'ref' + (r.approved ? ' ok' : '') },
-      h('img', { src: r.url, alt: r.label || c.name }),
-      h('figcaption', null, h('div', { class: 'small' }, (r.label || '참조') + (r.placeholder ? ' · 임시' : '')),
-        h('label', { class: 'small', style: 'display:flex;gap:6px;align-items:center', title: '여러 그림이 모인 시트이면 체크 (시작 프레임으로 직접 쓸 수 없음)' }, h('input', { type: 'checkbox', checked: r.isSheet !== false, onchange: (e) => act(async () => { await api.put(`/api/characters/${c.id}/references/${r.id}`, { isSheet: e.target.checked }); return null; }) }), '캐릭터 시트'),
-        h('div', { class: 'row', style: 'gap:6px' },
-          h('button', { class: 'btn sm ' + (r.approved ? 'ghost' : 'sage'), onclick: () => act(async () => { await api.post(`/api/characters/${c.id}/references/${r.id}/approve`, { approved: !r.approved }); return null; }) }, r.approved ? '승인 취소' : '승인'),
-          h('button', { class: 'btn sm ghost', 'aria-label': '삭제', onclick: async () => { if (await confirmDialog({ title: '참조 이미지를 삭제할까요?', body: '이 이미지를 시작 프레임으로 쓰는 장면은 다시 지정해야 합니다.', confirm: '삭제', tone: 'clay' })) act(async () => { await api.del(`/api/characters/${c.id}/references/${r.id}`); return null; }); } }, icon('trash')))))) ),
+    refGallery(c),
     dz,
     h('div', { class: 'field' }, h('label', null, '외형 설명'), h('textarea', { rows: 3, value: f.look, oninput: (e) => (f.look = e.target.value) })),
     h('div', { class: 'field' }, h('label', null, '프롬프트 블록 (생성에 그대로 들어감)'), h('textarea', { rows: 3, value: f.promptBlock, oninput: (e) => (f.promptBlock = e.target.value) })),

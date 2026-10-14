@@ -599,3 +599,18 @@ body.scene-dragging-body { cursor: grabbing; user-select: none; -webkit-user-sel
 [data-voice-picker] { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
 [data-voice-picker] select, [data-voice-picker] input[type=search], [data-voice-library] select, [data-voice-library] input[type=search] { min-height: 36px; max-width: 100%; }
 .asset-chip a { color: inherit; text-decoration: underline; }
+
+/* Compact reference selection (Character Library + Storyboard) */
+.ref-compact-grid { display: grid; grid-template-columns: repeat(auto-fill, 100px); gap: 10px; align-items: start; }
+.ref-tile { width: 100px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ref-tile .ref-thumb { position: relative; display: block; width: 92px; height: 92px; padding: 0; border: 2px solid var(--line-strong); border-radius: 10px; overflow: hidden; background: var(--paper); cursor: zoom-in; }
+.ref-tile .ref-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ref-tile.selected .ref-thumb { border-color: var(--sage-deep); box-shadow: 0 0 0 2px var(--sage-wash); }
+.ref-tile .ref-check { position: absolute; top: 3px; right: 3px; background: var(--sage-deep); color: #fff; font-size: 11px; line-height: 1; padding: 3px 6px; border-radius: 999px; }
+.ref-tile .ref-fn { width: 92px; font-size: 11px; color: var(--espresso-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ref-tile .ref-fn:focus { outline: 2px solid var(--sage-deep); border-radius: 4px; }
+.ref-tile .btn.sm { padding: 3px 8px; font-size: 11px; min-height: 26px; }
+
+/* B-roll approval state: soft sage card when approved AND the image is really usable */
+.broll-card[data-broll-state="approved"] { background: var(--sage-wash); border-color: #b6c8a8; box-shadow: inset 0 0 0 1px #c4d3b8; }
+.broll-card[data-broll-state="attention"] { background: var(--clay-wash); border-color: #e6c6ab; }

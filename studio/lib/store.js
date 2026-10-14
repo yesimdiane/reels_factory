@@ -78,6 +78,21 @@ function createStore({ dir, seedDir = SEED_DIR }) {
       characters.save(lib);
       return c;
     },
+    /** The character's chosen reference images, in order (first = primary). At most 3 PER CHARACTER; only approved, real images. Uploads that are not selected are kept untouched. */
+    setReferenceSelection(charId, refIds) {
+      if (!Array.isArray(refIds)) throw new StudioError('BAD_SELECTION', '참조 이미지 목록이 필요합니다.', { status: 400 });
+      const ids = refIds.map(String);
+      if (new Set(ids).size !== ids.length) throw new StudioError('BAD_SELECTION', '같은 이미지가 두 번 선택되었습니다.', { status: 400 });
+      if (ids.length > 3) throw new StudioError('SELECTION_LIMIT', `캐릭터당 참조 이미지는 최대 3장까지 선택할 수 있습니다 (선택 ${ids.length}장). 다른 이미지를 먼저 선택 해제하세요.`, { status: 409 });
+      return characters.update(charId, (c) => {
+        ids.forEach((id) => {
+          const r = c.references.find((x) => x.id === id);
+          if (!r) throw new StudioError('NOT_FOUND', '참조 이미지를 찾을 수 없습니다: ' + id, { status: 404 });
+          if (!r.approved || r.placeholder) throw new StudioError('REF_NOT_APPROVED', `승인된 실제 이미지만 선택할 수 있습니다 (${r.originalName || id}).`, { status: 409, recovery: '먼저 이미지를 승인하세요.' });
+        });
+        c.referenceSelection = ids;
+      });
+    },
     refPath(charId, ref) {
       return p('characters', checkId(charId), ref.file);
     },
@@ -100,6 +115,7 @@ function createStore({ dir, seedDir = SEED_DIR }) {
         const r = c.references.find((x) => x.id === refId);
         if (!r) throw new StudioError('NOT_FOUND', '참조 이미지를 찾을 수 없습니다.', { status: 404 });
         r.approved = !!approved;
+        if (!approved && Array.isArray(c.referenceSelection)) c.referenceSelection = c.referenceSelection.filter((x) => x !== refId);
         r.approvedBy = approved ? by : '';
         r.approvedAt = approved ? nowIso() : '';
       });
@@ -117,6 +133,7 @@ function createStore({ dir, seedDir = SEED_DIR }) {
         if (i < 0) throw new StudioError('NOT_FOUND', '참조 이미지를 찾을 수 없습니다.', { status: 404 });
         // The file stays on disk (nothing is deleted); only the library entry is removed.
         c.references.splice(i, 1);
+        if (Array.isArray(c.referenceSelection)) c.referenceSelection = c.referenceSelection.filter((x) => x !== refId);
       });
     },
   };

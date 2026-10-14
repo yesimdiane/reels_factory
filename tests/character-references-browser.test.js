@@ -38,12 +38,14 @@ test('storyboard: character reference section shows real thumbnails and lets the
     const got = await page.evaluate(async (u) => { const r = await fetch(u); return { ok: r.ok, n: (await r.arrayBuffer()).byteLength }; }, src);
     assert.ok(got.ok && got.n === m.s.store.characters.get('jack').references.find((r) => r.id === j1.id).size, 'the served bytes are the stored file');
     await jack.locator('[data-ref-view]').click();
-    await page.waitForSelector('img[alt$="참조 이미지 원본"]');
+    await page.waitForSelector('img[data-ref-full]');
     await page.getByRole('button', { name: /닫기/ }).first().click();
     await jack.locator('[data-ref-change]').click();
-    await page.locator(`[data-ref-option="jack:${j2.id}"]`).click();
+    await page.locator(`[data-ref-toggle="jack:${j1.id}"]`).click(); // deselect the default
+    await page.locator(`[data-ref-toggle="jack:${j2.id}"]`).click();
+    await page.locator('[data-ref-save="jack"]').click();
     await page.waitForFunction(([b, a]) => { const el = document.querySelector(b); return el && el.innerText.includes(a); }, [box, `jack:${j2.id}`]);
-    assert.equal(m.s.store.episodes.get(id).sceneRefs[sid].jack, j2.id);
+    assert.deepEqual(m.s.store.episodes.get(id).sceneRefs[sid].jack, [j2.id]);
     await page.reload();
     await page.waitForSelector(box);
     assert.match(await page.locator(`${box} [data-char-ref="jack"]`).innerText(), new RegExp(`jack:${j2.id}`), 'survives refresh');
