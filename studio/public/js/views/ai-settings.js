@@ -44,6 +44,25 @@ function drawAi(ov) {
       })))),
     h('p', { class: 'small muted', style: 'margin:0' }, '모델 ID는 하드코딩하지 않습니다. 각 제공자의 "연결 테스트"가 계정의 실제 모델 목록을 불러오고, 목록에 없는 모델은 저장되지 않습니다.')));
 
+  // Video generation is a MuAPI task, not a text-model routing task.
+  // Reuse the existing registered video-model catalog and persisted defaultModelId.
+  wrap.append(asyncBlock(() => api.get('/api/settings'), (cfg) => {
+    const videoModels = cfg.models || [];
+    const current = cfg.settings?.defaultModelId || cfg.defaultModelId || '';
+    const pick = { id: current };
+    return h('div', { class: 'card stack', style: 'gap:10px', 'data-ai-video-routing': '' },
+      h('div', { class: 'card-head' }, h('h2', null, '애니메이션 영상 생성 · MuAPI'),
+        h('span', { class: 'small muted' }, 'Animation Studio 기본 모델 · 장면별 선택 가능')),
+      h('div', { class: 'row', style: 'gap:10px;align-items:end;flex-wrap:wrap' },
+        h('label', { class: 'field', style: 'flex:1;min-width:220px' }, h('span', { class: 'small' }, '기본 영상 모델'),
+          h('select', { 'data-ai-video-model': '', onchange: (e) => { pick.id = e.target.value; } },
+            videoModels.map((m) => h('option', { value: m.id, selected: m.id === pick.id }, (m.label || m.id) + ' · ' + m.id)))),
+        h('button', { class: 'btn sm', type: 'button', 'data-ai-video-save': '', disabled: !videoModels.length, onclick: async () => {
+          if (await call(() => api.put('/api/settings', { defaultModelId: pick.id }), '애니메이션 기본 모델을 저장했습니다')) redo();
+        } }, '저장')),
+      h('div', { class: 'small muted' }, 'MuAPI 계정 모델을 가져오거나 신규 모델을 등록하려면 아래 MuAPI 연결 · 영상 모델에서 연결 확인을 사용하세요. 모델을 저장해도 영상 생성이나 과금은 시작되지 않습니다.'));
+  }));
+
   // ---- pricing ----
   const pairs = new Set();
   ov.routing.forEach((r) => r.provider !== 'mock' && r.model && pairs.add(r.provider + ':' + r.model));
