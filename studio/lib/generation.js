@@ -142,7 +142,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     add('DURATION', bad.length === 0, bad.length ? `모델의 최대 클립 길이(${maxClip}초)보다 긴 장면: ${bad.map((s) => s.id + ' ' + s.durationSec + '초').join(', ')} — 장면을 나누거나 줄이세요` : '클립 길이 지원');
     add('MODE', !model.mode || model.mode === 'image-to-video', !model.mode || model.mode === 'image-to-video' ? '이미지→영상 방식 (시작 이미지 사용)' : `이 앱은 이미지→영상만 사용합니다 (모델 방식: ${model.mode})`);
     const verified = model.verification === 'verified';
-    return { items, ok: items.every((i) => i.ok), verification: model.verification || 'unknown', verified, note: verified ? '실제 호출로 확인된 모델입니다.' : '공식 문서의 예시 기준 항목입니다. 첫 실제 실행 전에 Muapi 플레이그라운드에서 엔드포인트와 파라미터를 확인하세요 (이 앱은 실제 호출 없이 검증할 수 없습니다).' };
+    return { items, ok: items.every((i) => i.ok), verification: model.verification || 'unknown', verified, note: verified ? '실제 호출로 확인된 모델입니다.' : model.verification === 'user-entered' ? 'Settings에 직접 등록한 MuAPI 엔드포인트를 사용합니다. 실제 동작은 검증되지 않았으므로 플레이그라운드에서 경로와 파라미터를 확인하세요. 생성은 별도 비용 승인 후에만 실행됩니다.' : '공식 문서의 예시 기준 항목입니다. 첫 실제 실행 전에 Muapi 플레이그라운드에서 엔드포인트와 파라미터를 확인하세요 (이 앱은 실제 호출 없이 검증할 수 없습니다).' };
   }
 
   /** Free. Never touches the network. */
