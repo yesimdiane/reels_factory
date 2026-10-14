@@ -22,6 +22,7 @@
 //   * polling (GET, free) is retried with backoff on transient errors.
 //   * nothing in this file runs at import time; every network call is an explicit method call.
 'use strict';
+const { validateEndpoint, buildBody } = require('../modelcontract');
 const fs = require('node:fs');
 const path = require('node:path');
 const { writeFileAtomic, sleep } = require('../util');
@@ -158,14 +159,10 @@ function createMuapiProvider({
     async submit({ model, prompt, imageUrl, aspectRatio = '9:16', duration, negativePrompt, extra = {} }) {
       need();
       if (!model || !model.endpoint) throw new ProviderError('BAD_REQUEST', '모델 엔드포인트가 설정되지 않았습니다.');
-      const body = Object.assign({}, model.extraParams || {}, extra, {
-        [model.promptField || 'prompt']: prompt,
-        [model.imageField || 'image_url']: imageUrl,
-        aspect_ratio: aspectRatio,
-      });
-      if (duration != null) body.duration = duration;
-      if (negativePrompt) body.negative_prompt = negativePrompt;
-      const url = base + '/' + String(model.endpoint).replace(/^\/?(api\/v1\/)?/, '');
+      const ep = validateEndpoint(model.endpoint);
+      if (!ep) throw new ProviderError('BAD_REQUEST', '모델 엔드포인트 형식이 올바르지 않습니다 (MuAPI 기본 주소 아래의 경로만 허용).');
+      const body = buildBody(model, { prompt, imageUrl, aspectRatio, duration, negativePrompt, extra });
+      const url = base + '/' + ep;
       let lastErr = null;
       for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {
         let res;

@@ -125,6 +125,7 @@ test('live mode: unknown price blocks; limit enforced; confirmed amount must mat
   await readyForGeneration(createStudio({ cfg, store, provider: createMockVideoProvider({ ffmpeg: cfg.ffmpeg.ffmpeg }) })); // prepared in mock mode
   const prov = Object.assign(createMockVideoProvider({ ffmpeg: cfg.ffmpeg.ffmpeg }), { mode: 'live', paid: true });
   const s = createStudio({ cfg, store, provider: prov });
+  s.confirmModel('kling-master'); // live generation needs the operator's playground confirmation
   let est = s.gen.estimate('EP01');
   assert.ok(est.blockers.some((b) => b.code === 'ESTIMATE_UNKNOWN'));
   await assert.rejects(s.gen.authorize('EP01', { confirmUnknown: true }), (e) => e.code === 'BLOCKED');

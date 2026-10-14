@@ -53,7 +53,7 @@ test('operator-entered models use the same adapter, are marked user-entered, and
   assert.throws(() => s.addCustomModel({ id: 'Bad Id', endpoint: 'x', durations: [5] }), (e) => e.code === 'BAD_MODEL');
   assert.throws(() => s.addCustomModel({ id: 'm1', endpoint: '../evil', durations: [5] }), (e) => e.code === 'BAD_MODEL');
   assert.throws(() => s.addCustomModel({ id: 'm1', endpoint: 'ok/path', durations: [] }), (e) => e.code === 'BAD_MODEL');
-  s.addCustomModel({ id: 'my-model', label: 'My model', endpoint: 'my-model', durations: [4, 8], resolutions: ['720p', '1080p'], supportsNegativePrompt: false });
+  s.addCustomModel({ id: 'my-model', label: 'My model', endpoint: 'my-model', durations: [4, 8], resolutions: ['720p', '1080p'], supportsNegativePrompt: false, confirmed: true });
   const m = s.store.models().find((x) => x.id === 'my-model');
   assert.equal(m.verification, 'user-entered'); assert.equal(m.custom, true); assert.deepEqual(m.durations, [4, 8]); assert.deepEqual(m.resolutions, ['720p', '1080p']);
   await s.saveSettings({ defaultModelId: 'my-model' });

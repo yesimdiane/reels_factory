@@ -101,8 +101,15 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
         if (img.placeholder && provider.mode === 'live') add('PLACEHOLDER_IMAGE', `${s.id}: 데모용 임시 이미지는 실제(유료) 생성에 쓸 수 없습니다.`, '실제 캐릭터 참조 이미지를 올리고 승인하세요.');
       }
     });
-    if (provider.mode === 'live' && !['verified', 'docs-example', 'user-entered'].includes(model.verification)) add('MODEL_UNVERIFIED', '모델 엔드포인트가 확인되지 않았습니다.', 'Settings에서 MuAPI 모델과 엔드포인트를 직접 등록하고, 실제 호출 전에 플레이그라운드에서 경로를 확인하세요.');
+    if (provider.mode === 'live' && !['verified', 'user-entered'].includes(model.verification)) add('MODEL_UNVERIFIED', '모델 엔드포인트가 확인되지 않았습니다.', 'MuAPI 플레이그라운드에서 엔드포인트와 요청 파라미터를 확인한 뒤 Settings → Muapi 연결에서 "플레이그라운드에서 확인함"을 누르세요.');
     return out;
+  }
+
+  /** A real (live) job finished on this endpoint: that is the only thing that proves it works. */
+  function markVerified(model) {
+    if (!model || provider.mode !== 'live' || model.verification === 'verified') return;
+    const cur = store.settings.get();
+    store.settings.save({ modelVerification: Object.assign({}, cur.modelVerification || {}, { [model.id]: { level: 'verified', at: new Date().toISOString() } }) });
   }
 
   function cachedFor(ep, model) {
@@ -374,6 +381,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     await applyCost(epId, job, r.cost);
     const v = await finishDownload(epId, job, r.outputs);
     store.episodes.audit(epId, 'generation.completed', { sceneId, requestId: job.requestId, clipVersion: v });
+    markVerified(store.models().find((m) => m.id === job.modelId));
     return { sceneId, status: 'completed', clipVersion: v };
   }
 
