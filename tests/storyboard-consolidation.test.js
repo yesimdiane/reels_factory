@@ -100,7 +100,7 @@ test('Storyboard UI: three sections, structured image editor, approved scene col
   await new Promise((r) => app.listen(0, '127.0.0.1', r));
   let browser;
   try { browser = await pw.chromium.launch({}); } catch (e) { app.close(); throw e; }
-  const shots = path.join(__dirname, '..', 'docs', 'screenshots');
+  const shots = process.env.RF_SCREENSHOT_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'rf-shots-')); // committed copies: docs/screenshots (regenerate with RF_SCREENSHOT_DIR=docs/screenshots)
   try {
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 2300 } })).newPage();
     const errors = []; page.on('pageerror', (e) => errors.push(e.message));
