@@ -15,16 +15,19 @@ test('approved synthesized audio duration controls dialogue windows', () => {
   const w = dialogueWindows(ep, ep.lines, 5, 5);
   assert.equal(w[0].source, 'synthesized-audio');
   assert.equal(w[0].t0, 0.5);
+  assert.equal(w[0].audioEnd, 2.9, '2.2s audio rounds to 2.4s, starting at 0.5s');
   assert.equal(w[0].t1, 3);
   assert.equal(w[1].t0, 3);
   assert.equal(w[1].t1, 4);
   const beats = draftBeats(ep, scene, chars);
   assert.ok(beats.length);
   for (const b of beats) {
-    assert.equal(b.t1 - b.t0, 0.5);
+    assert.ok(b.t1 > b.t0 && b.t1 - b.t0 <= 0.5 + 1e-9, 'normal 0.5s beats with shorter audio-end cuts');
     assert.ok(b.emotion);
     assert.match(b.expression, /nose:.*mouth:/);
   }
+  assert.ok(beats.some(b => b.characterId === 'diane' && Math.abs(b.t1 - 2.9) < 1e-9 && /mouth moves/.test(b.expression)));
+  assert.ok(beats.some(b => b.characterId === 'diane' && Math.abs(b.t0 - 2.9) < 1e-9 && /mouth closed/.test(b.expression)));
 });
 test('stale synthesized audio is ignored without paid regeneration', () => {
   const ep = episode();
