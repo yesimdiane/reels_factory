@@ -42,6 +42,44 @@ function gestureFor(line) {
   return { body: 'nods once while speaking, small head movement', expression: 'brows rise on the key word, relaxed mouth' };
 }
 
+
+// Personality cues are limited to performance direction; they never override script dialogue.
+// Deliberately deterministic, free, and safe for scenes without Jack or Diane.
+const PERSONA = {
+  jack: {
+    question: { body: 'pauses, tilts his head and gives a restrained palm-up gesture', expression: 'one eyebrow lifts; skeptical side-eye' },
+    excited: { body: 'recoils a fraction, then leans closer to inspect', expression: 'eyes widen under raised brows; surprised half-smile' },
+    negative: { body: 'folds his arms briefly and shakes his head once', expression: 'dry, unimpressed look with lips pressed together' },
+    default: { body: 'makes a small, measured hand gesture', expression: 'subtle eyebrow movement and a dry half-smile' },
+    listen: { emotion: 'deadpan curiosity', body: 'brief stillness, then a delayed head tilt', expression: 'one eyebrow rises after a beat; mouth remains closed' }
+  },
+  diane: {
+    question: { body: 'leans forward and opens both hands toward the listener', expression: 'bright, inquisitive eyes and raised eyebrows' },
+    excited: { body: 'bursts forward with an enthusiastic presenting gesture', expression: 'eyes sparkle, eyebrows rise high, delighted open smile' },
+    negative: { body: 'waves one hand emphatically and shakes her head', expression: 'expressive brows, firm mouth and a playful glare' },
+    default: { body: 'gestures energetically while presenting the idea', expression: 'animated eyebrows and an engaged smile' },
+    listen: { emotion: 'playful anticipation', body: 'leans in, holding an eager response for a beat', expression: 'expectant smile, eyes following the speaker' }
+  }
+};
+function personaOf(cid, name) {
+  const key = [cid, name].map((v) => String(v || '').toLowerCase()).join(' ');
+  if (/\bjack\b/.test(key)) return PERSONA.jack;
+  if (/\bdiane\b/.test(key)) return PERSONA.diane;
+  return null;
+}
+function dialogueKind(line) {
+  const t = String(line.en || '');
+  if (/\b(don't|do not|never|no|not|nobody)\b/i.test(t)) return 'negative';
+  if (/!|\b(baby+y+|wow|amazing|look at this|check this out|love it)\b/i.test(t)) return 'excited';
+  if (/\?\s*$/.test(t)) return 'question';
+  return 'default';
+}
+function listenerCue(cid, name, index) {
+  const persona = personaOf(cid, name);
+  if (persona) return persona.listen;
+  return { emotion: index % 2 ? 'amused' : 'sceptical interest', body: 'reacts with a brief head movement after listening', expression: 'eyebrows flicker and lips settle into a considered expression' };
+}
+
 /** "0.0–1.5 s: …" segments from visual text, or null. */
 function timedSegments(text, dur) {
   const re = /(\d+(?:\.\d+)?)\s*(?:–|—|-|~|to)\s*(\d+(?:\.\d+)?)\s*s?\s*[:：]\s*([\s\S]*?)(?=(?:\d+(?:\.\d+)?\s*(?:–|—|-|~|to)\s*\d+(?:\.\d+)?\s*s?\s*[:：])|$)/gi;
@@ -62,6 +100,81 @@ function windows(dur, n) {
   const k = Math.max(1, Math.min(n, total));
   const out = []; let cur = 0;
   for (let i = 0; i < k; i++) { const end = i === k - 1 ? total : cur + Math.max(1, Math.round((total - cur) / (k - i))); out.push({ t0: cur * STEP, t1: end * STEP }); cur = end; }
+  return out;
+}
+
+
+// Each saved beat represents one 0.5-second interval. Nose/mouth directions live
+// inside the existing expression field so the persisted schema and renderer remain compatible.
+function facialMicroPrompt(beat, stepIndex) {
+  const speaking = !!beat._speak;
+  const listening = !!beat._listen;
+  const phases = ['mouth opens on the stressed syllable', 'mouth narrows for consonants', 'mouth opens naturally on the vowel', 'lips close briefly between words'];
+  const mouth = speaking ? phases[stepIndex % phases.length] : listening ? 'mouth closed, subtle lip reaction' : 'mouth rests naturally, no speech lip-sync';
+  const nose = speaking ? 'subtle nostril movement with breathing' : 'nose remains stable with natural breathing';
+  return [beat.expression, 'nose: ' + nose, 'mouth: ' + mouth].filter(Boolean).join('; ').slice(0, 300);
+}
+// Compact per-character performance tracks. Only split at 0.1s precision
+// when speech actually ends between regular 0.5s motion boundaries.
+function compactCharacterBeats(beats, duration, speechWindows) {
+  const result = [];
+  const tenths = (n) => Math.round(n * 10) / 10; // store 0.3s audio cuts on a 0.1s-compatible timeline
+  const audioEnd = new Map();
+  for (const w of speechWindows) {
+    const key = String(w.line.speaker);
+    if (!audioEnd.has(key)) audioEnd.set(key, []);
+    audioEnd.get(key).push({ start: w.t0, end: w.audioEnd });
+  }
+  for (const beat of beats) {
+    const ranges = audioEnd.get(String(beat.characterId)) || [];
+    const cutPoints = [beat.t0, beat.t1];
+    // Spoken scenes use regular 0.5s motion beats; only speech endings add fractional cuts.
+    if (speechWindows.length) for (let t = Math.ceil((beat.t0 + 0.000001) / STEP) * STEP; t < beat.t1 - 0.000001; t += STEP) cutPoints.push(t);
+    for (const w of ranges) if (w.end > beat.t0 + 0.001 && w.end < beat.t1 - 0.001) cutPoints.push(w.end);
+    cutPoints.sort((x, y) => x - y);
+    const uniqueCuts = cutPoints.filter((x, i) => !i || x - cutPoints[i - 1] > 0.000001);
+    for (let i = 0; i < uniqueCuts.length - 1; i++) {
+      const t0 = tenths(uniqueCuts[i]), t1 = tenths(uniqueCuts[i + 1]);
+      if (t1 <= t0) continue;
+      const speaking = ranges.some(w => t0 >= w.start - 0.001 && t0 < w.end - 0.001);
+      const { _speak, _listen, _exit, ...clean } = beat;
+      const mouth = speaking ? 'mouth moves naturally while audio plays' : 'mouth closed; no lip movement';
+      const nose = 'nose remains steady with natural breathing';
+      result.push({ ...clean, t0, t1, emotion: String(beat.emotion || 'attentive').trim(),
+        expression: [String(beat.expression || '').replace(/; mouth shapes the line/gi, '').replace(/; nose:.*$/i, ''), 'nose: ' + nose, 'mouth: ' + mouth].filter(Boolean).join('; ').slice(0, 300),
+        body: String(beat.body || 'maintains the established pose').slice(0, 300) });
+    }
+  }
+  return result.sort((x, y) => x.t0 - y.t0 || String(x.characterId).localeCompare(String(y.characterId)));
+}
+
+// Read-only audio timing: use synthesized duration only for audio matching the
+// currently approved script. No TTS generation, file IO, or billable calls here.
+function audioDuration(ep, line) {
+  const saved = ep && ep.voice && ep.voice.lines && ep.voice.lines[line.id];
+  if (!saved || !Number.isFinite(Number(saved.durationSec)) || Number(saved.durationSec) <= 0) return null;
+  if (!saved.scriptHash) return null;
+  try {
+    const { scriptFingerprint } = require('./episode');
+    if (saved.scriptHash !== scriptFingerprint(ep)) return null;
+  } catch (_) { return null; }
+  return Number(saved.durationSec);
+}
+function dialogueWindows(ep, lines, duration, exitFrom) {
+  const out = [];
+  let cursor = Math.min(0.5, Math.max(0, duration - STEP));
+  for (const line of lines) {
+    if (cursor >= duration - 1e-6 || cursor >= exitFrom - 1e-6) break;
+    const measured = audioDuration(ep, line);
+    const estimated = Math.max(1, snap(String(line.en).trim().split(/\\s+/).length / 2.7));
+    const seconds = measured == null ? estimated : Math.max(0.1, Math.ceil(measured / 0.3) * 0.3);
+    const t0 = snap(cursor);
+    const audioEnd = Math.min(duration, exitFrom, Math.round((t0 + seconds) * 10) / 10);
+    const t1 = Math.min(duration, exitFrom, Math.ceil(audioEnd / STEP) * STEP);
+    if (t1 - t0 < STEP - 1e-6) break;
+    out.push({ line, t0, t1, audioEnd, source: measured == null ? 'estimated' : 'synthesized-audio', measuredSec: measured });
+    cursor = t1;
+  }
   return out;
 }
 
@@ -106,21 +219,19 @@ function draftBeats(ep, scene, characters) {
   });
 
   // 2) dialogue: a speaking beat (gesture from the line's content) + a reaction beat for the listener, before any exit
-  const speakSec = (l) => Math.max(1, snap(String(l.en).trim().split(/\s+/).length / 2.7));
-  let cursor = Math.min(0.5, Math.max(0, dur - STEP));
-  lines.forEach((l, n) => {
+  const speechWindows = dialogueWindows(ep, lines, dur, exitFrom);
+  speechWindows.forEach(({ line: l, t0, t1 }, n) => {
     const cid = cast.includes(l.speaker) ? l.speaker : cast[0];
     if (!cid) return;
-    const limit = Math.max(cursor + STEP, exitFrom);
-    const t0 = Math.min(cursor, dur - STEP);
-    const t1 = Math.min(dur, limit, Math.max(t0 + STEP, snap(t0 + speakSec(l))));
-    if (t1 - t0 < STEP) return;
-    const g = gestureFor(l);
+    const persona = personaOf(cid, nameOf(cid));
+    const g = persona ? persona[dialogueKind(l)] : gestureFor(l);
     const cue = cuesFor(l.en) || sceneCue || { emotion: 'engaged' };
     const tgt = other(cid);
     push({ t0, t1, characterId: cid, character: nameOf(cid), emotion: cue.emotion, body: g.body, gaze: tgt ? `toward ${nameOf(tgt)}` : 'toward the camera', expression: g.expression + '; mouth shapes the line', camera: '', _speak: true });
-    if (tgt) push({ t0, t1, characterId: tgt, character: nameOf(tgt), emotion: n % 2 ? 'amused' : 'sceptical interest', body: 'listens, eyes following the speaker, small reactive head movement', gaze: `toward ${nameOf(cid)}`, expression: 'brow flickers, lips press then relax', camera: '', _listen: true });
-    cursor = t1;
+    if (tgt) {
+      const react = listenerCue(tgt, nameOf(tgt), n);
+      push({ t0, t1, characterId: tgt, character: nameOf(tgt), emotion: react.emotion, body: react.body, gaze: `toward ${nameOf(cid)}`, expression: react.expression, camera: '', _listen: true });
+    }
   });
 
   // 3) resolve overlaps per character: speaking > exit > other structure; trimmed beats keep their text, drop only when < 0.5 s remain
@@ -144,7 +255,7 @@ function draftBeats(ep, scene, characters) {
     const tail = out.slice().sort((a, b) => a.t1 - b.t1).pop();
     out.push({ sceneId: scene.id, t0: r1(last), t1: r1(dur), characterId: tail.characterId, character: tail.character, emotion: tail.emotion, body: 'holds the final pose deliberately, letting the moment land', gaze: tail.gaze, expression: 'a held, knowing look', camera: 'camera holds' });
   }
-  return out.map((b) => { const { _speak, _exit, _listen, ...keep } = b; return keep; }).sort((a, b) => a.t0 - b.t0 || String(a.characterId).localeCompare(String(b.characterId)));
+  return compactCharacterBeats(out, dur, speechWindows);
 }
 
-module.exports = { draftBeats, isGeneric, isGenericText, timedSegments, GENERIC, STEP };
+module.exports = { draftBeats, dialogueWindows, audioDuration, isGeneric, isGenericText, timedSegments, GENERIC, STEP };

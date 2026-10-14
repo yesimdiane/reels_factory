@@ -39,6 +39,17 @@ export function charRefsPanelBody(ep, sc) {
         h('div', { class: 'small mono muted', 'data-ref-asset': '' }, r.assetId || '—'),
         chip(label, kind),
         r.status !== 'approved' ? h('div', { class: 'small', style: 'color:#8a4e2c' }, r.status === 'missing' ? `Character reference missing: ${r.name}. Please upload or select a reference image.` : r.message) : null,
+        // Show the full approved Character Library gallery, not just the selected image.
+        r.options && r.options.length ? h('div', { class: 'stack', style: 'gap:5px', 'data-ref-gallery': r.characterId },
+          h('div', { class: 'small muted' }, '저장된 캐릭터 이미지 · ' + r.options.length + '개'),
+          h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, r.options.map((o) =>
+            h('button', { type: 'button', class: 'ref-pick' + (o.refId === r.refId ? ' on' : ''),
+              'data-gallery-asset': o.assetId, title: o.label || o.assetId,
+              onclick: () => viewFull({ name: r.name, assetId: o.assetId, url: o.url }) },
+              o.url ? h('img', { src: o.url, alt: r.name + ' · ' + (o.label || o.assetId), loading: 'lazy',
+                style: 'width:62px;height:62px;object-fit:cover;border-radius:8px' }) :
+                h('span', { class: 'small' }, '파일 없음'),
+              h('span', { class: 'small' }, o.refId === r.refId ? '✓ 선택됨' : (o.label || '보기')))))) : null,
         h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
           r.url && r.status !== 'placeholder' ? h('button', { class: 'btn sm ghost', type: 'button', 'data-ref-view': r.characterId, onclick: () => viewFull(r) }, '원본 보기') : null,
           h('button', { class: 'btn sm ghost', type: 'button', 'data-ref-change': r.characterId, onclick: () => changer(ep, sc, r) }, '참조 변경')));
