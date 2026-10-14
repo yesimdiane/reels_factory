@@ -187,7 +187,8 @@ test('HTTP: motion, draft and B-roll routes', async () => {
   });
   try {
     const base = `/api/episodes/${m.id}`;
-    assert.equal((await call('PUT', `${base}/scenes/${m.sid}/motion`, { beats: [beat(0, 0.3)] })).status, 422);
+    assert.equal((await call('PUT', `${base}/scenes/${m.sid}/motion`, { beats: [beat(0, 0.25)] })).status, 422);
+    assert.equal((await call('PUT', `${base}/scenes/${m.sid}/motion`, { beats: [beat(0, 0.3)] })).status, 200);
     assert.equal((await call('PUT', `${base}/scenes/${m.sid}/motion`, { beats: [beat(0, 1)] })).status, 200);
     assert.equal((await call('POST', `${base}/scenes/${m.sid2}/motion/draft`)).status, 200);
     const sg = await call('POST', `${base}/broll/suggest`);
