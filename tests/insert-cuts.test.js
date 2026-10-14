@@ -154,6 +154,7 @@ const { loadConfig } = require('../renderer/lib/config');
 const { createStudio } = require('../studio/lib/studio');
 const { createMockVideoProvider } = require('../studio/lib/providers/mock');
 const { approveWithScenes } = require('./helpers/approve');
+const { approveAllAudio, approveAllScenes } = require('./helpers/scene-flow');
 const cfgFor = () => loadConfig({ RF_STUDIO_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'rf-cuts-')), RF_FONT_NAME: 'Noto Sans CJK KR', RF_ALLOW_FONT_FALLBACK: '1' }, { dotenvFile: '/nonexistent' });
 const hasFfmpeg = (() => { try { return require('node:child_process').spawnSync(cfgFor().ffmpeg.ffmpeg, ['-version']).status === 0; } catch { return false; } })();
 
@@ -162,6 +163,7 @@ test('full render: inserts replace part of the shot — same output length, audi
   const s = createStudio({ cfg, provider: createMockVideoProvider({ ffmpeg: cfg.ffmpeg.ffmpeg, pollsUntilDone: 1 }) });
   const id = 'EP01';
   await approveWithScenes(s, id);
+  await approveAllAudio(s, id);
   await s.rebuildPrompts(id);
   await s.loadDemoReferences();
   await s.approveStoryboard(id);
@@ -169,6 +171,7 @@ test('full render: inserts replace part of the shot — same output length, audi
   await (await s.gen.run(id, auth.id)).done;
   for (const sc of s.episodeView(id).scenes) await s.gen.review(id, sc.id, 1, 'approve');
   await s.voice.synthesize(id);
+  await approveAllScenes(s, id);
   const base = await (await s.renderer.render(id, { preview: false })).done;
   const view0 = s.episodeView(id);
   assert.equal(view0.derived.steps.find((x) => x.key === 'render').state, 'done');
@@ -187,6 +190,7 @@ test('full render: inserts replace part of the shot — same output length, audi
   assert.ok(blocked.problems.some((p) => p.code === 'CUTS_NOT_APPROVED' && p.message.includes(view0.scenes[0].id)));
   await assert.rejects(s.renderer.render(id, { preview: false }), (e) => e.code === 'BLOCKED');
   await s.projects.approveScene(id, view0.scenes[0].id);
+  await approveAllScenes(s, id);
   assert.equal(s.renderer.plan(id).canRender, true);
   const withCuts = await (await s.renderer.render(id, { preview: false })).done;
   const info1 = await probe(cfg.ffmpeg.ffprobe, s.store.episodes.file(id, withCuts.file));

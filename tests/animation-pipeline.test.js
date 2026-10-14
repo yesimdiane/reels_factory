@@ -4,6 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { approveWithScenes } = require('./helpers/approve');
+const { approveAllAudio } = require('./helpers/scene-flow');
 const { make, fakeAi, conceptsForPrompt, scriptResponse, isScriptPrompt, readyProduct, routePaid, png } = require('./helpers/v23');
 const { draftBeats, isGeneric } = require('../studio/lib/animdraft');
 
@@ -146,10 +147,11 @@ test('Rendering Readiness names the exact blockers, then clears them step by ste
   refs(m.s);
   for (const sc of m.s.store.episodes.get(m.id).scenes) { await m.s.uploadStartFrame(m.id, sc.id, png(160 + sc.id.length), sc.id + '.png'); await m.s.approveStartFrame(m.id, sc.id, true); }
   await m.s.approveStoryboard(m.id);
+  await approveAllAudio(m.s, m.id);
   r = m.s.renderReadiness.check(m.s.store.episodes.get(m.id));
   assert.equal(r.canGenerateVideo, true, JSON.stringify(r.items.filter((i) => (i.severity === 'block' || i.severity === 'pending') && i.stage === 'generate').map((i) => i.code + ':' + i.message)));
   assert.equal(r.canRender, false, 'clips and audio are still missing');
-  assert.ok(codes().every((c) => /CLIP|AUDIO/.test(c)), codes().join());
+  assert.ok(codes().every((c) => /CLIP|AUDIO|SCENE/.test(c)), codes().join());
   // a deleted start-frame file is reported specifically (not a generic failure)
   const sc0 = m.s.store.episodes.get(m.id).scenes[0];
   require('node:fs').rmSync(m.s.store.episodes.file(m.id, 'startframes', sc0.startImage.file));

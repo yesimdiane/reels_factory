@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { approveWithScenes } = require('./helpers/approve');
+const { approveAllAudio, approveAllScenes } = require('./helpers/scene-flow');
 const { png } = require('./helpers/v23');
 const { loadConfig } = require('../renderer/lib/config');
 const { createStudio } = require('../studio/lib/studio');
@@ -25,6 +26,7 @@ test('storyboard: readiness → scene clip section → generate → preview → 
   const s = createStudio({ cfg, provider: prov });
   const ID = 'EP01';
   await approveWithScenes(s, ID);
+  await approveAllAudio(s, ID);
   await s.rebuildPrompts(ID);
   ['jack', 'diane'].forEach((cid, i) => { s.store.characters.addReference(cid, { buffer: png(300 + i), filename: cid + '.png', mime: 'image/png' }); const r = s.store.characters.get(cid).references.slice(-1)[0]; s.store.characters.setReferenceApproved(cid, r.id, true); });
   const ids = s.store.episodes.get(ID).scenes.map((x) => x.id);

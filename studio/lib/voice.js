@@ -83,13 +83,15 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
   }
 
   /** Free, no network. */
-  function estimate(epId) {
-    const ep = store.episodes.get(epId);
+  function estimate(epId, { sceneIds } = {}) {
+    const ep0 = store.episodes.get(epId);
+    const ep = ep0; // approvals are checked against the whole episode; only the lines to speak are filtered
+    const wanted = ep0.lines.filter((l) => !sceneIds || !sceneIds.length || sceneIds.includes(l.sceneId));
     const lib = store.characters.load();
     const settings = store.settings.get();
-    const speakers = [...new Set(ep.lines.map((l) => l.speaker))];
+    const speakers = [...new Set(wanted.map((l) => l.speaker))];
     const chars = speakers.map((id) => lib.characters.find((c) => c.id === id)).filter(Boolean);
-    const lines = ep.lines.map((l) => {
+    const lines = wanted.map((l) => {
       const c = chars.find((x) => x.id === l.speaker);
       const a = c ? lineAudio(ep, l) : { valid: false };
       return { lineId: l.id, speaker: l.speaker, chars: [...l.en].length, cached: a.valid, durationSec: a.valid ? a.durationSec : null };
@@ -104,14 +106,14 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
   }
 
   /** BILLABLE in live mode. confirmChars must equal the estimate the operator saw. */
-  async function synthesize(epId, { confirmChars, by = 'operator' } = {}) {
-    const est = estimate(epId);
+  async function synthesize(epId, { confirmChars, by = 'operator', sceneIds } = {}) {
+    const est = estimate(epId, { sceneIds });
     if (est.blockers.length) throw new StudioError('BLOCKED', est.blockers[0].message, { recovery: est.blockers[0].recovery, details: est.blockers, status: 409 });
     if (modeNow() === 'live' && Number(confirmChars) !== est.billableChars) throw new StudioError('CONFIRM_MISMATCH', `확인한 글자 수(${confirmChars})가 현재 예상(${est.billableChars})과 다릅니다. 새로고침 후 다시 확인하세요.`, { status: 409 });
     const ep0 = store.episodes.get(epId);
     const lib = store.characters.load();
     const results = [];
-    for (const line of ep0.lines) {
+    for (const line of ep0.lines.filter((l) => !sceneIds || !sceneIds.length || sceneIds.includes(l.sceneId))) {
       const char = lib.characters.find((c) => c.id === line.speaker);
       if (lineAudio(ep0, line).valid) {
         results.push({ lineId: line.id, status: 'cached' });
