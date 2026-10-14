@@ -7,7 +7,7 @@ export const EN = {
   '연결 테스트': 'Test connection', '음성 목록 가져오기': 'Fetch voices', '연결 해제': 'Disconnect', '키 저장': 'Save key', '기본 목소리로 저장': 'Save as default voice', '미리듣기': 'Preview', '지정 해제': 'Clear voice', '제공자 연결': 'Connect provider', '목소리 변경': 'Change voice', '미리듣기 생성': 'Generate preview', '음성 연결': 'Voice connections',
   // navigation / generic
   '대시보드': 'Dashboard', '제품 스튜디오': 'Product Studio', '스토리 랩': 'Story Lab', '에피소드': 'Episodes', '대본 스튜디오': 'Script Studio',
-  '스토리보드': 'Storyboard', '비디오 스튜디오': 'Video Studio', '보이스': 'Voice', '렌더': 'Render', '최종 검토': 'Review', '게시': 'Publishing', '설정': 'Settings',
+  '스토리보드': 'Storyboard', '비디오 스튜디오': 'Video Studio', '애니메이션 스튜디오': 'Animation Studio', '보이스': 'Voice', '렌더': 'Render', '최종 검토': 'Review', '게시': 'Publishing', '설정': 'Settings',
   '비디오': 'Video', '대본': 'Script', '스튜디오': 'Studio',
   '열기': 'Open', '닫기': 'Close', '취소': 'Cancel', '확인': 'OK', '저장': 'Save', '저장됨': 'Saved', '삭제': 'Delete', '편집': 'Edit', '이동': 'Go', '보기': 'View', '목록': 'List',
   '복사': 'Copy', '전체 복사': 'Copy all', '복사됨': 'Copied', '다운로드': 'Download', '교체': 'Replace', '복원': 'Restore', '되돌리기': 'Undo', '기록': 'History', '현재': 'Current', '검토': 'Review',
