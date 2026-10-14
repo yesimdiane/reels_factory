@@ -30,7 +30,7 @@ test('B-roll card: AI 이미지 생성 opens an editable prompt with an actionab
     await page.goto(`http://127.0.0.1:${app.address().port}/#/storyboard/${id}`);
     await page.waitForSelector(`[data-sb-tab="${sc.id}"]`);
     await page.locator(`[data-sb-tab="${sc.id}"]`).click();
-    await page.locator('[data-panel="cuts"] summary').click();
+    await page.locator('[data-panel="cuts"] > summary').click();
     await page.locator(`[data-broll-generate="${b.id}"]`).click();
     const ta = page.locator('[data-broll-ai-prompt]');
     await ta.waitFor();

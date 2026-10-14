@@ -204,23 +204,42 @@ function cutsPanel(ep, sc) {
     ins.length ? h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, ins.map((x) => h('button', { type: 'button', class: 'chip', onclick: () => openCutEditor(ep, sc.id) }, `${x.preset || '컷'} ${x.startSec != null ? x.startSec + 's' : ''}`))) : h('div', { class: 'small muted' }, '영상 크롭 컷이 없습니다.'),
     h('div', { class: 'stack', style: 'gap:8px', 'data-broll-list': sc.id }, bro.length ? bro.map((b) => brollRow(ep, b)) : [h('div', { class: 'small muted' }, 'B-roll이 없습니다.')]));
 }
+const IMG_STATE = { ready: ['이미지 준비됨', 'done'], none: ['이미지 필요', 'attention'], missing: ['이미지 파일 없음', 'err'], inaccessible: ['이미지 접근 불가', 'err'], failed: ['생성 실패', 'err'], loading: ['이미지 불러오는 중', 'attention'] };
+const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 function brollRow(ep, b) {
   const [stLabel, stKind] = BROLL_STATE[b.status] || [b.status, ''];
+  const [imLabel, imKind] = IMG_STATE[b.imageState] || IMG_STATE.none;
   const fileIn = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', style: 'display:none', onchange: async (e) => { const f = e.target.files[0]; if (f) await act(() => api.upload(`/api/episodes/${ep.id}/broll/${b.id}/image`, f), { ok: '이미지를 올렸습니다 (검토 대기)' }); } });
+  const imgChip = chip(imLabel, imKind); imgChip.setAttribute('data-broll-image-state', b.imageState || 'none');
+  const stateBox = h('div', { class: 'small muted', 'data-broll-load': b.id });
+  // the thumbnail is only requested when the server says the file is really there; if the browser still cannot load it, say so
+  const img = b.imageUrl ? h('img', { src: b.imageUrl, alt: b.id + ' B-roll 이미지 미리보기', class: 'broll-thumb', 'data-broll-thumb': b.id, style: 'display:block;max-width:100%;max-height:220px;object-fit:contain;border-radius:10px' }) : null;
+  if (img) {
+    stateBox.textContent = '이미지 불러오는 중…';
+    img.addEventListener('load', () => { stateBox.textContent = b.imageInfo && b.imageInfo.width ? `${b.imageInfo.width}×${b.imageInfo.height}px · ${kb(b.imageInfo.bytes)}${b.imageGenerated ? ' · AI 생성' : ' · 업로드'}` : ''; imgChip.setAttribute('data-broll-image-state', 'ready'); });
+    img.addEventListener('error', () => { img.style.display = 'none'; stateBox.textContent = '브라우저가 이미지를 불러오지 못했습니다 (접근 불가). 새로고침하거나 이미지를 다시 저장하세요.'; stateBox.className = 'issue err'; imgChip.setAttribute('data-broll-image-state', 'inaccessible'); imgChip.textContent = IMG_STATE.inaccessible[0]; });
+  } else stateBox.textContent = b.imageProblem || (b.imageState === 'failed' ? '' : '미리보기 이미지 없음 · AI 이미지 생성 또는 이미지 올리기');
+  const refs = (b.refs || []);
   return h('div', { class: 'beat-row card flat', 'data-broll': b.id },
-    h('div', { class: 'row between' }, h('b', null, `${b.id} · ${b.kindLabel || b.kind}`), h('div', { class: 'row', style: 'gap:6px' }, chip(stLabel, stKind), chip(b.asset === 'ready' ? '이미지 있음' : '이미지 필요', b.asset === 'ready' ? 'done' : 'attention'))),
+    h('div', { class: 'row between' }, h('b', null, `${b.id} · ${b.kindLabel || b.kind}`), h('div', { class: 'row', style: 'gap:6px' }, chip(stLabel, stKind), imgChip)),
     h('div', { class: 'small muted' }, `${b.insertAtSec}s 에 ${b.durationSec}초 · ${b.effect || '효과 미지정'}${b.note ? ' · ' + b.note : ''} · r${b.rev}`),
-    b.imageUrl ? h('button', { type: 'button', class: 'broll-preview-trigger', 'data-broll-preview': b.id, 'aria-label': b.id + ' B-roll 이미지 크게 보기', onclick: () => previewBroll(b), style: 'display:block;padding:0;border:0;background:transparent;cursor:zoom-in;max-width:100%' }, h('img', { src: b.imageUrl, alt: b.id + ' B-roll 이미지 미리보기', class: 'broll-thumb', loading: 'lazy', 'data-broll-thumb': b.id, style: 'display:block;max-width:100%;max-height:220px;object-fit:contain;border-radius:10px' })) : h('div', { class: 'small muted', 'data-broll-empty-preview': b.id }, '미리보기 이미지 없음 · AI 이미지 생성 또는 이미지 올리기'),
-    b.assetId ? h('div', { class: 'small mono muted', 'data-broll-asset': b.id }, `${b.status === 'approved' ? '승인된 에셋' : '에셋'}: ${b.assetId}${b.imageGenerated ? ' · AI 생성' : ' · 업로드'}`) : null,
+    b.needsAttention ? h('div', { class: 'issue err', 'data-broll-attention': b.id }, h('b', null, b.status === 'approved' ? '승인된 B-roll의 이미지를 사용할 수 없습니다 — 확인이 필요합니다. ' : '이미지를 사용할 수 없습니다. '), (b.imageProblem || ''), b.status === 'approved' ? h('div', { class: 'small' }, '승인 기록은 유지되며, 이미지를 다시 저장하기 전까지 이 B-roll이 필요한 렌더링은 막힙니다.') : null) : null,
+    b.promptText ? h('details', { class: 'small' }, h('summary', { style: 'cursor:pointer' }, '이미지 프롬프트' + (b.promptEdited ? ' (수정됨)' : '')), h('div', { class: 'muted', style: 'white-space:pre-wrap;margin-top:4px', 'data-broll-prompt': b.id }, b.promptText)) : null,
+    refs.length ? h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap', 'data-broll-refs': b.id }, refs.map((r) => h('div', { class: 'small', style: 'width:64px;text-align:center' }, r.url && r.status === 'approved' ? h('img', { src: r.url, alt: r.name + ' 참조', loading: 'lazy', style: 'width:64px;height:64px;object-fit:cover;border-radius:8px' }) : h('div', { class: 'sb-main-img empty', style: 'width:64px;height:64px' }, h('small', null, '없음')), h('div', null, r.name)))) : null,
+    img ? h('button', { type: 'button', class: 'broll-preview-trigger', 'data-broll-preview': b.id, 'aria-label': b.id + ' B-roll 이미지 크게 보기', onclick: () => previewBroll(b), style: 'display:block;padding:0;border:0;background:transparent;cursor:zoom-in;max-width:100%' }, img) : null,
+    stateBox,
     b.imageError ? h('div', { class: 'issue err', 'data-broll-error': b.id }, b.imageError.message) : null,
+    b.assetId && b.imageState === 'ready' ? h('div', { class: 'small mono muted', 'data-broll-asset': b.id }, `${b.status === 'approved' ? '승인된 에셋' : '에셋'}: ${b.assetId}${b.imageGenerated ? ' · AI 생성' : ' · 업로드'}`) : null,
     h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
       h('button', { class: 'btn sm ghost', type: 'button', onclick: () => brollEditor(ep, ep.scenes.find((s) => s.id === b.sceneId), b) }, '수정'),
-      h('button', { class: 'btn sm clay', type: 'button', 'data-broll-generate': b.id, onclick: () => openBrollAi(ep, b) }, 'AI 이미지 생성'),
-      h('button', { class: 'btn sm ghost', type: 'button', onclick: () => fileIn.click() }, icon('upload'), '이미지 올리기'), fileIn,
-      b.status === 'approved' ? h('button', { class: 'btn sm ghost', type: 'button', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/broll/${b.id}/status`, { status: 'proposed' })) }, '승인 취소') : h('button', { class: 'btn sm sage', type: 'button', disabled: b.asset !== 'ready', title: b.asset !== 'ready' ? '이미지가 있어야 승인할 수 있습니다' : '', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/broll/${b.id}/status`, { status: 'approved' }), { ok: 'B-roll을 승인했습니다' }) }, '승인'),
-      b.status !== 'rejected' && b.status !== 'approved' ? h('button', { class: 'btn sm ghost', type: 'button', 'data-broll-reject': b.id, disabled: b.asset !== 'ready', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/broll/${b.id}/status`, { status: 'rejected' }), { ok: '거절했습니다' }) }, '거절') : null,
+      h('button', { class: 'btn sm clay', type: 'button', 'data-broll-generate': b.id, onclick: () => openBrollAi(ep, b) }, b.imageState === 'ready' ? '재생성' : 'AI 이미지 생성'),
+      h('button', { class: 'btn sm ghost', type: 'button', onclick: () => fileIn.click() }, icon('upload'), b.imageState === 'ready' ? '이미지 교체' : '이미지 올리기'), fileIn,
+      img ? h('button', { class: 'btn sm ghost', type: 'button', 'data-broll-fullscreen': b.id, onclick: () => previewBroll(b) }, '전체 화면') : null,
+      b.status === 'approved' ? h('button', { class: 'btn sm ghost', type: 'button', 'data-broll-revoke': b.id, onclick: () => act(() => api.post(`/api/episodes/${ep.id}/broll/${b.id}/status`, { status: 'proposed' })) }, '승인 취소') : h('button', { class: 'btn sm sage', type: 'button', 'data-broll-approve': b.id, disabled: b.imageState !== 'ready', title: b.imageState !== 'ready' ? '이미지가 저장되고 접근 가능해야 승인할 수 있습니다' : '', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/broll/${b.id}/status`, { status: 'approved' }), { ok: '승인했습니다' }) }, '승인'),
+      b.status !== 'rejected' && b.status !== 'approved' ? h('button', { class: 'btn sm ghost', type: 'button', 'data-broll-reject': b.id, disabled: b.imageState !== 'ready', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/broll/${b.id}/status`, { status: 'rejected' }), { ok: '거절했습니다' }) }, '거절') : null,
       h('button', { class: 'btn sm danger', type: 'button', onclick: async () => { if (await confirmDialog({ title: `${b.id}를 삭제할까요?`, body: '라이브러리에서만 사라지고 기록은 보관됩니다.', tone: 'clay' })) act(() => api.del(`/api/episodes/${ep.id}/broll/${b.id}`), { ok: '삭제했습니다' }); } }, '삭제')));
 }
+
 function addCutChooser(ep, sc) {
   modal((close) => h('div', { class: 'stack' }, h('h2', null, '컷 추가'),
     h('p', { class: 'small muted', style: 'margin:0' }, `${sc.id} · ${sc.title_ko || sc.title} — 어떤 컷을 넣을까요?`),

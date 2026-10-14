@@ -103,7 +103,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   runtime.setGoogleReady(() => voiceCatalog.googleReady());
   const voice = createVoiceService({ store, cfg, fetchFn, speechProvider, runtime, voices: voiceCatalog });
   const renderReadiness = createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer: { plan: (id) => renderer.plan(id) }, providerMode: () => video.mode, getModel: () => modelById(store.models(), store.settings.get().defaultModelId) });
-  const renderer = createRenderService({ store, cfg, voice, log, broll: { approved: (ep) => sba.approvedBroll(ep), file: (ep, b) => sba.brollFile(ep, b) } });
+  const renderer = createRenderService({ store, cfg, voice, log, broll: { approved: (ep) => sba.approvedBroll(ep), file: (ep, b) => sba.brollFile(ep, b), problem: (ep, b) => sba.assetHealth(ep, b).problem } });
   const publishing = createPublishingService({ store });
   store.episodes.seedDemo();
   // Projects / scene approvals / Image Development hand-off (no AI or video provider is wired in: nothing here can spend money).
@@ -210,6 +210,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     }
     const readiness = projects.readiness(ep);
     const sceneLinks = projects.sceneLinks(ep);
+    const brollCards = sba.brollView(ep).map((b) => Object.assign(b, brollImages.cardInfo(ep, b)));
     const sceneViews = ep.scenes.map((s) => {
       const img = gen.startImage(ep, s);
       const clips = ep.clips[s.id] || { versions: [], approvedVersion: null };
@@ -221,7 +222,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         prompt: ep.prompts[s.id] || null,
         motion: motionView(ep, s),
         animQuality: animplan.quality(ep, s),
-        broll: (ep.broll || []).filter((b) => b.sceneId === s.id && b.status !== 'removed'),
+        broll: brollCards.filter((b) => b.sceneId === s.id),
         promptWarnings: ep.prompts[s.id] ? lintPrompt(ep.prompts[s.id].video, ep) : [],
         castWarnings: ep.prompts[s.id] ? lintCast(ep.prompts[s.id].video, s, L) : [],
         usesSheet: promptSvc.usesSheetFor(s, L),
@@ -278,7 +279,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         deletedVersionCount: Object.keys(deletedVersions(ep)).length,
         header: null,
         videoStudio: null,
-        broll: sba.brollView(ep),
+        broll: brollCards,
         assets: assetReadiness(ep),
         // what is missing for the characters actually on screen / speaking (never substituted by another character or voice)
         castWarnings: universes.assetWarnings([...new Set((ep.scenes || []).flatMap((s) => s.characters || []))], { needsVoice: false })
@@ -820,7 +821,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return {
       clips: { total: scenes.length, generated, approved, running, failed, uncertain, retryable: failed.map((x) => x.sceneId) },
       voice: { total: lines.length, ready: voiceReady, mode: voiceLive ? 'live' : voice.mode, keyConfigured: !!runtime.heygenKey(), canRun: !!vEst.canRun, billableChars: vEst.billableChars == null ? null : vEst.billableChars, needsApi: voiceLive && !runtime.heygenKey() },
-      broll: { approved: approvedBroll.length, total: (ep.broll || []).filter((b) => b.status !== 'removed').length, needImage: (ep.broll || []).filter((b) => b.status !== 'removed' && !b.imageRef).length },
+      broll: { approved: approvedBroll.length, total: (ep.broll || []).filter((b) => b.status !== 'removed').length, needImage: (ep.broll || []).filter((b) => b.status !== 'removed' && sba.assetHealth(ep, b).state !== 'ready').length, attention: (ep.broll || []).filter((b) => b.status === 'approved' && sba.assetHealth(ep, b).state !== 'ready').length },
       render: { running: !!(ep.renderJob && ep.renderJob.status === 'running'), canRender: !!(ctx.renderPlan && ctx.renderPlan.canRender), problems: (ctx.renderPlan && ctx.renderPlan.problems) || [], lastFinal: lastFinal && { v: lastFinal.v, url: `/media/render/${ep.id}/${lastFinal.v}`, downloadUrl: `/media/render/${ep.id}/${lastFinal.v}?download=1`, at: lastFinal.at }, lastPreview: lastPreview && { v: lastPreview.v, url: `/media/render/${ep.id}/${lastPreview.v}` }, fresh: ctx.renderFresh !== false && !!lastFinal, job: ep.renderJob || null },
       cost: { mode: g.mode || videoMode, videoUsd: g.totalUsd == null ? null : g.totalUsd, videoUnknown: g.totalUsd == null && g.mode === 'live', voiceChars: vEst.billableChars == null ? null : vEst.billableChars, note: (g.mode || videoMode) === 'mock' ? '목업은 요금이 없습니다.' : '예상 비용은 직접 입력한 가격 기준의 추정치이며, 실행 전에 한 번 더 확인을 받습니다.' },
       compat: g.compat || null,
@@ -1287,9 +1288,10 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       return au.file;
     }
     if (kind === 'broll') {
-      const bi = (ep.broll || []).find((x) => x.id === b && x.imageRef && x.imageRef.type === 'upload');
-      if (!bi) throw new StudioError('NOT_FOUND', 'B-roll 이미지가 없습니다.', { status: 404 });
-      return store.episodes.file(a, path.join('broll', bi.imageRef.file));
+      const bi = (ep.broll || []).find((x) => x.id === b && x.imageRef && x.status !== 'removed');
+      const h = bi ? sba.assetHealth(ep, bi) : null;
+      if (!bi || !h || h.state !== 'ready') throw new StudioError('NOT_FOUND', 'B-roll 이미지가 없거나 사용할 수 없습니다.', { status: 404, recovery: h ? h.problem : '' });
+      return sba.brollFile(ep, bi);
     }
     if (kind === 'startframe') {
       const s = ep.scenes.find((x) => x.id === b);
