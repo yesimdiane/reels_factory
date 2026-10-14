@@ -3,6 +3,7 @@
 // Reuses stored assets only — nothing here generates an image or calls a provider.
 import { h, chip, modal } from '../ui.js';
 import { state, hooks } from '../state.js';
+import { previewImage } from './common.js';
 
 const uiState = () => { state.ui = state.ui || { open: {} }; return state.ui; };
 const sbOf = (ep, sid) => (ep.derived.storyboardApproval && ep.derived.storyboardApproval.scenes && ep.derived.storyboardApproval.scenes[sid]) || null;
@@ -26,7 +27,7 @@ export function openPreview(ep, items, startId, onOpenScene) {
       const it = items[cur];
       body.replaceChildren(
         h('div', { class: 'row between', style: 'width:100%' }, h('b', null, `${it.id} · ${it.title}`), chip(STATE_LABEL[it.state], it.state === 'approved' ? 'done' : it.state === 'missing' ? 'err' : 'attention')),
-        it.url ? h('img', { src: it.url, alt: it.id, 'data-gallery-full': it.id, style: 'max-height:70vh;max-width:100%;border-radius:10px;object-fit:contain' }) : h('div', { class: 'empty' }, '이 장면에는 아직 시작 이미지가 없습니다.'),
+        it.url ? previewImage({ url: it.url, alt: it.id, tag: 'full-' + it.id, attrs: { 'data-gallery-full': it.id }, style: 'max-height:70vh;min-height:200px;max-width:100%;border-radius:10px;object-fit:contain' }) : h('div', { class: 'empty' }, '이 장면에는 아직 시작 이미지가 없습니다.'),
         h('div', { class: 'small muted' }, it.name ? `파일: ${it.name}` : ''),
         h('div', { class: 'row', style: 'gap:6px' },
           h('button', { class: 'btn sm ghost', type: 'button', disabled: cur === 0, onclick: () => { cur--; draw(); } }, '이전'),
@@ -53,7 +54,7 @@ export function openCompare(ep, items, onOpenScene) {
         h('input', { type: 'checkbox', 'data-compare-pick': it.id, checked: picked.has(it.id), onchange: (e) => { if (e.target.checked) picked.add(it.id); else picked.delete(it.id); draw(); } }), it.id)));
       const chosen = items.filter((it) => picked.has(it.id));
       grid.replaceChildren(...chosen.map((it) => h('div', { class: 'stack', style: 'gap:4px;flex:0 0 ' + (chosen.length <= 2 ? '45%' : chosen.length === 3 ? '31%' : '220px') + ';min-width:150px', 'data-compare-col': it.id },
-        it.url ? h('img', { src: it.url, alt: it.id, style: 'width:100%;aspect-ratio:9/16;object-fit:cover;border-radius:10px;border:2px solid ' + (it.state === 'approved' ? 'var(--sage)' : 'var(--rose)') }) : h('div', { class: 'empty', style: 'aspect-ratio:9/16;display:flex;align-items:center;justify-content:center;border:2px dashed var(--rose);border-radius:10px' }, '이미지 없음'),
+        it.url ? previewImage({ url: it.url, alt: it.id, style: 'width:100%;aspect-ratio:9/16;object-fit:cover;border-radius:10px;border:2px solid ' + (it.state === 'approved' ? 'var(--sage)' : 'var(--rose)') }) : h('div', { class: 'empty', style: 'aspect-ratio:9/16;display:flex;align-items:center;justify-content:center;border:2px dashed var(--rose);border-radius:10px' }, '이미지 없음'),
         h('div', { class: 'row between' }, h('b', null, it.id), chip(STATE_LABEL[it.state], it.state === 'approved' ? 'done' : it.state === 'missing' ? 'err' : 'attention')),
         h('div', { class: 'small muted', style: 'word-break:break-all' }, it.name || ''),
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => { close(); onOpenScene(it.id); } }, '이 씬 편집'))));
@@ -77,7 +78,7 @@ export function sceneGallery(ep, onOpenScene) {
     h('div', { class: 'scene-gallery-strip', role: 'list', 'aria-label': '장면 시작 이미지' }, items.map((it) =>
       h('div', { class: `gal-item ${it.state}${cur === it.id || (!cur && it.index === 0) ? ' current' : ''}`, role: 'listitem', 'data-gallery-item': it.id, 'data-gallery-state': it.state },
         h('button', { class: 'gal-thumb', type: 'button', 'aria-label': `${it.id} 씬 열기 (${STATE_LABEL[it.state]})`, 'data-gallery-open': it.id, onclick: () => onOpenScene(it.id) },
-          it.url ? h('img', { src: it.url, alt: '', loading: 'lazy' }) : h('span', { class: 'gal-empty' }, '이미지 없음'),
+          it.url ? previewImage({ url: it.url, compact: true, style: 'width:100%;height:100%' }) : h('span', { class: 'gal-empty' }, '이미지 없음'),
           it.state === 'approved' ? h('span', { class: 'gal-badge ok' }, '✓') : null,
           it.bcuts ? h('span', { class: 'gal-badge bc', 'data-gallery-bcuts': it.id }, `+${it.bcuts}`) : null),
         h('div', { class: 'gal-meta' }, h('b', null, it.id), h('button', { class: 'gal-zoom', type: 'button', 'aria-label': `${it.id} 크게 보기`, 'data-gallery-zoom': it.id, onclick: () => openPreview(ep, items, it.id, onOpenScene) }, '🔍'))))));

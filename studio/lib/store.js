@@ -49,7 +49,12 @@ function createStore({ dir, seedDir = SEED_DIR }) {
 
   // ---------- model registry (read-only seed) ----------
   // seed models + operator-entered models (settings.customModels, verification 'user-entered'); both go through the same provider adapter
-  const models = () => readJson(path.join(seedDir, 'models.json'), { models: [] }).models.concat((settings.get().customModels || []).map((m) => Object.assign({}, m, { custom: true })));
+  const models = () => {
+    const st = settings.get(), ver = st.modelVerification || {};
+    // a stored confirmation / real-job verification raises the level; it never lowers it
+    const lift = (m) => { const v = ver[m.id]; return v && ['user-entered', 'verified'].includes(v.level) && v.level !== m.verification && (m.verification !== 'verified') ? Object.assign({}, m, { verification: v.level, verifiedAt: v.at }) : m; };
+    return readJson(path.join(seedDir, 'models.json'), { models: [] }).models.concat((st.customModels || []).map((m) => Object.assign({}, m, { custom: true }))).map(lift);
+  };
 
   // ---------- characters ----------
   const characters = {

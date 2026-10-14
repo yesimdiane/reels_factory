@@ -27,7 +27,7 @@ export function castSection(pid, castState, onChange) {
   const warn = castState.warnings || [];
 
   return h('section', { class: 'cast-picker stack', style: 'gap:12px', 'data-cast-picker': '', 'aria-label': '캐릭터 & 유니버스 선택' },
-    h('div', { class: 'row between' }, h('b', null, '캐릭터 & 유니버스 선택'), h('a', { class: 'small', href: '#/characters' }, '캐릭터 라이브러리 열기')),
+    h('div', { class: 'row between' }, h('b', null, '캐릭터 & 유니버스 선택'), h('a', { class: 'small', href: '#/settings/characters' }, '캐릭터 라이브러리 열기')),
     h('div', { class: 'cast-universes', role: 'radiogroup', 'aria-label': '유니버스' }, U.filter((u) => u.active !== false || u.id === sel.universeId).map((u) => h('button', { type: 'button', class: 'cast-universe' + (u.id === sel.universeId ? ' on' : ''), role: 'radio', 'aria-checked': u.id === sel.universeId ? 'true' : 'false', 'data-universe': u.id, onclick: () => chooseUniverse(u) },
       h('span', { class: 'cast-thumbs' }, u.characters.slice(0, 3).map(avatar)),
       h('span', { class: 'cast-uname' }, u.name),

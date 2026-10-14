@@ -1,3 +1,4 @@
+import { characters } from './characters.js';
 import { h, chip, icon, confirmDialog, toast, fmtUsd } from '../ui.js';
 import { state, act } from '../state.js';
 import { api } from '../api.js';
@@ -49,6 +50,7 @@ function parts() {
 
   // Muapi connection check + models (explicit buttons only: nothing here runs on page load)
   const chk = h('div', { class: 'small', 'data-muapi-result': '' }, h('span', { class: 'muted' }, '"연결 확인"은 무료 조회(잔액·모델 목록)만 합니다. 영상 생성은 시작되지 않습니다.'));
+  const VER = { unverified: ['미확인 — 실제 생성 차단', 'attention'], 'user-entered': ['직접 확인함 (실제 호출 전)', 'mock'], verified: ['실제 생성으로 검증됨', 'done'] };
   const cm = { id: '', label: '', endpoint: '', durations: '5', resolutions: '', neg: false };
   const catalogBox = h('div', { class: 'stack', style: 'gap:8px', 'data-muapi-catalog-import': '' });
   const showCatalog = (catalog) => {
@@ -72,8 +74,9 @@ function parts() {
           toast('모델 ID를 입력했습니다. MuAPI 플레이그라운드에서 엔드포인트·길이·지원 기능을 확인한 뒤 직접 추가하세요.');
         } }, '등록 양식에 가져오기')));
   };
+  const verLabel = (m) => chip((VER[m.verification] || [m.verification, ''])[0], (VER[m.verification] || [0, ''])[1]);
   const modelRows = (s.models || []).map((m) => h('tr', null, h('td', null, h('b', null, m.label || m.id), m.custom ? chip('직접 추가', 'mock') : null, h('div', { class: 'small muted mono' }, m.endpoint)),
-    h('td', null, (m.durations || []).join(' / ') + '초'), h('td', null, (m.resolutions || []).join(' / ') || '미선언'), h('td', null, m.endImageField ? '선언됨' : '미선언'), h('td', null, m.supportsNegativePrompt ? '지원' : '미선언'), h('td', null, m.verification),
+    h('td', null, (m.durations || []).join(' / ') + '초'), h('td', null, (m.resolutions || []).join(' / ') || '미선언'), h('td', null, m.endImageField ? '선언됨' : '미선언'), h('td', null, m.supportsNegativePrompt ? '지원' : '미선언'), h('td', null, verLabel(m), m.verification === 'unverified' ? h('button', { class: 'btn sm ghost', type: 'button', 'data-model-confirm': m.id, title: 'MuAPI 플레이그라운드에서 엔드포인트와 요청 파라미터를 직접 확인한 경우에만 누르세요. 요금은 발생하지 않습니다.', onclick: async () => { if (await confirmDialog({ title: '플레이그라운드에서 확인했나요?', body: m.endpoint + ' 엔드포인트와 요청 파라미터를 MuAPI 플레이그라운드에서 직접 확인했다는 표시입니다. 이 앱은 생성 요청을 보내지 않습니다. 이후 실제 생성은 별도의 비용 승인이 필요합니다.' })) act(() => api.post('/api/models/' + encodeURIComponent(m.id) + '/confirm'), { ok: '확인됨으로 표시했습니다' }); } }, '플레이그라운드에서 확인함') : null),
     h('td', null, m.custom ? h('button', { class: 'btn sm danger', type: 'button', 'data-model-remove': m.id, onclick: () => act(() => api.del('/api/models/' + encodeURIComponent(m.id)), { ok: '모델을 지웠습니다' }) }, '삭제') : null)));
   wrap.append(h('div', { class: 'card stack', style: 'gap:12px', 'data-muapi-card': '' },
     h('div', { class: 'card-head' }, h('h2', null, 'Muapi 연결 · 영상 모델'),
@@ -86,6 +89,19 @@ function parts() {
         } catch (e) { chk.replaceChildren(h('div', { class: 'issue err' }, e.message)); }
       } }, '연결 확인 (무료)')),
     chk,
+    h('div', { class: 'grid two', style: 'gap:6px', 'data-model-status': '' }, (() => {
+      const dm = (s.models || []).find((m) => m.id === defaultVideoModel.id);
+      const live = state.summary && state.summary.providers && state.summary.providers.video && state.summary.providers.video.mode === 'live';
+      const okVer = dm && ['user-entered', 'verified'].includes(dm.verification);
+      const row = (k, v, tone) => h('div', { class: 'row small', style: 'gap:6px' }, h('b', null, k), chip(v, tone));
+      return [
+        row('API 연결', live ? '실제 모드 (키는 서버에만 있음 · "연결 확인"으로 무료 조회)' : 'MOCK — 연결하지 않음', live ? '' : 'mock'),
+        row('모델 등록', dm ? '등록됨 · ' + dm.endpoint : '기본 모델 없음', dm ? 'done' : 'attention'),
+        row('엔드포인트 확인', dm ? (VER[dm.verification] || [dm.verification])[0] : '—', okVer ? 'done' : 'attention'),
+        row('생성 준비', live ? (okVer ? '비용 승인 후 생성 가능' : '차단 — 엔드포인트 확인 필요') : 'MOCK 생성만 가능 (요금 없음)', live && !okVer ? 'err' : ''),
+      ];
+    })()),
+    h('div', { class: 'small muted' }, '잔액 조회가 성공해도 모델 엔드포인트가 동작한다는 뜻은 아닙니다. 연결 확인은 무료 조회만 하며 영상 생성은 시작하지 않습니다.'),
     catalogBox,
     h('div', { class: 'small muted' }, 'API 키는 서버 환경변수 MUAPI_API_KEY에만 두며 브라우저로 전달되지 않습니다. 실제(유료) 호출은 RF_MUAPI_MODE=live일 때만 가능합니다.'),
     h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, ['모델', '길이', '해상도', '끝 프레임', '네거티브', '검증', ''].map((x) => h('th', null, x)))), h('tbody', null, modelRows))),
@@ -97,8 +113,12 @@ function parts() {
           h('label', { class: 'field' }, h('span', { class: 'small' }, '엔드포인트 (플레이그라운드의 경로)'), h('input', { type: 'text', 'data-model-endpoint': '', placeholder: 'seedance-pro-i2v-fast', oninput: (e) => (cm.endpoint = e.target.value) })),
           h('label', { class: 'field' }, h('span', { class: 'small' }, '지원 클립 길이(초, 쉼표)'), h('input', { type: 'text', value: cm.durations, oninput: (e) => (cm.durations = e.target.value) })),
           h('label', { class: 'field' }, h('span', { class: 'small' }, '해상도 (선택, 쉼표 — 문서에 있을 때만)'), h('input', { type: 'text', oninput: (e) => (cm.resolutions = e.target.value) })),
-          h('label', { class: 'row small', style: 'gap:6px;align-items:center' }, h('input', { type: 'checkbox', checked: false, onchange: (e) => (cm.neg = e.target.checked) }), '네거티브 프롬프트 지원')),
-        h('button', { class: 'btn sm', type: 'button', 'data-model-save': '', onclick: () => act(() => api.post('/api/models', { id: cm.id, label: cm.label, endpoint: cm.endpoint, durations: cm.durations.split(',').map((x) => Number(x.trim())).filter(Boolean), resolutions: cm.resolutions.split(',').map((x) => x.trim()).filter(Boolean), supportsNegativePrompt: cm.neg }), { ok: '모델을 등록했습니다. Animation Studio에서 선택할 수 있습니다. 첫 생성 전 엔드포인트와 비용을 확인하세요.' }) }, '모델 추가')))));
+          h('label', { class: 'row small', style: 'gap:6px;align-items:center' }, h('input', { type: 'checkbox', checked: false, onchange: (e) => (cm.neg = e.target.checked) }), '네거티브 프롬프트 지원'),
+          h('label', { class: 'field' }, h('span', { class: 'small' }, '요청 필드 이름 (프롬프트 / 이미지 / 길이 / 비율 / 네거티브 — 모델마다 다를 수 있음)'), h('div', { class: 'row', style: 'gap:4px;flex-wrap:wrap' }, [['promptField', 'prompt'], ['imageField', 'image_url'], ['durationField', 'duration'], ['aspectField', 'aspect_ratio'], ['negativeField', 'negative_prompt']].map(([k, d]) => h('input', { type: 'text', 'data-model-field': k, placeholder: d, style: 'width:120px', oninput: (e) => (cm[k] = e.target.value) })))),
+          h('label', { class: 'field' }, h('span', { class: 'small' }, '고정 파라미터 JSON (선택, 예: {"mode":"std"})'), h('input', { type: 'text', 'data-model-extra': '', oninput: (e) => (cm.extraParams = e.target.value) })),
+          h('label', { class: 'field' }, h('span', { class: 'small' }, '예상 비용 / 클립 (USD, 선택 — 직접 입력)'), h('input', { type: 'number', min: 0, step: 0.01, 'data-model-cost': '', oninput: (e) => (cm.costEstimateUsd = e.target.value) })),
+          h('label', { class: 'row small', style: 'gap:6px;align-items:center' }, h('input', { type: 'checkbox', 'data-model-confirmed': '', onchange: (e) => (cm.confirmed = e.target.checked) }), '플레이그라운드에서 엔드포인트·파라미터를 확인했습니다 (체크하지 않으면 미확인으로 등록되어 실제 생성이 차단됩니다)')),
+        h('button', { class: 'btn sm', type: 'button', 'data-model-save': '', onclick: () => act(() => api.post('/api/models', { id: cm.id, label: cm.label, endpoint: cm.endpoint, durations: cm.durations.split(',').map((x) => Number(x.trim())).filter(Boolean), resolutions: cm.resolutions.split(',').map((x) => x.trim()).filter(Boolean), supportsNegativePrompt: cm.neg, confirmed: !!cm.confirmed, extraParams: cm.extraParams || undefined, costEstimateUsd: cm.costEstimateUsd || undefined, promptField: cm.promptField, imageField: cm.imageField, durationField: cm.durationField, aspectField: cm.aspectField, negativeField: cm.negativeField }), { ok: '모델을 등록했습니다. Animation Studio에서 선택할 수 있습니다. 첫 생성 전 엔드포인트와 비용을 확인하세요.' }) }, '모델 추가')))));
 
   // Spend + prices
   const f = { limit: st.reelSpendLimitUsd == null ? '' : st.reelSpendLimitUsd, voice: st.voiceUsdPer1kChars == null ? '' : st.voiceUsdPer1kChars, prices: {} };
@@ -140,7 +160,7 @@ function parts() {
   return { general: wrap, characters: chars };
 }
 
-const TABS = [['general', '일반 · 비용'], ['ai', 'AI 연동'], ['connections', 'API 연결'], ['voices', '음성 연결'], ['prompts', '프롬프트 매니저'], ['scriptprompts', 'AI 프롬프트 관리'], ['endings', '엔딩 템플릿'], ['usage', '사용량 · 한도'], ['characters', '캐릭터']];
+const TABS = [['general', '일반 · 비용'], ['ai', 'AI 연동'], ['connections', 'API 연결'], ['voices', '음성 연결'], ['prompts', '프롬프트 매니저'], ['scriptprompts', 'AI 프롬프트 관리'], ['endings', '엔딩 템플릿'], ['usage', '사용량 · 한도'], ['characters', '캐릭터 라이브러리']];
 
 export function settings() {
   const wrap = h('div', { class: 'stack', style: 'gap:20px' });
@@ -154,7 +174,8 @@ export function settings() {
   else if (tab === 'scriptprompts') wrap.append(presetManager());
   else if (tab === 'endings') wrap.append(endingManager());
   else if (tab === 'usage') wrap.append(usagePanel());
-  else { const p = parts(); wrap.append(tab === 'characters' ? p.characters : p.general); }
+  else if (tab === 'characters') wrap.append(characters());
+  else wrap.append(parts().general);
   return wrap;
 }
 

@@ -7,7 +7,7 @@ import { goToScenePanel } from './scene-nav.js';
 const STAGE_KIND = { ready: 'done', done: 'done', pending: '', waiting: '', blocked: 'err' };
 const ranges = (ids) => ids.join(', ');
 const jump = (ep, a) => {
-  if (a.view === 'storyboard') goToScenePanel(ep, a.sceneId, a.panel);
+  if ((a.view === 'storyboard' || a.view === 'image')) goToScenePanel(ep, a.sceneId, a.panel);
   else if (a.view === 'animation' && a.sceneId) goToScenePanel(ep, a.sceneId, 'clips'); // opens that scene in Animation Studio
   else go(a.view, ep.id);
 };

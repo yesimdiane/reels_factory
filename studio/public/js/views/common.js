@@ -3,7 +3,7 @@ import { state, go, selectEpisode } from '../state.js';
 import { api } from '../api.js';
 import { refTile, openFull } from './ref-gallery.js';
 
-export const VIEW_FOR_STEP = { product: 'products', concept: 'storylab', script: 'script', approval: 'script', storyboard: 'storyboard', estimate: 'animation', animation: 'animation', clips: 'animation', voice: 'voice', render: 'render', review: 'review', publish: 'publishing' };
+export const VIEW_FOR_STEP = { product: 'products', concept: 'storylab', script: 'script', approval: 'script', storyboard: 'image', estimate: 'animation', animation: 'animation', clips: 'animation', voice: 'voice', render: 'render', review: 'review', publish: 'publishing' };
 const NEXT_LABEL = {
   product: '제품·참조 이미지 준비', concept: '스토리 컨셉 승인하기', script: '대본 완성하기', approval: '대본 승인하기', storyboard: '스토리보드 승인하기', estimate: '비용 확인하고 생성 승인', animation: '애니메이션 생성하기',
   clips: '클립 검토·승인', voice: '음성 생성하기', render: '렌더 시작하기', review: '최종 영상 승인하기', publish: '캡션·ManyChat 승인하기',
@@ -182,4 +182,40 @@ export function sceneNav(ep, prefix, { badges = false, onJump = null } = {}) {
       : h('span', { class: 'tab-badge draft', title: ap.label }, '·');
     return h('button', { class: 'btn sm ghost scene-tab' + (ap && ap.approved ? ' approved' : '') + (ap && ap.errorCount ? ' has-err' : ''), 'data-scene-tab': sc.id, title: t + (ap ? ' · ' + ap.label : ''), onclick: () => { const el = document.getElementById(prefix + sc.id); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } if (onJump) onJump(sc); } }, sc.id + ' · ' + (t.length > 14 ? t.slice(0, 13) + '…' : t) + (sc.titleKoMissing ? ' ⚠' : ''), badge);
   }));
+}
+
+/**
+ * A preview <img> that never fails silently: shows a loading state, and on error asks the server (a free HEAD request) why,
+ * then offers "미리보기 다시 불러오기" which only re-fetches the picture. It never regenerates anything or spends money.
+ */
+export function previewImage({ url, alt = '', cls = '', style = '', tag = '', compact = false, attrs = {} }) {
+  const box = h('div', Object.assign({ class: 'preview-box ' + cls, 'data-preview': tag || '', style: 'position:relative;' + style }, attrs));
+  let tries = 0;
+  const load = () => {
+    box.replaceChildren();
+    const img = h('img', { class: cls, alt, style: 'width:100%;height:100%;object-fit:inherit;border-radius:inherit;display:block' });
+    const note = h('div', { class: 'small muted', 'data-preview-loading': '', style: 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center' }, '불러오는 중…');
+    img.addEventListener('load', () => { note.remove(); box.setAttribute('data-preview-state', 'ok'); });
+    img.addEventListener('error', async () => {
+      note.remove(); img.remove();
+      box.setAttribute('data-preview-state', 'error');
+      let why = '이미지를 불러오지 못했습니다.';
+      try {
+        const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+        if (r.status === 404) why = '서버에서 이미지 파일을 찾을 수 없습니다 (파일이 지워졌거나 저장소가 초기화되었을 수 있습니다). 승인 기록은 그대로입니다.';
+        else if (r.status === 401 || r.status === 403) why = '접근 권한이 없습니다. 다시 로그인한 뒤 새로 불러오세요.';
+        else if (r.status >= 500) why = '서버 오류(' + r.status + ')로 이미지를 읽지 못했습니다.';
+        else if (r.ok) why = '파일은 있지만 브라우저가 그림으로 읽지 못했습니다 (손상된 파일일 수 있습니다).';
+        else why = '이미지 요청이 실패했습니다 (' + r.status + ').';
+      } catch (_) { why = '서버에 연결하지 못했습니다. 네트워크를 확인하세요.'; }
+      if (compact) { box.append(h('button', { class: 'btn sm ghost', type: 'button', 'data-preview-error': '', 'data-preview-retry': '', title: why + ' — 눌러서 미리보기만 다시 불러옵니다 (생성·비용 없음)', style: 'width:100%;height:100%;padding:2px;font-size:11px', onclick: (e) => { e.stopPropagation(); tries++; load(); } }, '⚠ 다시')); return; }
+      box.append(h('div', { class: 'stack small', 'data-preview-error': '', style: 'gap:6px;padding:10px;align-items:center;text-align:center' }, h('span', null, why),
+        h('button', { class: 'btn sm ghost', type: 'button', 'data-preview-retry': '', onclick: (e) => { e.stopPropagation(); tries++; load(); } }, '미리보기 다시 불러오기'),
+        h('span', { class: 'muted' }, '이 버튼은 그림만 다시 불러옵니다. 새로 생성하지 않으며 비용이 들지 않습니다.')));
+    });
+    box.append(img, note);
+    img.src = url + (tries ? (url.includes('?') ? '&' : '?') + 'r=' + Date.now() : '');
+  };
+  load();
+  return box;
 }

@@ -22,32 +22,41 @@ import { episodeHeader } from './views/episode-actions.js';
 
 // [key, ko, en, view, inRail]   Dashboard → Products → Story Lab → Script → Storyboard → Video Studio → Review → Publishing → Settings
 export const NAV = [
-  ['overview', '홈', 'Home', overview, true],
+  ['overview', '홈', 'Home', overview, false], // reached through the brand link (not part of the production sequence)
   ['products', '제품 스튜디오', 'Product Studio', products, true],
   ['storylab', '스토리 랩', 'Story Lab', storylab, true],
-  ['characters', '캐릭터', 'Characters', characters, true],
   ['episodes', '에피소드', 'Episodes', episodes, true],
   ['script', '대본 스튜디오', 'Script Studio', script, true],
-  ['storyboard', '스토리보드', 'Storyboard', storyboard, true],
+  ['image', '이미지 스튜디오', 'Image Studio', storyboard, true],
   ['animation', '애니메이션 스튜디오', 'Animation Studio', animation, true],
   ['render', '비디오 스튜디오', 'Video Studio', render, true],
   ['voice', '보이스', 'Voice', voice, false],
-  ['review', '최종 검토', 'Review', review, true],
+  ['review', '최종 검토', 'Final Review', review, true],
   ['publishing', '게시', 'Publishing', publishing, true],
-  ['autodm', '자동 DM', 'Auto-DM', autodm, true],
+  ['autodm', '자동 DM', 'Auto DM', autodm, true],
   ['settings', '설정', 'Settings', settings, true],
 ];
+// old routes keep working: #/storyboard/EP01 → #/image/EP01, #/characters → #/settings/characters (the Character Library lives in Settings)
+export const ROUTE_ALIAS = { storyboard: 'image', characters: 'settings' };
 const ICON = { autodm: 'publishing' };
 const VIDEO_GROUP = ['voice', 'render']; // Video Studio = voice + assembly (Animation Studio is its own step)
 const TAB_VIEWS = ['overview', 'products', 'storylab', 'script', 'animation', 'settings'];
 const PRODUCT_VIEWS = ['products', 'storylab'];
-const EP_HEADER_VIEWS = ['script', 'storyboard', 'animation', 'voice', 'render', 'review', 'publishing', 'autodm'];
-const NO_ID_VIEWS = ['overview', 'episodes', 'settings', 'characters'];
+const EP_HEADER_VIEWS = ['script', 'image', 'animation', 'voice', 'render', 'review', 'publishing', 'autodm'];
+const NO_ID_VIEWS = ['overview', 'episodes', 'settings'];
 
 let poll = null;
 
 function parseHash() {
-  const [, view = 'overview', id = ''] = location.hash.split('/');
+  let [, view = 'overview', id = ''] = location.hash.split('/');
+  const alias = ROUTE_ALIAS[view];
+  if (alias) {
+    // legacy route: rewrite the address bar in place (no history entry) and keep the episode id
+    if (view === 'characters') { state.settingsTab = 'characters'; id = ''; }
+    view = alias;
+    history.replaceState(null, '', '#/' + view + (id ? '/' + id : view === 'settings' && state.settingsTab === 'characters' ? '/characters' : ''));
+  }
+  if (view === 'settings' && id) { if (['general', 'ai', 'connections', 'voices', 'prompts', 'scriptprompts', 'endings', 'usage', 'characters'].includes(id)) state.settingsTab = id; id = ''; }
   return { view: NAV.some((n) => n[0] === view) ? view : 'overview', id };
 }
 const active = (key) => state.view === key || (key === 'render' && VIDEO_GROUP.includes(state.view));
@@ -100,7 +109,7 @@ function schedulePoll() {
   clearTimeout(poll);
   const ep = state.episode;
   const busy = ep && (ep.derived.jobsRunning || (ep.derived.render.job && ep.derived.render.job.status === 'running'));
-  if (busy && ['animation', 'voice', 'render', 'review', 'overview', 'storyboard'].includes(state.view)) {
+  if (busy && ['animation', 'voice', 'render', 'review', 'overview', 'image'].includes(state.view)) {
     poll = setTimeout(async () => {
       try {
         const activeEl = document.activeElement;

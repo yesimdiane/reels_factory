@@ -42,7 +42,7 @@ export function overview() {
         ep.derived.scriptApproved ? null : h('div', { class: 'small', style: 'color:var(--clay)' }, '대본을 승인하면 만들 수 있습니다 (유료 생성은 대본 승인 후에만).')),
       h('div', { class: 'row' },
         h('button', { class: 'btn clay', disabled: !ep.derived.scriptApproved, onclick: () => makeStartImages(ep, [], { after: () => act(async () => null) }) }, icon('plus'), '시작 이미지 만들기'),
-        h('button', { class: 'btn ghost', onclick: () => go('storyboard') }, '스토리보드에서 확인·승인'))));
+        h('button', { class: 'btn ghost', onclick: () => go('image') }, '스토리보드에서 확인·승인'))));
   }
   inner.append(h('div', null, pipelineBar(ep)));
   const t = s.totals;
@@ -74,7 +74,7 @@ function labCard(s) {
 
 
 // ---- workflow board: Product → Story Lab → Episode → Script → Storyboard → Video (one glance, one current step) ----
-const STAGES = [['products', '제품 스튜디오', 'products'], ['storylab', '스토리랩', 'storylab'], ['episodes', '에피소드', 'episodes'], ['script', '대본 스튜디오', 'script'], ['storyboard', '스토리보드', 'storyboard'], ['animation', '애니메이션 스튜디오', 'animation'], ['render', '비디오 스튜디오', 'render']];
+const STAGES = [['products', '제품 스튜디오', 'products'], ['storylab', '스토리랩', 'storylab'], ['episodes', '에피소드', 'episodes'], ['script', '대본 스튜디오', 'script'], ['image', '이미지 스튜디오', 'image'], ['animation', '애니메이션 스튜디오', 'animation'], ['render', '비디오 스튜디오', 'render']];
 function stageDone(s, ep) {
   const step = (k) => ep && ep.derived.steps.find((x) => x.key === k);
   return [

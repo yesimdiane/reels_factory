@@ -24,7 +24,7 @@ function chooser(ep, sc, r) {
         h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' },
           h('button', { class: 'btn sm', type: 'button', 'data-ref-save': r.characterId, disabled: !picked.length, onclick: async () => { close(); await act(async () => { await api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/character-refs/${r.characterId}`, { refIds: picked }); return null; }, { ok: `${r.name}: 참조 이미지 ${picked.length}장을 이 장면에 지정했습니다 (시작 프레임은 다시 만들어야 반영됩니다)` }); } }, '이 장면에 저장'),
           r.override ? h('button', { class: 'btn sm ghost', type: 'button', onclick: async () => { close(); await act(async () => { await api.del(`/api/episodes/${ep.id}/scenes/${sc.id}/character-refs/${r.characterId}`); return null; }, { ok: '라이브러리 선택으로 되돌렸습니다' }); } }, '기본값 (라이브러리 선택)') : null,
-          h('a', { class: 'btn sm ghost', href: '#/characters', onclick: close }, '캐릭터 라이브러리에서 올리기 · 승인'),
+          h('a', { class: 'btn sm ghost', href: '#/settings/characters', onclick: close }, '캐릭터 라이브러리에서 올리기 · 승인'),
           h('button', { class: 'btn sm ghost', type: 'button', onclick: close }, '닫기')));
     };
     draw();

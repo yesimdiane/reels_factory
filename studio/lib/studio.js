@@ -1,6 +1,7 @@
 // The Studio application facade: every dashboard action goes through here (the HTTP server only routes).
 // It wires the store, character library, gates, generation, voice, render and publishing services together.
 'use strict';
+const mc = require('./modelcontract');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
@@ -238,7 +239,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         productImages: s.showsProduct ? productStudioImages : [],
         charRefs: charRefs.forScene(ep, s),
         charRefsStale: charRefs.frameStale(ep, s),
-        startImageInfo: img.error ? { error: img.error } : { fileName: (s.startImage && s.startImage.name) || '', label: img.label, generated: !!img.generated, approved: img.approved, placeholder: img.placeholder, url: img.characterId ? `/media/ref/${img.characterId}/${img.refId}` : `/media/startframe/${id}/${s.id}` },
+        startImageInfo: img.error ? Object.assign({ error: img.error }, s.startImage ? { recorded: true, missingFile: true, approved: !!s.startImage.approved, fileName: s.startImage.name || '', generated: !!s.startImage.generated } : {}) : { fileName: (s.startImage && s.startImage.name) || '', label: img.label, generated: !!img.generated, approved: img.approved, placeholder: img.placeholder, url: img.characterId ? `/media/ref/${img.characterId}/${img.refId}` : `/media/startframe/${id}/${s.id}` },
         clips: { approvedVersion: clips.approvedVersion, versions: clips.versions.map((v) => Object.assign({}, v, { url: `/media/clip/${id}/${s.id}/${v.v}`, freshness: gen.freshness(ep, s, v) })) },
         animationSettings: (ep.animation || {})[s.id] || {},
         imagePrompt: startImages.promptView(ep, s),
@@ -1275,13 +1276,38 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     const id = String(spec.id || '').trim();
     if (!/^[a-z0-9][a-z0-9._-]{1,50}$/.test(id)) throw new StudioError('BAD_MODEL', '모델 ID는 영문 소문자·숫자·-_. 2–51자입니다.', { status: 422 });
     if (store.models().some((m) => m.id === id)) throw new StudioError('BAD_MODEL', '이미 있는 모델 ID입니다.', { status: 409 });
-    const endpoint = String(spec.endpoint || '').trim().replace(/^\/+/, '');
-    if (!/^[A-Za-z0-9][A-Za-z0-9/_.-]{1,100}$/.test(endpoint) || endpoint.includes('..')) throw new StudioError('BAD_MODEL', '엔드포인트는 Muapi 플레이그라운드에 표시된 경로(예: kling-master)여야 합니다.', { status: 422 });
+    const endpoint = mc.validateEndpoint(spec.endpoint);
+    if (!endpoint) throw new StudioError('BAD_MODEL', '엔드포인트는 MuAPI 플레이그라운드에 표시된 경로(예: seedance-pro-i2v-fast)여야 합니다. 주소(https://…), "//", ".."는 허용되지 않습니다.', { status: 422 });
     const durations = [...new Set((spec.durations || []).map(Number).filter((d) => d > 0 && d <= 30))].sort((a, b) => a - b);
     if (!durations.length) throw new StudioError('BAD_MODEL', '지원하는 클립 길이(초)를 하나 이상 입력하세요.', { status: 422 });
-    const m = { id, label: String(spec.label || id).slice(0, 80), provider: 'muapi', endpoint, mode: 'image-to-video', promptField: 'prompt', imageField: String(spec.imageField || 'image_url').slice(0, 40), durations, aspectRatios: (spec.aspectRatios && spec.aspectRatios.length ? spec.aspectRatios : ['9:16']).map(String), supportsNegativePrompt: !!spec.supportsNegativePrompt, lipSync: false, verification: 'user-entered', notes: String(spec.notes || '').slice(0, 300) };
-    if (Array.isArray(spec.resolutions) && spec.resolutions.length) { m.resolutions = spec.resolutions.map(String).slice(0, 8); m.resolutionField = String(spec.resolutionField || 'resolution').slice(0, 40); }
+    const fields = {};
+    for (const [key, dflt] of [['promptField', 'prompt'], ['imageField', 'image_url'], ['durationField', 'duration'], ['aspectField', 'aspect_ratio'], ['negativeField', 'negative_prompt']]) {
+      const f = mc.field(spec[key], dflt);
+      if (!f) throw new StudioError('BAD_MODEL', `요청 필드 이름이 올바르지 않습니다 (${key}).`, { status: 422 });
+      fields[key] = f;
+    }
+    let extraParams;
+    try { extraParams = mc.cleanExtra(spec.extraParams); } catch (e) { throw new StudioError('BAD_MODEL', '고정 파라미터(JSON)가 올바르지 않습니다: ' + e.message, { status: 422 }); }
+    const mode = spec.mode === 'text-to-video' ? 'text-to-video' : 'image-to-video';
+    const cost = spec.costEstimateUsd == null || spec.costEstimateUsd === '' ? null : Number(spec.costEstimateUsd);
+    if (cost != null && !(cost >= 0)) throw new StudioError('BAD_MODEL', '예상 비용은 0 이상의 숫자여야 합니다.', { status: 422 });
+    const m = Object.assign({ id, label: String(spec.label || id).slice(0, 80), provider: 'muapi', endpoint, mode }, fields,
+      { durations, aspectRatios: (spec.aspectRatios && spec.aspectRatios.length ? spec.aspectRatios : ['9:16']).map(String), supportsNegativePrompt: !!spec.supportsNegativePrompt, lipSync: false,
+        // the operator vouches for the endpoint only by ticking "confirmed in the playground"; otherwise it stays unverified and live generation is blocked
+        verification: spec.confirmed ? 'user-entered' : 'unverified', notes: String(spec.notes || '').slice(0, 300) });
+    if (Object.keys(extraParams).length) m.extraParams = extraParams;
+    if (cost != null) m.costEstimateUsd = cost;
+    if (Array.isArray(spec.resolutions) && spec.resolutions.length) { m.resolutions = spec.resolutions.map(String).slice(0, 8); m.resolutionField = mc.field(spec.resolutionField, 'resolution') || 'resolution'; }
     store.settings.save({ customModels: (store.settings.get().customModels || []).concat(m) });
+    return publicSettings();
+  }
+  /** Operator states they checked this model's endpoint + parameters in the MuAPI playground. Free; no network. */
+  function confirmModel(id, by = 'operator') {
+    const m = store.models().find((x) => x.id === id);
+    if (!m) throw new StudioError('NOT_FOUND', '등록된 모델이 아닙니다.', { status: 404 });
+    if (m.verification === 'verified') return publicSettings();
+    const cur = store.settings.get();
+    store.settings.save({ modelVerification: Object.assign({}, cur.modelVerification || {}, { [id]: { level: 'user-entered', at: nowIso(), by } }) });
     return publicSettings();
   }
   function removeCustomModel(id) {
@@ -1460,7 +1486,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   return {
     exportName, sceneFlow, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
-    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, deleteStartFrame, saveImagePrompt, resetImagePrompt, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, muapiCheck, setSpendLimit,
+    rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, deleteStartFrame, saveImagePrompt, resetImagePrompt, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, confirmModel, muapiCheck, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
 }

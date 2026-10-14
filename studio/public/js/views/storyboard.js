@@ -17,7 +17,7 @@ import { lookFields, characterRoles, poseFields, elementsBlock, seedElements } f
 import { stepper, audioPanelBody, audioBadge, composePanelBody, composeBadge } from './scene-flow.js';
 import { sceneGallery } from './scene-gallery.js';
 import { readinessCard } from './render-readiness.js';
-import { pageHead, noEpisode, lockedNotice, productRefStrip, makeStartImages } from './common.js';
+import { previewImage, pageHead, noEpisode, lockedNotice, productRefStrip, makeStartImages } from './common.js';
 
 const PLACE = { position: [['', '—'], ['left', '왼쪽'], ['center', '가운데'], ['right', '오른쪽'], ['foreground', '앞쪽'], ['background', '뒤쪽']], scale: [['', '—'], ['small', '작게'], ['medium', '보통'], ['large', '크게']], orientation: [['', '—'], ['front', '정면'], ['side', '옆면'], ['angled', '비스듬히'], ['top', '위에서'], ['back', '뒷면']], visibility: [['', '—'], ['partial', '일부만'], ['full', '전체'], ['hero', '주인공처럼']] };
 const PLACE_LABEL = { position: '위치', scale: '크기', orientation: '방향', visibility: '노출' };
@@ -34,7 +34,7 @@ export function storyboard() {
   if (!ep) return noEpisode();
   const sbOk = ep.derived.storyboardApproved;
   const wrap = h('div', { class: 'stack', style: 'gap:16px' });
-  wrap.append(pageHead('Storyboard', '스토리보드', '승인된 대본의 장면을 이미지와 애니메이션 에셋으로 개발합니다. 승인 전에는 어떤 유료 생성도 시작되지 않습니다.'));
+  wrap.append(pageHead('Image Studio', '이미지 스튜디오', '승인된 대본의 장면을 이미지와 애니메이션 에셋으로 개발합니다. 승인 전에는 어떤 유료 생성도 시작되지 않습니다.'));
   if (!ep.derived.scriptApproved) wrap.append(lockedNotice('대본이 승인되어야 스토리보드를 승인할 수 있습니다.', 'script', '대본으로 이동'));
   if (ep.derived.storyboardChangedSinceApproval) wrap.append(h('div', { class: 'banner warn', 'data-sb-changed': '' }, h('div', null, h('b', null, '승인 후 스토리보드가 수정되었습니다'), '바뀐 장면만 다시 확인하고 승인하면 됩니다 (바뀌지 않은 장면의 승인은 유지됩니다).', h('ul', { style: 'margin:6px 0 0 18px' }, (ep.derived.storyboardApproval.reasons || []).map((r) => h('li', null, r))))));
   autoBuild(ep);
@@ -100,7 +100,7 @@ function sceneCard(ep, sc, i, chars, go) {
 
   // ---- main image ----
   const fileIn = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', style: 'display:none', onchange: async (e) => { const f = e.target.files[0]; if (f) await act(() => api.upload(`/api/episodes/${ep.id}/scenes/${sc.id}/start-frame`, f), { ok: '프레임을 올렸습니다 (승인 전)' }); } });
-  const main = hasImg ? h('img', { class: 'sb-main-img', src: img.url, alt: sc.id + ' 이미지' }) : h('div', { class: 'sb-main-img empty' }, h('span', null, '이미지가 아직 없습니다'), h('small', null, '프레임을 올리거나 비용 확인 후 만드세요'));
+  const main = hasImg ? previewImage({ url: img.url, alt: sc.id + ' 이미지', cls: 'sb-main-img', tag: sc.id }) : img && img.missingFile ? h('div', { class: 'sb-main-img empty', 'data-sb-missing-file': sc.id }, h('span', null, '저장된 이미지 파일이 없습니다'), h('small', null, (img.approved ? '승인 기록은 남아 있지만 ' : '') + '서버에서 파일을 찾지 못했습니다. 다시 올리거나 비용 확인 후 새로 만드세요 (자동으로 만들지 않습니다).')) : h('div', { class: 'sb-main-img empty' }, h('span', null, '이미지가 아직 없습니다'), h('small', null, '프레임을 올리거나 비용 확인 후 만드세요'));
 
   // ---- product appearance ----
   d.showsProduct = d.showsProduct === undefined ? !!sc.showsProduct : d.showsProduct;
@@ -161,7 +161,7 @@ function sceneCard(ep, sc, i, chars, go) {
     panel(ep, sc, 'imageprompt', '이미지 프롬프트 (자동 합성 · 직접 수정 가능)', sc.imagePrompt && sc.imagePrompt.edited ? '수정됨' : '자동', imagePromptBody(ep, sc)),
   ];
   const summaryRow = h('div', { class: 'row', style: 'gap:10px;align-items:center;flex-wrap:wrap;border-left:4px solid var(--sage);padding-left:10px', 'data-sb-approved-summary': sc.id },
-    img && img.url ? h('img', { src: img.url, alt: '', style: 'width:44px;aspect-ratio:9/16;object-fit:cover;border-radius:6px' }) : null,
+    img && img.url ? previewImage({ url: img.url, alt: '', compact: true, tag: sc.id, cls: 'sb-thumb', style: 'width:44px;aspect-ratio:9/16;object-fit:cover;border-radius:6px;flex:none' }) : img && img.missingFile ? h('span', { class: 'small', 'data-sb-missing-file': sc.id, title: '서버에서 이미지 파일을 찾지 못했습니다', style: 'width:44px;text-align:center;color:var(--clay)' }, '⚠ 파일없음') : null,
     h('div', { class: 'small', style: 'flex:1;min-width:160px' }, h('b', { style: 'color:var(--sage-deep)' }, '✓ 이미지 승인됨' + (img && img.placeholder ? ' (데모 임시 이미지)' : '')), h('div', { class: 'muted' }, `${(img && (img.fileName || img.label)) || ''} · 이미지 프롬프트 ${sc.imagePrompt && sc.imagePrompt.edited ? '수정됨' : '자동'} · 컷 ${cuts} · B-roll ${bro}`)),
     h('button', { class: 'btn sm ghost', type: 'button', onclick: zoom }, '크게 보기'),
     revokeImgBtn ? revokeImgBtn.cloneNode(true) : null,
