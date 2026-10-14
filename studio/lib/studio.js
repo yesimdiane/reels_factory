@@ -237,7 +237,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         productImages: s.showsProduct ? productStudioImages : [],
         charRefs: charRefs.forScene(ep, s),
         charRefsStale: charRefs.frameStale(ep, s),
-        startImageInfo: img.error ? { error: img.error } : { label: img.label, generated: !!img.generated, approved: img.approved, placeholder: img.placeholder, url: img.characterId ? `/media/ref/${img.characterId}/${img.refId}` : `/media/startframe/${id}/${s.id}` },
+        startImageInfo: img.error ? { error: img.error } : { fileName: (s.startImage && s.startImage.name) || '', label: img.label, generated: !!img.generated, approved: img.approved, placeholder: img.placeholder, url: img.characterId ? `/media/ref/${img.characterId}/${img.refId}` : `/media/startframe/${id}/${s.id}` },
         clips: { approvedVersion: clips.approvedVersion, versions: clips.versions.map((v) => Object.assign({}, v, { url: `/media/clip/${id}/${s.id}/${v.v}` })) },
         line: ep.lines.filter((l) => l.sceneId === s.id).map((l) => l.id),
         approval: readiness.scenes.find((x) => x.sceneId === s.id),

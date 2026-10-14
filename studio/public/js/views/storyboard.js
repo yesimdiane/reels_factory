@@ -13,6 +13,7 @@ import { openBrollAi, previewBroll } from './broll-ai.js';
 import { openAnimGenerate } from './anim-plan.js';
 import { clipsPanelBody, clipsBadge } from './scene-clips.js';
 import { stepper, audioPanelBody, audioBadge, composePanelBody, composeBadge } from './scene-flow.js';
+import { sceneGallery } from './scene-gallery.js';
 import { readinessCard } from './render-readiness.js';
 import { pageHead, noEpisode, lockedNotice, productRefStrip, makeStartImages } from './common.js';
 
@@ -39,6 +40,7 @@ export function storyboard() {
   const i = curIndex(ep);
   const sc = ep.scenes[i];
   const go = (k) => { setIndex(ep, k); import('../state.js').then(({ hooks }) => hooks.rerender()); };
+  wrap.append(sceneGallery(ep, (sid) => { setIndex(ep, ep.scenes.findIndex((x) => x.id === sid)); import('../state.js').then(({ hooks }) => hooks.rerender()); window.scrollTo({ top: 0, behavior: 'smooth' }); }));
   wrap.append(h('div', { class: 'scene-tabs', role: 'tablist', 'aria-label': '장면 목록' }, ep.scenes.map((s, k) => {
     const img = s.startImageInfo;
     const ok = img && !img.error && img.approved;
@@ -139,13 +141,25 @@ function sceneCard(ep, sc, i, chars, go) {
       refPicker(ep, sc, chars))),
   ];
 
+  // an approved start image collapses the image/prompt editing sections into a compact summary; the production steps after it stay available
+  const editKey = ep.id + ':' + sc.id;
+  const ui0 = uiState(); ui0.sbEdit = ui0.sbEdit || {};
+  const collapsed = !!(hasImg && img.approved && !img.placeholder && !ui0.sbEdit[editKey]);
+  const IMAGE_EDIT = ['charrefs', 'product', 'prompt', 'advanced'];
+  const shownPanels = collapsed ? panels.filter((pn) => !IMAGE_EDIT.includes(pn.getAttribute('data-panel'))) : panels;
+  const summaryRow = collapsed ? h('div', { class: 'row', style: 'gap:10px;align-items:center;flex-wrap:wrap;border-left:4px solid var(--sage);padding-left:10px', 'data-sb-approved-summary': sc.id },
+    img.url ? h('img', { src: img.url, alt: '', style: 'width:36px;aspect-ratio:9/16;object-fit:cover;border-radius:6px' }) : null,
+    h('div', { class: 'small', style: 'flex:1;min-width:160px' }, h('b', { style: 'color:var(--sage-deep)' }, '✓ 이미지 승인됨'), h('div', { class: 'muted' }, `${img.fileName || img.label || ''} · 프롬프트 ${sc.prompt ? 'r' + (sc.prompt.rev || 1) : '없음'} · 컷 ${cuts} · B-roll ${bro}`)),
+    h('button', { class: 'btn sm ghost', type: 'button', 'data-sb-reopen': sc.id, onclick: () => { ui0.sbEdit[editKey] = true; import('../state.js').then(({ hooks }) => hooks.rerender()); } }, '이미지·프롬프트 수정 열기')) : (hasImg && img.approved && ui0.sbEdit[editKey] ? h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', type: 'button', 'data-sb-collapse': sc.id, onclick: () => { ui0.sbEdit[editKey] = false; import('../state.js').then(({ hooks }) => hooks.rerender()); } }, '수정 접기')) : null);
+
   const el = h('section', { class: 'card sb-scene', id: 'sb-scene-' + sc.id, 'data-sb-scene': sc.id },
     h('div', { class: 'row between' }, h('div', null, h('div', { class: 'eyebrow' }, `${sc.id} · ${sc.durationSec}초${sc.part ? ' · PART ' + sc.part + (sc.part === 'B' ? ' · 고정 엔딩' : '') : ''}`), h('h2', { style: 'margin:2px 0 0' }, sc.title_ko || sc.title)), addCutBtn),
     main,
     stepper(ep, sc),
     h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap', 'data-sb-status': '' }, chip(imgState[0], imgState[1]), chip(sc.prompt ? '프롬프트 있음' : '프롬프트 없음', sc.prompt ? 'done' : 'attention'), chip(mot ? `모션 ${mot.beats.length}비트` : '모션 없음', mot ? 'done' : ''), chip(`컷 ${cuts}`, ''), h('button', { class: 'chip broll-jump', type: 'button', 'data-broll-jump': sc.id, 'aria-label': 'B-roll 편집으로 이동', style: 'cursor:pointer', onclick: () => { const section = document.querySelector('[data-panel="cuts"]'); if (!section) return; section.open = true; const target = section.querySelector('[data-broll]') || section.querySelector('[data-broll-list]') || section; requestAnimationFrame(() => { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); target.style.scrollMarginBottom = '220px'; target.style.scrollMarginTop = '90px'; target.classList.add('broll-jump-highlight'); setTimeout(() => target.classList.remove('broll-jump-highlight'), 1600); }); } }, `B-roll ${bro}`), d.showsProduct ? chip('제품 ON', 'attention') : null),
+    summaryRow,
     h('div', { class: 'scene-actions-bar inline sb-actions' }, h('div', { class: 'bar-buttons' }, saveBtn, approveBtn, revokeImgBtn, regenBtn, nextBtn)),
-    ...panels);
+    ...shownPanels);
   // mobile: the same actions as a sticky bar (the inline copy is hidden by CSS on phones)
   const bar = h('div', { class: 'scene-actions-bar sb-bar' }, h('div', { class: 'bar-buttons' }, saveBtn.cloneNode(true), approveBtn.cloneNode(true), nextBtn.cloneNode(true)));
   bar.querySelector('[data-sb-save]').addEventListener('click', () => saveAll());
