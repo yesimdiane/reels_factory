@@ -121,3 +121,20 @@ test('server: live mode cannot be switched on from the API', async () => {
     assert.ok(r.status < 500);
   } finally { await t.close(); }
 });
+
+test('free model preflight reports schema and never submits a paid video job', async () => {
+  const t = await boot();
+  try {
+    const before = (await req(t.port, 'GET', '/api/episodes/EP01')).json.generation.jobs.length;
+    const ok = await req(t.port, 'POST', '/api/episodes/EP01/generation/preflight', { headers: CSRF, body: { sceneId: 'S1', modelId: 'kling-master' } });
+    assert.equal(ok.status, 200, ok.text);
+    assert.equal(ok.json.paidRequestSent, false);
+    assert.equal(ok.json.remoteEndpointVerified, false);
+    assert.equal(ok.json.imageField, 'image_url');
+    assert.equal(ok.json.imageType, 'string');
+    assert.equal(typeof ok.json.canGenerate, 'boolean');
+    assert.equal((await req(t.port, 'GET', '/api/episodes/EP01')).json.generation.jobs.length, before);
+    const bad = await req(t.port, 'POST', '/api/episodes/EP01/generation/preflight', { headers: CSRF, body: { sceneId: 'S1', modelId: 'unknown-model' } });
+    assert.equal(bad.status, 422);
+  } finally { await t.close(); }
+});

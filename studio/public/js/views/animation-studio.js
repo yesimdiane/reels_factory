@@ -76,6 +76,32 @@ function leftColumn(ep, sc) {
   if (d.rev !== (sc.prompt ? sc.prompt.rev || 1 : 0)) { d.video = sc.prompt ? sc.prompt.video : ''; d.negative = sc.prompt ? sc.prompt.negative || '' : ''; d.rev = sc.prompt ? sc.prompt.rev || 1 : 0; }
   const dirty = () => !!sc.prompt && (d.video !== sc.prompt.video || d.negative !== (sc.prompt.negative || ''));
   const saveSettings = (patch) => act(() => api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/animation`, patch), { ok: '이 장면의 생성 설정을 저장했습니다' });
+  // Free, read-only estimate gate for the selected model. This is NOT a paid MuAPI test.
+  const checkKey = 'animcheck:' + ep.id + ':' + sc.id;
+  const checked = (state.draft[checkKey] = state.draft[checkKey] || {});
+  // A new view's button begins disabled; recheck against current server state on every view open.
+  checked.ok = false;
+  const checkStatus = h('div', { class: 'small muted', 'data-anim-model-check': sc.id }, '모델 연결 사전 점검 필요 (무료 · 실제 영상 생성 아님)');
+  const checkModel = async (id = model.id) => {
+    checked.id = id;
+    checked.ok = false;
+    genBtn.disabled = true;
+    checkStatus.textContent = '모델 설정 및 생성 조건 점검 중… (무료)';
+    try {
+      const result = await api.post(`/api/episodes/${ep.id}/generation/preflight`, { sceneId: sc.id, modelId: id });
+      if (checked.id !== id) return;
+      checked.ok = !!result.canGenerate;
+      const blockers = result.blockers || [];
+      checkStatus.textContent = checked.ok
+        ? `✓ 무료 사전 점검 통과 · ${result.imageField} (${result.imageType}) · ${result.mode === 'live' ? 'MuAPI 계정 연결됨' : 'MOCK'} · 실제 모델 엔드포인트 미검증`
+        : '사전 점검 실패: ' + (blockers.join(' / ') || '모델 설정을 확인하세요');
+    } catch (e) {
+      if (checked.id !== id) return;
+      checked.ok = false;
+      checkStatus.textContent = '사전 점검 실패: ' + e.message;
+    }
+    if (checked.id === id) genBtn.disabled = !canGenerate();
+  };
   const costBox = h('div', { class: 'small', 'data-anim-cost': sc.id }, h('span', { class: 'muted' }, '예상 비용은 "비용 확인(무료)"을 누르면 계산합니다. 생성은 시작되지 않습니다.'));
   const showCost = async () => {
     costBox.textContent = '계산하는 중…';
@@ -94,9 +120,10 @@ function leftColumn(ep, sc) {
   const running = (ep.generation.jobs || []).some((j) => j.sceneId === sc.id && !j.brollId && ACTIVE_JOB.has(j.status));
   const gateInfo = ((ep.sceneFlow && ep.sceneFlow.scenes && ep.sceneFlow.scenes[sc.id]) || {}).gate;
   const gateReady = !gateInfo || gateInfo.ready;
-  const canGenerate = () => !running && !dirty() && !!sc.prompt && !!imgOk && gateReady;
+  const canGenerate = () => checked.id === model.id && checked.ok === true && !running && !dirty() && !!sc.prompt && !!imgOk && gateReady;
   const genBtn = h('button', { class: 'btn clay', type: 'button', 'data-anim-generate': sc.id, disabled: !canGenerate(), title: !gateReady ? '"생성 전 단계" 점검 항목을 먼저 끝내세요' : dirty() ? '프롬프트를 먼저 저장하세요' : '비용 확인과 승인 단계를 거쳐야 시작됩니다', onclick: () => startGeneration(ep, [sc.id], { modelId: model.id }) }, icon('play'), sc.clips.versions.length ? '새 버전 생성…' : '생성…');
   refreshSave();
+  void checkModel(model.id);
   return h('div', { class: 'stack', style: 'gap:12px', 'data-anim-left': sc.id },
     h('div', { class: 'card flat stack', style: 'gap:6px' }, h('b', { class: 'small' }, '시작 이미지 (스토리보드에서 승인된 이미지)'),
       h('div', { class: 'row', style: 'gap:10px;align-items:flex-start' },
@@ -112,13 +139,14 @@ function leftColumn(ep, sc) {
       h('div', { class: 'small muted' }, `공유 타임라인(ep.motion) ${sc.motion ? sc.motion.beats.length + '비트' : '없음'} — 편집은 대본 스튜디오/스토리보드의 같은 타임라인에서 합니다. 0.5초 비트는 모델에 주는 지시일 뿐 프레임 단위 타이밍을 보장하지 않습니다.`))),
     model.supportsNegativePrompt !== false ? h('div', { class: 'field' }, h('label', null, '네거티브 프롬프트'), taN) : h('div', { class: 'small muted' }, '선택한 모델은 네거티브 프롬프트를 지원한다고 선언되어 있지 않아 전송하지 않습니다.'),
     h('div', { class: 'card flat stack', style: 'gap:8px' }, h('b', { class: 'small' }, '모델 · 길이 · 해상도'),
-      h('label', { class: 'field' }, h('span', { class: 'small' }, 'MuAPI 모델'), h('select', { 'data-anim-model': sc.id, onchange: (e) => saveSettings({ modelId: e.target.value, durationSec: null, resolution: null }) }, (state.summary.models || []).map((m) => h('option', { value: m.id, selected: m.id === model.id }, `${m.label}${m.custom ? ' (직접 추가)' : ''}`)))),
+      h('label', { class: 'field' }, h('span', { class: 'small' }, 'MuAPI 모델'), h('select', { 'data-anim-model': sc.id, onchange: async (e) => { checked.ok = false; checked.id = e.target.value; genBtn.disabled = true; checkStatus.textContent = '모델 변경 저장 및 무료 점검 중…'; await saveSettings({ modelId: e.target.value, durationSec: null, resolution: null }); } }, (state.summary.models || []).map((m) => h('option', { value: m.id, selected: m.id === model.id }, `${m.label}${m.custom ? ' (직접 추가)' : ''}`)))),
       h('div', { class: 'small muted' }, `지원 길이: ${durs.join(' / ') || '선언 없음'}초 · 시작 이미지: 지원 · 끝 프레임: ${model.endImageField ? '선언됨' : '미선언'} · 해상도: ${(model.resolutions || []).join(' / ') || '미선언'} · 검증 수준: ${model.verification}`),
       h('label', { class: 'field' }, h('span', { class: 'small' }, '클립 길이'), h('select', { 'data-anim-duration': sc.id, onchange: (e) => saveSettings({ durationSec: e.target.value === '' ? null : Number(e.target.value) }) }, [h('option', { value: '' }, `자동 (${autoSec}초)`)].concat(durs.map((x) => h('option', { value: x, selected: set.durationSec === x }, `${x}초`))))),
       h('div', { class: 'small', 'data-anim-duration-note': sc.id, style: chosen !== planned ? 'color:var(--clay)' : '' }, chosen === planned ? `장면 ${planned}초 = 클립 ${chosen}초` : `장면 ${planned}초 ≠ 클립 ${chosen}초 — 모델이 고정 길이만 지원하면 길이가 다릅니다. 비디오 스튜디오에서 자르거나 늘려 맞춥니다.`),
       (model.resolutions || []).length ? h('label', { class: 'field' }, h('span', { class: 'small' }, '해상도'), h('select', { 'data-anim-resolution': sc.id, onchange: (e) => saveSettings({ resolution: e.target.value || null }) }, [h('option', { value: '' }, '모델 기본값')].concat(model.resolutions.map((x) => h('option', { value: x, selected: set.resolution === x }, x))))) : h('div', { class: 'small muted' }, '해상도: 이 모델은 선택 가능한 해상도가 선언되어 있지 않습니다 (모델 기본값 사용).'),
       h('div', { class: 'small muted' }, '화면 비율: 9:16 고정 (릴스 세로 영상)'),
       priceFor(model, chosen) != null ? h('div', { class: 'small' }, `내가 입력한 예상 단가: ${fmtUsd(priceFor(model, chosen))} / ${chosen}초 클립`) : h('div', { class: 'small', style: 'color:var(--clay)' }, '예상 단가가 입력되지 않았습니다 (설정 → 비용 한도와 가격 추정). 실제 모드에서는 단가가 없으면 생성이 막힙니다.')),
+    checkStatus,
     costBox,
     h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, h('button', { class: 'btn ghost', type: 'button', 'data-anim-estimate': sc.id, onclick: showCost }, '비용 확인 (무료)'), genBtn),
     h('div', { class: 'small muted' }, '한 번에 이 장면 하나만 생성합니다. 생성은 비용 확인과 직접 승인 후에만 시작되며 실패해도 자동으로 다시 시도하지 않습니다.'));

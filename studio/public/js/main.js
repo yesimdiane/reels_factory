@@ -44,7 +44,7 @@ export const RAIL = [
   ['storylab', '스토리 랩', 'Story Lab'],
   ['episodes', '에피소드', 'Episodes'],
   ['image', '이미지 스튜디오', 'Image Studio'],
-  ['video', '영상 제작', 'Video Production'],
+  ['video', '영상 제작', 'Animation · Voice · Lip Sync · Editing'],
   ['settings', '설정', 'Settings'],
 ];
 export const VIDEO_TABS = ['animation', 'voice', 'lipsync', 'render'];

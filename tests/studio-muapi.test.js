@@ -147,3 +147,20 @@ test('MuAPI rejects missing approved starting image before any paid submit', asy
   await assert.rejects(p.submit({ model: { endpoint: 'seedance-2-image-to-video' }, prompt: 'test', imageUrl: '' }), /starting image URL/);
   assert.equal(calls, 0);
 });
+
+test('Grok image-to-video uses required images_list despite stale image_url saved model settings', async () => {
+  let payload;
+  const provider = mk(async (_url, init) => {
+    payload = JSON.parse(init.body);
+    return res(200, { request_id: 'grok-job-1', status: 'queued' });
+  });
+  const result = await provider.submit({
+    model: { endpoint: 'grok-imagine-image-to-video', imageField: 'image_url', imageAsList: false },
+    prompt: 'Animate Jack without dialogue',
+    imageUrl: 'https://cdn.example/approved-jack.png',
+    duration: 5,
+  });
+  assert.equal(result.requestId, 'grok-job-1');
+  assert.deepEqual(payload.images_list, ['https://cdn.example/approved-jack.png']);
+  assert.equal(Object.hasOwn(payload, 'image_url'), false);
+});
