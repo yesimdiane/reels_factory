@@ -92,7 +92,8 @@ function drawShell() {
     h('div', { class: 'rail-foot' }, state.summary ? modePill() : '', authFoot(), state.summary && state.summary.build ? h('div', { class: 'small muted mono', 'data-build': '', title: '지금 실행 중인 코드의 버전 · 커밋 (배포가 최신인지 확인용)' }, `v${state.summary.build.version} · ${state.summary.build.shortSha || '커밋 정보 없음'}`) : null)
   );
   const tabs = document.getElementById('tabbar');
-  tabs.replaceChildren(...RAIL.map(([k, ko]) => h('button', { 'aria-current': active(k) ? 'page' : null, 'data-tab-nav': k, onclick: () => { location.hash = hrefFor(k); } }, icon(ICON[k] || k), ko.replace(' 스튜디오', ''))));
+  // phone bottom bar: persistent Home access + the six sidebar items (the sidebar itself is hidden on phones)
+  tabs.replaceChildren(...[['overview', '홈']].concat(RAIL.map(([k, ko]) => [k, ko])).map(([k, ko]) => h('button', { 'aria-current': (k === 'overview' ? state.view === 'overview' : active(k)) ? 'page' : null, 'data-tab-nav': k, onclick: () => { location.hash = hrefFor(k); } }, icon(ICON[k] || k), ko.replace(' 스튜디오', ''))));
 }
 
 function authFoot() {

@@ -191,7 +191,7 @@ test('Home screen: default route and first menu item, logo returns Home, counter
   assert.match(main, /NAV = \[\s*\['overview', '홈', 'Home'/, 'Home is the first menu item');
   assert.match(main, /view = 'overview'/, 'and the default route');
   assert.match(main, /class: 'brand', href: '#\/overview'/, 'the logo links to Home');
-  assert.match(main, /TAB_VIEWS = \['overview'/, 'persistent Home access in the mobile tab bar');
+  assert.match(main, /\['overview', '홈'\]\]\.concat\(RAIL/, 'persistent Home access in the mobile tab bar');
   for (const k of ['data-home-counters', 'data-home-queue', 'data-queue-group', 'data-home-item', 'data-performance', 'data-perf-import']) assert.match(ov, new RegExp(k), k);
   assert.match(ov, /'#\/' \+ item\.view \+ '\/'/, 'items deep-link to the right studio and episode');
   assert.match(ov, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/, 'XLSX accepted');

@@ -252,7 +252,7 @@ pre.prompt { white-space: pre-wrap; font-family: var(--sans); background: var(--
   .scene > .thumb-col { max-width: 190px; }
   .stat .n { font-size: 24px; }
   .tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 70; background: rgba(58, 43, 34, .97); padding: 8px 6px calc(8px + env(safe-area-inset-bottom)); justify-content: space-around; backdrop-filter: blur(8px); }
-  .tabbar button { background: transparent; border: 0; color: #cdbca3; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10.5px; padding: 4px 6px; border-radius: 10px; min-width: 56px; }
+  .tabbar button { background: transparent; border: 0; color: #cdbca3; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10.5px; padding: 4px 4px; border-radius: 10px; min-width: 46px; }
   .tabbar button svg { width: 21px; height: 21px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .tabbar button[aria-current="page"] { color: #fbf3e4; background: rgba(246, 241, 231, .14); }
   .sticky-bar { border-radius: 18px; bottom: 74px; flex-wrap: wrap; }

@@ -325,7 +325,7 @@ test('phone width: catalog toolbar, grid, Settings navs and Video Production tab
     }
     await page.goto(`${base}/#/products`);
     await page.waitForSelector('[data-catalog-item]');
-    assert.equal(await page.locator('#tabbar button').count(), 6, 'six bottom tabs');
+    assert.equal(await page.locator('#tabbar button').count(), 7, 'phone bottom bar: Home + the six sidebar items');
     const cols = await page.locator('[data-catalog-grid]').evaluate((e) => getComputedStyle(e).gridTemplateColumns.split(' ').length);
     assert.equal(cols, 2, 'two-column grid on a phone');
     await page.goto(`${base}/#/settings`);

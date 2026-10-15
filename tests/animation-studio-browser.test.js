@@ -42,7 +42,8 @@ test('Animation Studio: names, scene cards, workspace, explicit generation, appr
     await page.goto(`http://127.0.0.1:${app.address().port}/#/animation/${ID}`);
     await page.waitForSelector('[data-animation-studio]');
     const rail = await page.locator('#rail').innerText();
-    assert.match(rail, /애니메이션 스튜디오/); assert.match(rail, /비디오 스튜디오/);
+    assert.match(rail, /영상 제작/); assert.doesNotMatch(rail, /애니메이션 스튜디오/, 'Animation is a Video Production tab, not a sidebar item');
+    assert.deepEqual(await page.locator('[data-video-tabs] button').allTextContents(), ['1. 애니메이션', '2. 보이스', '3. 립싱크', '4. 편집']);
     // every scene has a card in story order with a status
     const cards = await page.locator('[data-anim-scene]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-anim-scene'), e.getAttribute('data-anim-status')]));
     assert.deepEqual(cards.map((c) => c[0]), ids);
