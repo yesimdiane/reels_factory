@@ -40,6 +40,27 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     return o && Number(o.durationSec) > 0 ? Object.assign({}, scene, { durationSec: Number(o.durationSec) }) : scene;
   }
 
+  // Embed approved dialogue timing as motion guidance for 480p drafts.
+  // This is prompt guidance, NOT an audio track: TTS remains the source of truth.
+  function seedanceTimedPrompt(ep, sceneId, model, basePrompt) {
+    const mode = ep.animation && ep.animation[sceneId] && ep.animation[sceneId].seedanceMode;
+    if (!model || model.id !== 'seedance-2.5' || mode !== 'draft') return basePrompt;
+    const lines = (ep.lines || []).filter(l => l.sceneId === sceneId && (l.en || l.ko));
+    if (!lines.length) return basePrompt;
+    const scene = (ep.scenes || []).find(sc => sc.id === sceneId);
+    const total = Number(scene && scene.durationSec) || 5;
+    const weights = lines.map(l => Math.max(1, String(l.en || l.ko).trim().split(/\\s+/).length));
+    const sum = weights.reduce((a, b) => a + b, 0);
+    let cursor = 0;
+    const timed = lines.map((l, i) => {
+      const end = i === lines.length - 1 ? total : Math.min(total, cursor + total * weights[i] / sum);
+      const row = `[${cursor.toFixed(1)}s–${end.toFixed(1)}s] ${l.speaker || 'Narrator'}: "${String(l.en || l.ko).replace(/"/g, "'")}"`;
+      cursor = end;
+      return row;
+    });
+    return [basePrompt, 'Dialogue timing reference for character gestures and reactions (no generated audio, captions or text):', ...timed, 'Use the dialogue beats to time reactions; keep output silent. Actual approved voice audio is mixed separately.'].join('\\n');
+  }
+
   function resolutionExtra(ep, sceneId, model) {
     const o = ep.animation && ep.animation[sceneId];
     const extra = o && o.resolution && (model.resolutions || []).includes(o.resolution) ? { [model.resolutionField || 'resolution']: o.resolution } : {};
@@ -366,7 +387,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       });
       let sub;
       try {
-        sub = await provider.submit({ model, prompt: composePrompt(store.episodes.get(epId), sceneId, prompt.video), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative && model.supportsNegativePrompt !== false ? prompt.negative + SILENT_NEGATIVE : undefined, extra: seedanceExtra, silent: true });
+        sub = await provider.submit({ model, prompt: seedanceTimedPrompt(store.episodes.get(epId), sceneId, model, composePrompt(store.episodes.get(epId), sceneId, prompt.video)), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative && model.supportsNegativePrompt !== false ? prompt.negative + SILENT_NEGATIVE : undefined, extra: seedanceExtra, silent: true });
       } catch (e) {
         const definitelyRefused = ['AUTH', 'BAD_REQUEST', 'CREDITS', 'RATE_LIMIT'].includes(e.code);
         await setJob(epId, job.id, { status: definitelyRefused ? 'failed' : 'uncertain', billed: definitelyRefused ? false : null, error: errInfo(e) });
