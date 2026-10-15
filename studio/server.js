@@ -368,6 +368,41 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('PUT', '/api/episodes/:id/spend-limit', async ({ p, body }) => S.setSpendLimit(p.id, body.usd));
 
   // ---- animation ----
+  // Free model preflight: local payload contract + scene readiness, and a free MuAPI balance GET.
+  // A successful balance GET proves credentials/network only, NOT that the paid video endpoint will accept a job.
+  route('POST', '/api/episodes/:id/generation/preflight', async ({ p, body }) => {
+    const modelId = String(body.modelId || '');
+    const sceneId = String(body.sceneId || '');
+    const model = S.store.models().find((m) => m.id === modelId);
+    if (!model) throw new StudioError('BAD_MODEL', '선택한 모델을 찾을 수 없습니다.', { status: 422 });
+    const ep = S.episodeView(p.id);
+    const scene = ep.scenes.find((sc) => sc.id === sceneId);
+    if (!scene) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다.', { status: 404 });
+    const { buildBody, validateEndpoint } = require('./lib/modelcontract');
+    const problems = [];
+    const endpoint = validateEndpoint(model.endpoint);
+    if (!endpoint) problems.push('MuAPI 모델 엔드포인트가 올바르지 않습니다.');
+    const info = scene.startImageInfo || {};
+    if (info.error || !info.approved || !info.url) problems.push('승인된 시작 이미지가 필요합니다.');
+    let imageField = '';
+    let imageType = '';
+    if (endpoint && !problems.some((x) => x.includes('시작 이미지'))) {
+      try {
+        const payload = buildBody(model, { prompt: scene.animationPrompt || scene.prompt?.video || 'preflight', imageUrl: 'https://preflight.invalid/approved.png', duration: (model.durations || [5])[0], aspectRatio: '9:16', silent: true });
+        const imageKeys = ['images_list', 'image_url', model.imageField].filter(Boolean);
+        imageField = imageKeys.find((key) => Object.hasOwn(payload, key)) || '';
+        imageType = Array.isArray(payload[imageField]) ? 'array' : typeof payload[imageField];
+        if (!imageField || !((imageType === 'array' && payload[imageField].length) || (imageType === 'string' && payload[imageField]))) problems.push('이미지 입력 필드가 생성되지 않았습니다.');
+      } catch (e) { problems.push('모델 입력 형식 오류: ' + e.message); }
+    }
+    const estimate = S.gen.estimate(p.id, { sceneIds: [sceneId], modelId });
+    for (const b of estimate.blockers || []) problems.push(b.message);
+    let connected = S.video.mode !== 'live';
+    if (S.video.mode === 'live') {
+      try { await S.video.balance(); connected = true; } catch (e) { problems.push('MuAPI 무료 연결 확인 실패: ' + e.message); }
+    }
+    return { modelId, endpoint, imageField, imageType, connected, mode: S.video.mode, paidRequestSent: false, remoteEndpointVerified: false, checkedAt: new Date().toISOString(), blockers: [...new Set(problems)], canGenerate: connected && problems.length === 0 && !!estimate.canAuthorize };
+  });
   route('POST', '/api/episodes/:id/generation/estimate', async ({ p, body }) => S.gen.estimate(p.id, body));
   route('POST', '/api/episodes/:id/generation/authorize', async ({ p, body }) => { S.assertNotHeld(p.id); return S.gen.authorize(p.id, body); });
   route('POST', '/api/episodes/:id/generation/run', async ({ p, body }) => {
