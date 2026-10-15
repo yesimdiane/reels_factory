@@ -356,6 +356,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       characters: lib().characters.map(characterView),
       universes: universes.overview(),
       voices: voiceCatalog.overview(),
+      lipsync: { models: lipsync.models(), defaultModelId: (() => { try { return lipsync.modelById(lipsync.defaultModelId()).id; } catch (_) { return lipsync.models()[0].id; } })() },
       style: lib().style,
       products: products.list(),
       storylab: storylabSummary(),
