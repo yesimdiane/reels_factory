@@ -138,25 +138,66 @@ function parts() {
 
   sec.connections.append(lipsyncModelsCard(state.summary));
 
-  // Spend + prices
+  // Spend + prices: responsive model cards. Existing backend stores per-duration
+  // estimates; resolution-specific rates below are reference-only until the
+  // server supports per-resolution cost estimates.
   const f = { limit: st.reelSpendLimitUsd == null ? '' : st.reelSpendLimitUsd, voice: st.voiceUsdPer1kChars == null ? '' : st.voiceUsdPer1kChars, prices: {} };
-  const rows = s.models.map((m) => {
+  const published = {
+    'grok-imagine-image-to-video': ['480p: $0.025/초 · 720p: $0.05/초', '6~30초 지원 · 5초 미지원'],
+    'seedance-pro-i2v': ['$0.18/회 공개 단가', '해상도·길이별 실제 청구액 미확인'],
+    'seedance-pro-i2v-fast': ['480p 5초 $0.10 / 10초 $0.20', '720p 5초 $0.15 / 10초 $0.30 · 1080p 5초 $0.30 / 10초 $0.60'],
+    'kling-v2.1-master-i2v': ['$0.30/회 공개 단가', '10초 및 크레딧 환산 비용 확인 필요'],
+    'seedance-2.5-image-to-video': ['해상도별 가격 미확인', 'Intl 모델 요금을 대신 사용하지 마세요'],
+    'runway-image-to-video': ['$0.15/회 공개 단가', '해상도별 실제 청구액 확인 필요'],
+  };
+  const cards = (s.models || []).map((m) => {
     const cur = ((st.modelEstimates || {})[m.id] || {}).usdByDuration || {};
-    f.prices[m.id] = Object.fromEntries(m.durations.map((d) => [String(d), cur[String(d)] === undefined ? '' : cur[String(d)]]));
-    return h('tr', null,
-      h('td', null, h('b', null, m.label || m.id), h('div', { class: 'small muted mono' }, m.endpoint), h('div', { class: 'small muted' }, '검증 수준: ' + m.verification)),
-      m.durations.map((d) => h('td', null, h('input', { type: 'number', min: 0, step: 0.01, placeholder: '미입력', value: f.prices[m.id][String(d)], style: 'width:100px', oninput: (e) => (f.prices[m.id][String(d)] = e.target.value) }))));
+    const ds = m.durations || [];
+    const ref = published[m.endpoint] || published[m.id] || ['공식 단가 미확인', 'MuAPI 계정에서 가격을 확인하세요'];
+    f.prices[m.id] = Object.fromEntries(ds.map((d) => [String(d), cur[String(d)] === undefined ? '' : cur[String(d)]]));
+    return h('div', { class: 'card stack', style: 'gap:12px;min-width:0', 'data-model-price-card': m.id },
+      h('div', { class: 'row between', style: 'gap:8px;align-items:flex-start;flex-wrap:wrap' },
+        h('div', { style: 'min-width:0;overflow-wrap:anywhere' },
+          h('b', null, m.label || m.id),
+          h('div', { class: 'small muted mono', style: 'overflow-wrap:anywhere' }, m.endpoint)),
+        chip(m.verification === 'verified' ? '생성 검증됨' : m.verification === 'user-entered' ? '사용자 확인' : '미검증', m.verification === 'verified' ? 'done' : 'attention')),
+      h('div', { class: 'small muted' }, '공개 참고 가격: ' + ref.join(' · ')),
+      h('div', { class: 'small muted' }, '현재 저장 방식은 길이별 단일 가격입니다. 해상도에 따라 요금이 달라지면 정확한 예상액을 보장할 수 없으므로 선택한 해상도의 실제 가격만 입력하세요.'),
+      h('div', { class: 'grid two', style: 'gap:10px' }, ds.length
+        ? ds.map((d) => h('label', { class: 'field', style: 'min-width:0' },
+          h('span', { class: 'small' }, d + '초 · USD/클립'),
+          h('input', { type: 'number', min: 0, step: 0.001, inputmode: 'decimal',
+            'aria-label': (m.label || m.id) + ' ' + d + '초 예상 비용',
+            placeholder: '미확인', value: f.prices[m.id][String(d)],
+            style: 'width:100%;min-width:0;max-width:100%',
+            oninput: (e) => (f.prices[m.id][String(d)] = e.target.value) })))
+        : [h('span', { class: 'small muted' }, '지원 길이가 등록되지 않았습니다.')]));
   });
-  const maxDur = Math.max(...s.models.map((m) => m.durations.length), 1);
-  sec.costs.append(h('div', { class: 'card stack', style: 'gap:12px' },
-    h('div', { class: 'card-head' }, h('h2', null, '비용 한도와 가격 추정'),
-      h('button', { class: 'btn sm', onclick: () => act(async () => { await api.put('/api/settings', { reelSpendLimitUsd: f.limit, voiceUsdPer1kChars: f.voice, modelEstimates: Object.fromEntries(Object.entries(f.prices).map(([k, v]) => [k, { usdByDuration: v }])) }); return null; }, { ok: '설정을 저장했습니다' }) }, '저장')),
-    h('div', { class: 'banner warn' }, icon('lock'), h('div', null, 'Muapi 공식 문서에서 모델별 단가표를 확인하지 못해 가격을 임의로 채우지 않았습니다. Muapi 계정의 가격 안내를 보고 직접 입력하세요. 입력하기 전에는 실제 모드에서 생성이 차단됩니다(비용 확인 없이는 실행 불가).')),
-    h('div', { class: 'grid two' },
-      h('div', { class: 'field' }, h('label', null, '릴스 1편당 지출 한도 (USD)'), h('input', { type: 'number', min: 0, step: 0.5, value: f.limit, placeholder: '기본값 $' + st.effectiveReelSpendLimitUsd + ' (RF_REEL_SPEND_LIMIT_USD)', oninput: (e) => (f.limit = e.target.value) }), h('div', { class: 'small muted' }, '현재 적용: ' + fmtUsd(st.effectiveReelSpendLimitUsd) + ' · 비워두면 서버 기본값 사용')),
-      h('div', { class: 'field' }, h('label', null, 'HeyGen 1,000자당 추정 가격 (USD, 선택)'), h('input', { type: 'number', min: 0, step: 0.01, value: f.voice, placeholder: '미입력', oninput: (e) => (f.voice = e.target.value) }))),
-    h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, '모델 (클립 1개 가격, USD)'), ...Array.from({ length: maxDur }, (_, i) => h('th', null, (s.models[0].durations[i] || '') + '초')))), h('tbody', null, rows)))));
-
+  sec.costs.append(h('div', { class: 'stack', style: 'gap:14px', 'data-pricing-settings': '' },
+    h('div', { class: 'card stack', style: 'gap:12px' },
+      h('div', { class: 'card-head', style: 'gap:10px;flex-wrap:wrap' },
+        h('h2', null, '비용 한도와 가격 추정'),
+        h('button', { class: 'btn sm', type: 'button', onclick: () => act(async () => {
+          await api.put('/api/settings', {
+            reelSpendLimitUsd: f.limit, voiceUsdPer1kChars: f.voice,
+            modelEstimates: Object.fromEntries(Object.entries(f.prices).map(([k, v]) => [k, { usdByDuration: v }]))
+          }); return null;
+        }, { ok: '비용 설정을 저장했습니다' }) }, '가격 저장')),
+      h('div', { class: 'banner warn' }, icon('lock'),
+        h('div', null, '공개 가격은 참고용이며 자동 입력하지 않습니다. 해상도·길이별 요금이 다를 수 있습니다. 미확인 비용은 비워 두세요. 실제 생성은 별도 승인과 비용 확인이 필요합니다.')),
+      h('div', { class: 'grid two', style: 'gap:12px' },
+        h('label', { class: 'field', style: 'min-width:0' },
+          h('span', null, '릴스 1편당 지출 한도 (USD)'),
+          h('input', { type: 'number', min: 0, step: 0.5, style: 'width:100%;min-width:0', value: f.limit,
+            placeholder: '기본값 $' + st.effectiveReelSpendLimitUsd, oninput: (e) => (f.limit = e.target.value) }),
+          h('span', { class: 'small muted' }, '현재 적용: ' + fmtUsd(st.effectiveReelSpendLimitUsd))),
+        h('label', { class: 'field', style: 'min-width:0' },
+          h('span', null, 'HeyGen 1,000자당 가격 (USD)'),
+          h('input', { type: 'number', min: 0, step: 0.01, style: 'width:100%;min-width:0',
+            value: f.voice, placeholder: '미확인', oninput: (e) => (f.voice = e.target.value) })))),
+    h('h3', null, '영상 모델별 예상 비용'),
+    ...cards));
+  
   // Render prefs
   const r = Object.assign({}, st.render);
   sec.general.append(h('div', { class: 'card stack', style: 'gap:12px' },
