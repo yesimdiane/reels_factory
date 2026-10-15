@@ -23,6 +23,16 @@ const { modelById, clipSecFor, estimateRun, jobKey, spentUsd, limitFor, round } 
 const { ProviderError } = require('./providers');
 const { probe } = require('../../renderer/lib/ffmpeg');
 
+// This exact endpoint and required input shape are published in MuAPI's official API reference.
+// Documentation confirmation is not proof of a successful live call.
+const OFFICIALLY_DOCUMENTED_SEEDANCE = 'seedance-2.5-image-to-video';
+function documentedSeedance(model) {
+  return !!model && model.id === 'seedance-2.5' &&
+    model.endpoint === OFFICIALLY_DOCUMENTED_SEEDANCE &&
+    model.mode === 'image-to-video' &&
+    model.imageField === 'image_url';
+}
+
 const AUTH_TTL_MS = 30 * 60 * 1000;
 const ACTIVE = new Set(['preparing', 'submitting', 'processing']);
 const RECOVERABLE = new Set(['processing', 'polling_interrupted', 'download_failed']);
@@ -137,7 +147,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
         if (img.placeholder && provider.mode === 'live') add('PLACEHOLDER_IMAGE', `${s.id}: 데모용 임시 이미지는 실제(유료) 생성에 쓸 수 없습니다.`, '실제 캐릭터 참조 이미지를 올리고 승인하세요.');
       }
     });
-    if (provider.mode === 'live' && !['verified', 'user-entered'].includes(model.verification)) add('MODEL_UNVERIFIED', '모델 엔드포인트가 확인되지 않았습니다.', 'MuAPI 플레이그라운드에서 엔드포인트와 요청 파라미터를 확인한 뒤 Settings → Muapi 연결에서 "플레이그라운드에서 확인함"을 누르세요.');
+    if (provider.mode === 'live' && !['verified', 'user-entered'].includes(model.verification) && !documentedSeedance(model)) add('MODEL_UNVERIFIED', '모델 엔드포인트가 확인되지 않았습니다.', 'MuAPI 플레이그라운드에서 엔드포인트와 요청 파라미터를 확인한 뒤 Settings → Muapi 연결에서 "플레이그라운드에서 확인함"을 누르세요.');
     return out;
   }
 
@@ -186,7 +196,8 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     add('DURATION', bad.length === 0, bad.length ? `모델의 최대 클립 길이(${maxClip}초)보다 긴 장면: ${bad.map((s) => s.id + ' ' + s.durationSec + '초').join(', ')} — 장면을 나누거나 줄이세요` : '클립 길이 지원');
     add('MODE', !model.mode || model.mode === 'image-to-video', !model.mode || model.mode === 'image-to-video' ? '이미지→영상 방식 (시작 이미지 사용)' : `이 앱은 이미지→영상만 사용합니다 (모델 방식: ${model.mode})`);
     const verified = model.verification === 'verified';
-    return { items, ok: items.every((i) => i.ok), verification: model.verification || 'unknown', verified, note: verified ? '실제 호출로 확인된 모델입니다.' : model.verification === 'user-entered' ? 'Settings에 직접 등록한 MuAPI 엔드포인트를 사용합니다. 실제 동작은 검증되지 않았으므로 플레이그라운드에서 경로와 파라미터를 확인하세요. 생성은 별도 비용 승인 후에만 실행됩니다.' : '공식 문서의 예시 기준 항목입니다. 첫 실제 실행 전에 Muapi 플레이그라운드에서 엔드포인트와 파라미터를 확인하세요 (이 앱은 실제 호출 없이 검증할 수 없습니다).' };
+    const documented = documentedSeedance(model);
+    return { items, ok: items.every((i) => i.ok), verification: model.verification || 'unknown', verified, documented, note: verified ? '실제 호출로 확인된 모델입니다.' : documented ? 'MuAPI 공식 API 문서에 명시된 Seedance 2.5 엔드포인트와 필수 입력 형식을 확인했습니다. 실제 호출 성공 여부는 미검증입니다. 영상 생성에는 별도 비용 승인이 필요합니다.' : model.verification === 'user-entered' ? 'Settings에 직접 등록한 MuAPI 엔드포인트를 사용합니다. 실제 동작은 검증되지 않았으므로 플레이그라운드에서 경로와 파라미터를 확인하세요. 생성은 별도 비용 승인 후에만 실행됩니다.' : '공식 문서의 예시 기준 항목입니다. 첫 실제 실행 전에 Muapi 플레이그라운드에서 엔드포인트와 파라미터를 확인하세요 (이 앱은 실제 호출 없이 검증할 수 없습니다).' };
   }
 
   /** Free. Never touches the network. */
