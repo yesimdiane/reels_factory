@@ -79,6 +79,8 @@ function leftColumn(ep, sc) {
   // Free, read-only estimate gate for the selected model. This is NOT a paid MuAPI test.
   const checkKey = 'animcheck:' + ep.id + ':' + sc.id;
   const checked = (state.draft[checkKey] = state.draft[checkKey] || {});
+  // A new view's button begins disabled; recheck against current server state on every view open.
+  checked.ok = false;
   const checkStatus = h('div', { class: 'small muted', 'data-anim-model-check': sc.id }, '모델 연결 사전 점검 필요 (무료 · 실제 영상 생성 아님)');
   const checkModel = async (id = model.id) => {
     checked.id = id;
@@ -86,12 +88,12 @@ function leftColumn(ep, sc) {
     genBtn.disabled = true;
     checkStatus.textContent = '모델 설정 및 생성 조건 점검 중… (무료)';
     try {
-      const est = await api.post(`/api/episodes/${ep.id}/generation/estimate`, { sceneIds: [sc.id], modelId: id });
+      const result = await api.post(`/api/episodes/${ep.id}/generation/preflight`, { sceneId: sc.id, modelId: id });
       if (checked.id !== id) return;
-      checked.ok = !!est.canAuthorize;
-      const blockers = (est.blockers || []).map((b) => b.message);
+      checked.ok = !!result.canGenerate;
+      const blockers = result.blockers || [];
       checkStatus.textContent = checked.ok
-        ? '✓ 사전 점검 완료 · 생성 조건 확인 (실제 MuAPI 호출은 미검증)'
+        ? `✓ 무료 사전 점검 통과 · ${result.imageField} (${result.imageType}) · ${result.mode === 'live' ? 'MuAPI 계정 연결됨' : 'MOCK'} · 실제 모델 엔드포인트 미검증`
         : '사전 점검 실패: ' + (blockers.join(' / ') || '모델 설정을 확인하세요');
     } catch (e) {
       if (checked.id !== id) return;
@@ -121,7 +123,7 @@ function leftColumn(ep, sc) {
   const canGenerate = () => checked.id === model.id && checked.ok === true && !running && !dirty() && !!sc.prompt && !!imgOk && gateReady;
   const genBtn = h('button', { class: 'btn clay', type: 'button', 'data-anim-generate': sc.id, disabled: !canGenerate(), title: !gateReady ? '"생성 전 단계" 점검 항목을 먼저 끝내세요' : dirty() ? '프롬프트를 먼저 저장하세요' : '비용 확인과 승인 단계를 거쳐야 시작됩니다', onclick: () => startGeneration(ep, [sc.id], { modelId: model.id }) }, icon('play'), sc.clips.versions.length ? '새 버전 생성…' : '생성…');
   refreshSave();
-  if (checked.id !== model.id || !checked.ok) void checkModel(model.id);
+  void checkModel(model.id);
   return h('div', { class: 'stack', style: 'gap:12px', 'data-anim-left': sc.id },
     h('div', { class: 'card flat stack', style: 'gap:6px' }, h('b', { class: 'small' }, '시작 이미지 (스토리보드에서 승인된 이미지)'),
       h('div', { class: 'row', style: 'gap:10px;align-items:flex-start' },
