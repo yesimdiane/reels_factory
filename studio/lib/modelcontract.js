@@ -60,9 +60,9 @@ function buildBody(model, { prompt, imageUrl, aspectRatio, duration, negativePro
     : model.imageField || (usesList ? 'images_list' : 'image_url');
   if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.trim()) throw new Error('Approved starting image URL is required before MuAPI submission');
   body[imageField] = usesList ? [imageUrl] : imageUrl;
-  if (aspectRatio != null) body[model.aspectField || 'aspect_ratio'] = aspectRatio;
+  if (aspectRatio != null && !model.omitAspectRatio) body[model.aspectField || 'aspect_ratio'] = aspectRatio;
   if (duration != null) body[model.durationField || 'duration'] = duration;
-  if (negativePrompt) body[model.negativeField || 'negative_prompt'] = negativePrompt;
+  if (negativePrompt && model.supportsNegativePrompt !== false) body[model.negativeField || 'negative_prompt'] = negativePrompt;
   return body;
 }
 
