@@ -8,7 +8,7 @@ test('Seedance 2.5 matches the supplied MuAPI request contract without paid call
   assert.equal(model.endpoint, 'seedance-2.5-image-to-video');
   const body = buildBody(model, { prompt: 'Animate a park', imageUrl: 'https://example.test/park.jpg', aspectRatio: '9:16', duration: 5, negativePrompt: 'none' });
   assert.deepEqual(body, {
-    resolution: '720p', seed: 42, high_bitrate: false, draft: false, draft_request_id: '',
+    resolution: '480p', seed: -1, high_bitrate: false, draft: false,
     prompt: 'Animate a park', image_url: 'https://example.test/park.jpg', duration: 5,
   });
   assert.equal(model.verification, 'unverified');
