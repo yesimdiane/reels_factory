@@ -10,7 +10,7 @@ export const STEP = 0.3; // UI grid: 0.3 s
 const snap = (n) => Math.round(Math.round(Number(n) / STEP) * STEP * 100) / 100;
 const r2 = (n) => Math.round(n * 100) / 100;
 const PX = 36; // px per second on the timeline
-const ui = () => (state.ui = state.ui || {});
+const ui = () => { state.ui = state.ui || { open: {} }; state.ui.open = state.ui.open || {}; return state.ui; };
 
 export const VIDEO_TABS = [['review', '장면 검토'], ['timeline', '타임라인'], ['subtitles', '자막'], ['sound', '사운드'], ['final', '최종 렌더']];
 export const videoTab = (ep) => (ui().videoTab && ui().videoTab[ep.id]) || 'review';
@@ -33,7 +33,7 @@ export function reviewTab(ep) {
       fin.missing && fin.missing.length ? h('div', { class: 'small', style: 'color:var(--clay)' }, '필요: ' + fin.missing.join(', ')) : null,
       fin.state === 'stale' ? h('div', { class: 'issue err' }, `승인 후 바뀐 부분: ${(fin.changed || []).join(', ') || '내용'}`) : null,
       h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
-        h('button', { class: 'btn sm ghost', type: 'button', onclick: () => { state.ui = state.ui || {}; goToScenePanel(ep, sc.id, 'clips'); } }, '애니메이션'),
+        h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'clips') }, '애니메이션'),
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'audio') }, '보이스'),
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'lipsync') }, '립싱크'),
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'compose') }, '합본·승인 열기')));

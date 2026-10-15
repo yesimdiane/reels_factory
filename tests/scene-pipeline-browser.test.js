@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { approveWithScenes } = require('./helpers/approve');
-const { approveAllAudio, approveAllScenes, decideAllGates } = require('./helpers/scene-flow');
+const { approveAllAudio, approveAllScenes, approveAllLipsync, decideAllGates } = require('./helpers/scene-flow');
 const { png } = require('./helpers/v23');
 const { loadConfig } = require('../renderer/lib/config');
 const { createStudio } = require('../studio/lib/studio');
@@ -68,7 +68,8 @@ test('storyboard: notice click → audio panel → generate/listen/approve → c
     const a = await s.gen.authorize(ID, { sceneIds: [target], confirmUsd: est.totalUsd, confirmUnknown: est.totalUsd == null });
     await (await s.gen.run(ID, a.id)).done;
     await s.gen.review(ID, target, 1, 'approve');
-    await page.reload();
+    await approveAllLipsync(s, ID); // dialogue scenes are assembled from their approved lip-synced video
+    await page.goto(`http://127.0.0.1:${app.address().port}/#/image/${ID}`);
     await page.waitForSelector('[data-sb-tab]');
     await page.locator(`[data-sb-tab="${target}"]`).click();
     await page.waitForSelector(`[data-sb-stepper="${target}"]`);

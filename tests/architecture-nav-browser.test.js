@@ -95,3 +95,14 @@ test('phone width: the AI task table stacks into cards, the animation video row 
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, 'no sideways scroll');
   });
 });
+
+test('moving between the new studios in any order never breaks a view (shared UI state is initialised)', { skip, timeout: 180000 }, async () => {
+  await withPage(async ({ page, base }) => {
+    const order = ['voice', 'image', 'render', 'image', 'lipsync', 'animation', 'voice', 'image', 'render', 'script', 'lipsync', 'image'];
+    for (const v of order) {
+      await page.goto(`${base}/#/${v}/${ID}`);
+      await page.waitForSelector('#stage h1, #stage h2');
+      assert.equal(await page.locator('#stage .banner.err').count(), 0, `${v} rendered an error banner after the previous studio`);
+    }
+  });
+});

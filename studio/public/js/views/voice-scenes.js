@@ -8,7 +8,8 @@ import { flowOf, audioPanelBody } from './scene-flow.js';
 const AUDIO = { none: ['음성 없음', 'attention'], partial: ['일부만 있음', 'attention'], unapproved: ['확인·승인 대기', 'attention'], approved: ['음성 승인됨', 'done'], stale: ['바뀜 · 다시 승인', 'err'], silent: ['대사 없음 (명시)', 'done'] };
 
 export function voiceScenes(ep) {
-  const open = (state.ui = state.ui || {}, state.ui.voiceOpen = state.ui.voiceOpen || {});
+  state.ui = state.ui || { open: {} }; state.ui.open = state.ui.open || {}; // the Image Studio expects ui.open to exist
+  const open = (state.ui.voiceOpen = state.ui.voiceOpen || {});
   return h('div', { class: 'stack', style: 'gap:10px', 'data-voice-scenes': '' }, ep.scenes.map((sc) => {
     const f = flowOf(ep, sc.id);
     if (!f) return null;
