@@ -7,11 +7,11 @@
 | grok-imagine-image-to-video, 480p | N/A | 0.25 | 6–30s, $0.025/s (6s=$0.15, 30s=$0.75) | Official API docs; 5s unsupported |
 | grok-imagine-image-to-video, 720p | N/A | 0.50 | 6–30s, $0.05/s (6s=$0.30, 30s=$1.50) | Official API docs; 5s unsupported |
 | kling-v2.1-master-i2v | 0.30* | UNKNOWN | 5s and 10s supported in comparison schema | *Provider quotes $0.30 per generation / 0.3 credits per call, but does NOT establish whether 10s has same price. Verify actual 5s charge and 10s separately. |
-| seedance-pro-i2v | UNKNOWN | UNKNOWN | Example uses 5s; supported price tiers not verified | Need billing evidence or provider rate table |
+| seedance-pro-i2v | $0.18 per generation (duration/resolution-specific amount UNKNOWN) | $0.18 per generation (duration/resolution-specific amount UNKNOWN) | Provider lists 5–10s and 480p/720p/1080p | Official model page says $0.18 per generation but does NOT confirm same billed amount across resolution/duration; do not treat $0.18 as validated 5s/10s price. |
 | seedance-2.5-image-to-video | UNKNOWN | UNKNOWN | 480p, 720p, 1080p, 4k; draft and finalize flows | Main endpoint resolution-specific pricing not verified; do NOT substitute **seedance-2.5-intl-image-to-video** rates |
 | runway-image-to-video | 0.15* | N/A | Official API duration options 5s or 8s; 10s unsupported; 1080p+8s unsupported | *Provider quotes $0.15 per request, not resolution-specific. Confirm 720p vs 1080p billing. |
 
-## User-entered Settings values in screenshot
+## Separate model: Seedance Pro Fast (user-supplied provider screenshot)\n- Screenshot labeled Seedance Pro Fast, **not** seedance-pro-i2v. Published table: 480p 5s $0.10 / 10s $0.20; 720p 5s $0.15 / 10s $0.30; 1080p 5s $0.30 / 10s $0.60.\n- Do not assign Fast rates to seedance-pro-i2v without exact model ID confirmation.\n\n## User-entered Settings values in screenshot
 - Kling Master: 5s $1.00, 10s $1.00; both **user-entered, not provider verified**.
 - Runway: 5s $0.50; **user-entered, not provider verified**.
 - Seedance 2.5: blank/unverified.
