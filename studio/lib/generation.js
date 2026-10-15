@@ -47,10 +47,11 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     const mode = o && o.seedanceMode || 'standard';
     if (mode === 'draft') return { resolution: '480p', draft: true };
     if (mode === 'finalize') {
-      const id = o && o.draftRequestId;
-      const prior = (ep.generation && ep.generation.jobs || []).find(j => j.modelId === model.id && j.sceneId === sceneId && j.requestId === id && j.seedanceMode === 'draft' && j.status === 'completed');
-      if (!prior || !prior.updatedAt || Date.now() - Date.parse(prior.updatedAt) > 7 * 86400000 || Date.parse(prior.updatedAt) > Date.now()) throw new StudioError('DRAFT_NOT_READY', '7일 이내 완료된 동일 장면의 Seedance 초안이 필요합니다.', { status: 409 });
-      return { resolution: '1080p', draft: false, draft_request_id: id };
+      const drafts = (ep.generation && ep.generation.jobs || []).filter(j => j.modelId === model.id && j.sceneId === sceneId && j.requestId && j.seedanceMode === 'draft' && j.status === 'completed' && j.updatedAt && Date.now() - Date.parse(j.updatedAt) <= 7 * 86400000 && Date.parse(j.updatedAt) <= Date.now());
+      const requestedId = o && o.draftRequestId;
+      const prior = requestedId ? drafts.find(j => j.requestId === requestedId) : drafts.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+      if (!prior) throw new StudioError('DRAFT_NOT_READY', '7일 이내 완료된 동일 장면의 Seedance 초안이 필요합니다.', { status: 409 });
+      return { resolution: '1080p', draft: false, draft_request_id: prior.requestId };
     }
     return { draft: false, ...extra };
   }
