@@ -5,22 +5,58 @@ import { state, act, setProduct } from '../state.js';
 import { api } from '../api.js';
 import { pageHead, asyncBlock, confirmPaid } from './common.js';
 import { castSection } from './cast-picker.js';
+import { catalog } from './catalog.js';
 
-const view = { tab: 'candidate', open: '', ko: new Set(), category: '', count: 1, maxSec: 45, extra: '' };
+const fresh = () => ({ tab: 'candidate', open: '', ko: new Set(), category: '', count: 1, maxSec: 45, extra: '' });
+// Each product keeps its own unsaved generation form (category, count, length, extra instruction, open tab/story) while the user
+// goes back to the catalog and opens it again; nothing here is written to the server until a button is pressed.
+const drafts = {};
+let view = fresh();
 // Count rules mirror the backend (studio/lib/storycategories.js): 1–5 for one category, always 3 for "all". The server enforces them too.
 const isAll = () => view.category === 'all';
 const effCount = () => (isAll() ? 3 : view.count);
 const catName = (cats, k) => { const o = (cats || []).find((x) => x.key === k); return o ? o.ko : ''; };
 const TABS = [['candidate', '후보', (c) => c.status === 'candidate'], ['approved', '승인됨', (c) => c.status === 'approved'], ['hold', '보류', (c) => c.status === 'hold'], ['archive', '보관·삭제', (c) => ['deleted', 'rejected', 'superseded'].includes(c.status)]];
 
+const LAB_STATUS = [['none', '스토리 없음'], ['candidate', '후보 있음'], ['approved', '승인됨'], ['reapprove', '재승인 필요'], ['hold', '보류']];
+
+/** Story Lab landing page: products with their story concepts. Opening a card only navigates; it never creates a story or a product. */
+function labCatalog(s) {
+  const lab = new Map((s.storylab || []).map((x) => [x.productId, x]));
+  const items = (s.products || []).map((p) => {
+    const l = lab.get(p.id) || { concepts: 0, approved: 0, candidates: 0, needsReapproval: 0, hold: 0, titles: [], lastAt: '' };
+    const statuses = [];
+    if (!l.concepts) statuses.push('none');
+    if (l.candidates) statuses.push('candidate');
+    if (l.approved) statuses.push('approved');
+    if (l.needsReapproval) statuses.push('reapprove');
+    if (l.hold) statuses.push('hold');
+    const [label, tone] = !l.concepts ? ['스토리 없음', 'attention'] : l.needsReapproval ? ['재승인 필요', 'attention'] : l.approved ? ['승인 ' + l.approved, 'done'] : l.candidates ? ['후보 ' + l.candidates, ''] : ['보류', 'mock'];
+    return { id: p.id, code: p.code || '', name: p.name || '', thumb: p.mainImage ? p.mainImage.url : '', status: statuses[0] || 'hold', statuses, statusLabel: label, tone, href: '#/storylab/' + p.id,
+      meta: [l.concepts ? `스토리 ${l.concepts}개 · 승인 ${l.approved} · 후보 ${l.candidates}` : '아직 만든 스토리가 없습니다'],
+      note: !l.concepts ? { text: p.readiness.ok ? '스토리를 만들어 보세요' : '필요: ' + p.readiness.missing.join(', '), tone: 'warn' } : null,
+      search: l.titles || [], createdAt: p.createdAt || '', updatedAt: l.lastAt || p.updatedAt || '', attr: { 'data-lab-card': p.id, 'data-concepts': String(l.concepts) } };
+  });
+  return catalog({ id: 'storylab', items, statusOptions: LAB_STATUS, searchPlaceholder: '제품 이름 · 코드 · 스토리 제목으로 검색', noImageText: '대표 이미지 없음',
+    emptyTitle: '제품을 먼저 만드세요', emptyText: '제품 스튜디오에서 제품을 만들면 여기에 나타납니다.', noMatchText: '조건에 맞는 제품 또는 스토리가 없습니다.',
+    onOpen: (it) => { setProduct(it.id); location.hash = '#/storylab/' + it.id; } });
+}
+
 export function storylab() {
   const s = state.summary;
-  const pid = state.productId;
   const wrap = h('div', { class: 'stack', style: 'gap:16px' });
+  const hashId = location.hash.split('/')[2] || '';
+  if (!hashId) { // catalog first: no product (and no editor) is opened automatically
+    wrap.append(pageHead('Story Lab', '스토리 랩', '제품을 고르면 그 제품의 스토리 컨셉을 만들고 승인하는 화면이 열립니다. 목록을 열어 보는 것만으로는 아무것도 만들어지지 않습니다.'));
+    wrap.append(labCatalog(s));
+    return wrap;
+  }
+  const pid = hashId;
+  view = drafts[pid] || (drafts[pid] = fresh());
   const items = s.products || [];
-  const picker = items.length > 1 ? h('select', { 'aria-label': '제품 선택', style: 'width:auto;padding:7px 12px;border-radius:999px', onchange: (e) => { setProduct(e.target.value); location.hash = '#/storylab/' + e.target.value; } }, items.map((p) => h('option', { value: p.id, selected: p.id === pid }, p.id + ' · ' + (p.name || '').slice(0, 24)))) : null;
-  wrap.append(pageHead('Story Lab', '스토리랩', '어떤 이야기로 사람들의 관심을 끌까? 전체 스토리라인만 만들고 승인합니다.', picker));
-  if (!pid) { wrap.append(h('div', { class: 'empty' }, h('h2', null, '제품을 먼저 만드세요'), h('button', { class: 'btn', onclick: () => { location.hash = '#/products'; } }, '제품으로 이동'))); return wrap; }
+  const picker = items.length > 1 ? h('select', { 'aria-label': '제품 선택', 'data-lab-product-select': '', style: 'width:auto;padding:7px 12px;border-radius:999px', onchange: (e) => { setProduct(e.target.value); location.hash = '#/storylab/' + e.target.value; } }, items.map((p) => h('option', { value: p.id, selected: p.id === pid }, p.id + ' · ' + (p.name || '').slice(0, 24)))) : null;
+  wrap.append(pageHead('Story Lab', '스토리 랩', '어떤 이야기로 사람들의 관심을 끌까? 전체 스토리라인만 만들고 승인합니다.', h('button', { class: 'btn ghost', type: 'button', 'data-lab-back': '', onclick: () => { location.hash = '#/storylab'; } }, icon('back'), '스토리 랩 목록'), picker));
+  if (!items.some((p) => p.id === pid)) { wrap.append(h('div', { class: 'empty' }, h('h2', null, '제품을 찾을 수 없습니다'), h('button', { class: 'btn', onclick: () => { location.hash = '#/storylab'; } }, '목록으로'))); return wrap; }
   wrap.append(asyncBlock(() => Promise.all([api.get('/api/storylab/' + pid), api.get('/api/products/' + pid)]), ([lab, prod]) => body(lab, prod)));
   return wrap;
 }

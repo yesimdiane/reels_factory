@@ -4,6 +4,7 @@ import { state, act, go, setProduct } from '../state.js';
 import { api } from '../api.js';
 import { pageHead, asyncBlock, confirmPaid } from './common.js';
 import { imageIntake, savedControls } from './image-intake.js';
+import { catalog } from './catalog.js';
 
 const KIND_CHIP = { retrieved: ['원본 · 쇼핑몰 수집', 'mock'], uploaded: ['직접 업로드', ''], ai_generated: ['AI 생성 · 제조사 사진 아님', 'attention'] };
 const STATUS_CHIP = { pending: ['검토 대기', ''], approved: ['승인', 'done'], rejected: ['거절', 'err'], replaced: ['교체됨', 'mock'] };
@@ -29,19 +30,27 @@ function codeBox(p) {
     h('div', { class: 'small ' + (p.code ? 'muted' : ''), style: p.code ? '' : 'color:var(--clay)' }, p.code ? '첫 에피소드를 만들면 코드가 고정됩니다.' : '에피소드 ID(예: UMB-01-D)를 만들려면 제품 코드(영문 대문자 2~5자)가 필요합니다.'));
 }
 
+const REF_LABEL = { none: '없음', approved: '승인됨', waived: '이미지 없이 진행(기록됨)', stale: '재승인 필요' };
+const PRODUCT_STATUS = [['ready', '스토리 준비 완료'], ['needs', '준비 필요'], ['noref', '참조 이미지 미승인'], ['inuse', '에피소드 있음']];
+
+/** Product catalog landing page: real product images only (no placeholder art), opening a card just navigates to the existing editor. */
 function list(wrap) {
-  const items = state.summary.products || [];
-  wrap.append(pageHead('Product Studio', '제품 스튜디오', '제품 URL 또는 직접 입력으로 시작합니다. 확인된 사실과 승인된 참조 이미지만 스토리 생성에 사용됩니다.', h('button', { class: 'btn', onclick: newProduct }, icon('plus'), '새 제품')));
-  if (!items.length) wrap.append(h('div', { class: 'empty' }, h('h2', null, '제품이 없습니다'), h('p', null, '"새 제품"으로 쿠팡/기타 URL이나 제품 정보를 입력하세요.')));
-  wrap.append(h('div', { class: 'grid three' }, items.map((p) => h('article', { class: 'card stack', style: 'gap:10px', 'data-product-card': p.id },
-    p.mainImage ? h('img', { class: 'prod-main', src: p.mainImage.url, alt: p.name || '제품 대표 이미지', loading: 'lazy' }) : h('div', { class: 'prod-main empty' }, '대표 이미지 없음'),
-    h('div', { class: 'row between' }, h('span', { class: 'eyebrow' }, p.id + (p.code ? ' · ' + p.code : '')), chip(p.readiness.ok ? '스토리 준비 완료' : '준비 필요', p.readiness.ok ? 'done' : 'attention')),
-    h('h3', null, p.name || '(이름 없음)'),
-    codeBox(p),
-    h('div', { class: 'small muted' }, '이미지 ' + p.images + '장 · 참조 세트: ' + ({ none: '없음', approved: '승인됨', waived: '이미지 없이 진행(기록됨)', stale: '재승인 필요' }[p.reference] || p.reference)),
-    p.readiness.ok ? null : h('div', { class: 'small', style: 'color:var(--clay)' }, '필요: ' + p.readiness.missing.join(', ')),
-    h('div', { class: 'small muted' }, '연결된 에피소드: ' + (p.linkedEpisodes && p.linkedEpisodes.length ? p.linkedEpisodes.map((e) => e.id).join(', ') : '없음')),
-    h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: () => { setProduct(p.id); location.hash = '#/products/' + p.id; } }, '열기'), h('button', { class: 'btn sm ghost', disabled: !p.readiness.ok, onclick: () => { setProduct(p.id); location.hash = '#/storylab/' + p.id; } }, '스토리 랩'))))));
+  const items = (state.summary.products || []).map((p) => {
+    const eps = (p.linkedEpisodes || []).filter((e) => !e.archived);
+    const statuses = [p.readiness.ok ? 'ready' : 'needs'];
+    if (!['approved', 'waived'].includes(p.reference)) statuses.push('noref');
+    if (eps.length) statuses.push('inuse');
+    return { id: p.id, code: p.code || '', name: p.name || '', thumb: p.mainImage ? p.mainImage.url : '', status: statuses[0], statuses,
+      statusLabel: p.readiness.ok ? '스토리 준비 완료' : '준비 필요', tone: p.readiness.ok ? 'done' : 'attention', href: '#/products/' + p.id,
+      meta: [`이미지 ${p.images}장 · 참조 ${REF_LABEL[p.reference] || p.reference}`, '에피소드 ' + (eps.length ? eps.length + '개' : '없음')],
+      note: p.readiness.ok ? null : { text: '필요: ' + p.readiness.missing.join(', '), tone: 'warn' },
+      createdAt: p.createdAt || '', updatedAt: p.updatedAt || '', attr: { 'data-product-card': p.id } };
+  });
+  wrap.append(pageHead('Product Studio', '제품 스튜디오', '제품 카탈로그에서 제품을 고르면 정보·참조 이미지 편집기가 열립니다. 확인된 사실과 승인된 참조 이미지만 스토리 생성에 사용됩니다.'));
+  wrap.append(catalog({ id: 'products', items, statusOptions: PRODUCT_STATUS, searchPlaceholder: '제품 이름 · 코드로 검색', noImageText: '대표 이미지 없음',
+    emptyTitle: '제품이 없습니다', emptyText: '"새 제품"으로 쿠팡/기타 URL이나 제품 정보를 입력하세요.', noMatchText: '조건에 맞는 제품이 없습니다.',
+    create: { label: '새 제품', onClick: newProduct, attr: { 'data-new-product': '' } },
+    onOpen: (it) => { setProduct(it.id); location.hash = '#/products/' + it.id; } }));
   return wrap;
 }
 

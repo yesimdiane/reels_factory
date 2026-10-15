@@ -39,6 +39,7 @@ test('voice settings, character picker and Script Studio status in a browser', {
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 1000 } })).newPage();
     const errors = []; page.on('pageerror', (e) => errors.push(e.message));
     await page.goto(base + '#/settings');
+    await page.getByRole('tab', { name: /캐릭터 · 미디어/ }).click();
     await page.getByRole('tab', { name: /음성 연결/ }).click();
     await page.waitForSelector('[data-voice-connections] [data-voice-row]');
     const text = await page.locator('body').innerText();

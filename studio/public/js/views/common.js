@@ -37,10 +37,10 @@ export function modeBanner(summary) {
   return h('div', { class: 'stack', style: 'gap:10px' }, warn, h('div', { class: 'banner live' }, chip('LIVE', 'live'), h('div', null, h('b', null, '영상 실제 모드 — 유료 호출이 가능합니다'), '비용 확인과 명시적 승인 없이는 어떤 생성도 실행되지 않습니다. 실패한 유료 작업은 자동으로 다시 실행되지 않습니다.')));
 }
 
-/** Production sub-navigation: Animation Studio (clips) → Voice → Video Studio (assembly). */
+/** Video Production tabs: Animation → Voice → Lip Sync → Editing (production order after the images). Shown at the top of each of the four studios. */
 export function videoTabs(active) {
-  const tabs = [['animation', '1. 애니메이션'], ['voice', '2. 보이스'], ['lipsync', '3. 립싱크'], ['render', '4. 비디오']]; // production order after the images
-  return h('div', { class: 'seg', role: 'tablist', 'aria-label': '영상 제작 단계' }, tabs.map(([k, label]) => h('button', { role: 'tab', 'aria-pressed': active === k ? 'true' : 'false', onclick: () => { location.hash = '#/' + k + (state.episodeId ? '/' + state.episodeId : ''); } }, label)));
+  const tabs = [['animation', '1. 애니메이션', 'Animation'], ['voice', '2. 보이스', 'Voice'], ['lipsync', '3. 립싱크', 'Lip Sync'], ['render', '4. 편집', 'Editing']];
+  return h('div', { class: 'seg video-tabs', 'data-no-en': '', role: 'tablist', 'aria-label': '영상 제작 단계', 'data-video-tabs': '' }, tabs.map(([k, label, en]) => h('button', { role: 'tab', 'data-video-tab': k, title: en, 'aria-pressed': active === k ? 'true' : 'false', 'aria-selected': active === k ? 'true' : 'false', onclick: () => { location.hash = '#/' + k + (state.episodeId ? '/' + state.episodeId : ''); } }, label)));
 }
 
 /**

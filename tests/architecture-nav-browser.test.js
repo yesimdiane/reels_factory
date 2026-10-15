@@ -29,14 +29,14 @@ async function withPage(fn) {
   } finally { await browser.close(); app.close(); }
 }
 
-test('sidebar shows the studios in workflow order, no Characters entry, no duplicates', { skip, timeout: 120000 }, async () => {
+test('sidebar shows exactly six items in workflow order (no Script/Animation/Voice/Review/Publishing/Auto DM/Characters entries)', { skip, timeout: 120000 }, async () => {
   await withPage(async ({ page, base }) => {
     await page.goto(`${base}/#/products`);
     await page.waitForSelector('nav a.nav-item, #rail a.nav-item');
     const ko = await page.locator('#rail a.nav-item .ko').allTextContents();
-    assert.deepEqual(ko, ['제품 스튜디오', '스토리 랩', '에피소드', '대본 스튜디오', '이미지 스튜디오', '애니메이션 스튜디오', '보이스 스튜디오', '립싱크 스튜디오', '비디오 스튜디오', '최종 검토', '게시', '자동 DM', '설정']);
+    assert.deepEqual(ko, ['제품 스튜디오', '스토리 랩', '에피소드', '이미지 스튜디오', '영상 제작', '설정']);
     const en = await page.locator('#rail a.nav-item .en').allTextContents();
-    assert.deepEqual(en, ['Product Studio', 'Story Lab', 'Episodes', 'Script Studio', 'Image Studio', 'Animation Studio', 'Voice Studio', 'Lip Sync Studio', 'Video Studio', 'Final Review', 'Publishing', 'Auto DM', 'Settings']);
+    assert.deepEqual(en, ['Product Studio', 'Story Lab', 'Episodes', 'Image Studio', 'Video Production', 'Settings']);
   });
 });
 

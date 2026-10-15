@@ -10,6 +10,7 @@ import { endingManager } from './ending-settings.js';
 import { manychatCard } from './manychat-settings.js';
 import { refGallery } from './ref-gallery.js';
 import { voiceConnections } from './voice-connections.js';
+import { autodmPanel } from './autodm.js';
 
 function kv(k, v) { return h('div', { class: 'row between', style: 'padding:6px 0;border-bottom:1px solid var(--line)' }, h('span', { class: 'muted' }, k), h('span', null, v)); }
 
@@ -17,10 +18,12 @@ function parts() {
   const s = state.summary;
   const p = s.providers;
   const st = s.settings;
-  const wrap = h('div', { class: 'stack', style: 'gap:20px' });
+  const box = () => h('div', { class: 'stack', style: 'gap:20px' });
+  // one container per Settings sub-tab; nothing was dropped, the former single "general" page is just split across them
+  const sec = { general: box(), connections: box(), costs: box() };
 
-  // Providers
-  wrap.append(h('div', { class: 'grid two' },
+  // Providers (status overview)
+  sec.general.append(h('div', { class: 'grid two' },
     h('div', { class: 'card' }, h('h2', null, '영상 생성 (Muapi)'),
       kv('모드', p.video.mode === 'live' ? chip('LIVE (유료)', 'live') : chip('MOCK', 'mock')),
       kv('API 키', p.video.keyConfigured ? chip('서버에 설정됨', 'done') : chip('없음', 'attention')),
@@ -40,7 +43,7 @@ function parts() {
   // Default video model is shared by Animation Studio and B-roll generation.
   // Changing it never triggers a paid generation or overwrites per-scene choices.
   const defaultVideoModel = { id: st.defaultModelId || '' };
-  wrap.append(h('div', { class: 'card stack', style: 'gap:12px', 'data-default-video-model': '' },
+  sec.connections.append(h('div', { class: 'card stack', style: 'gap:12px', 'data-default-video-model': '' },
     h('div', { class: 'card-head' }, h('h2', null, '영상 생성 기본 AI 모델'),
       h('button', { class: 'btn sm', type: 'button', 'data-default-model-save': '', onclick: () => act(() => api.put('/api/settings', { defaultModelId: defaultVideoModel.id }), { ok: '영상 기본 모델을 저장했습니다. 기존 장면별 모델 설정은 유지됩니다.' }) }, '기본 모델 저장')),
     h('label', { class: 'field' }, h('span', { class: 'small' }, 'Animation Studio · B-roll 기본 모델'),
@@ -79,7 +82,7 @@ function parts() {
   const modelRows = (s.models || []).map((m) => h('tr', null, h('td', null, h('b', null, m.label || m.id), m.custom ? chip('직접 추가', 'mock') : null, h('div', { class: 'small muted mono' }, m.endpoint)),
     h('td', null, (m.durations || []).join(' / ') + '초'), h('td', null, (m.resolutions || []).join(' / ') || '미선언'), h('td', null, m.endImageField ? '선언됨' : '미선언'), h('td', null, m.supportsNegativePrompt ? '지원' : '미선언'), h('td', null, verLabel(m), m.verification === 'unverified' ? h('button', { class: 'btn sm ghost', type: 'button', 'data-model-confirm': m.id, title: 'MuAPI 플레이그라운드에서 엔드포인트와 요청 파라미터를 직접 확인한 경우에만 누르세요. 요금은 발생하지 않습니다.', onclick: async () => { if (await confirmDialog({ title: '플레이그라운드에서 확인했나요?', body: m.endpoint + ' 엔드포인트와 요청 파라미터를 MuAPI 플레이그라운드에서 직접 확인했다는 표시입니다. 이 앱은 생성 요청을 보내지 않습니다. 이후 실제 생성은 별도의 비용 승인이 필요합니다.' })) act(() => api.post('/api/models/' + encodeURIComponent(m.id) + '/confirm'), { ok: '확인됨으로 표시했습니다' }); } }, '플레이그라운드에서 확인함') : null),
     h('td', null, m.custom ? h('button', { class: 'btn sm danger', type: 'button', 'data-model-remove': m.id, onclick: () => act(() => api.del('/api/models/' + encodeURIComponent(m.id)), { ok: '모델을 지웠습니다' }) }, '삭제') : null)));
-  wrap.append(h('div', { class: 'card stack', style: 'gap:12px', 'data-muapi-card': '' },
+  sec.connections.append(h('div', { class: 'card stack', style: 'gap:12px', 'data-muapi-card': '' },
     h('div', { class: 'card-head' }, h('h2', null, 'Muapi 연결 · 영상 모델'),
       h('button', { class: 'btn sm', type: 'button', 'data-muapi-check': '', onclick: async () => {
         chk.textContent = '확인하는 중…';
@@ -133,7 +136,7 @@ function parts() {
           h('label', { class: 'row small', style: 'gap:6px;align-items:center' }, h('input', { type: 'checkbox', 'data-model-confirmed': '', onchange: (e) => (cm.confirmed = e.target.checked) }), '플레이그라운드에서 엔드포인트·파라미터를 확인했습니다 (체크하지 않으면 미확인으로 등록되어 실제 생성이 차단됩니다)')),
         h('button', { class: 'btn sm', type: 'button', 'data-model-save': '', onclick: () => act(() => api.post('/api/models', { id: cm.id, label: cm.label, endpoint: cm.endpoint, durations: cm.durations.split(',').map((x) => Number(x.trim())).filter(Boolean), resolutions: cm.resolutions.split(',').map((x) => x.trim()).filter(Boolean), supportsNegativePrompt: cm.neg, confirmed: !!cm.confirmed, extraParams: cm.extraParams || undefined, silentParams: cm.silentParams || undefined, costEstimateUsd: cm.costEstimateUsd || undefined, promptField: cm.promptField, imageField: cm.imageField, imageAsList: !!cm.imageAsList, durationField: cm.durationField, aspectField: cm.aspectField, negativeField: cm.negativeField }), { ok: '모델을 등록했습니다. Animation Studio에서 선택할 수 있습니다. 첫 생성 전 엔드포인트와 비용을 확인하세요.' }) }, '모델 추가')))));
 
-  wrap.append(lipsyncModelsCard(state.summary));
+  sec.connections.append(lipsyncModelsCard(state.summary));
 
   // Spend + prices
   const f = { limit: st.reelSpendLimitUsd == null ? '' : st.reelSpendLimitUsd, voice: st.voiceUsdPer1kChars == null ? '' : st.voiceUsdPer1kChars, prices: {} };
@@ -145,7 +148,7 @@ function parts() {
       m.durations.map((d) => h('td', null, h('input', { type: 'number', min: 0, step: 0.01, placeholder: '미입력', value: f.prices[m.id][String(d)], style: 'width:100px', oninput: (e) => (f.prices[m.id][String(d)] = e.target.value) }))));
   });
   const maxDur = Math.max(...s.models.map((m) => m.durations.length), 1);
-  wrap.append(h('div', { class: 'card stack', style: 'gap:12px' },
+  sec.costs.append(h('div', { class: 'card stack', style: 'gap:12px' },
     h('div', { class: 'card-head' }, h('h2', null, '비용 한도와 가격 추정'),
       h('button', { class: 'btn sm', onclick: () => act(async () => { await api.put('/api/settings', { reelSpendLimitUsd: f.limit, voiceUsdPer1kChars: f.voice, modelEstimates: Object.fromEntries(Object.entries(f.prices).map(([k, v]) => [k, { usdByDuration: v }])) }); return null; }, { ok: '설정을 저장했습니다' }) }, '저장')),
     h('div', { class: 'banner warn' }, icon('lock'), h('div', null, 'Muapi 공식 문서에서 모델별 단가표를 확인하지 못해 가격을 임의로 채우지 않았습니다. Muapi 계정의 가격 안내를 보고 직접 입력하세요. 입력하기 전에는 실제 모드에서 생성이 차단됩니다(비용 확인 없이는 실행 불가).')),
@@ -156,7 +159,7 @@ function parts() {
 
   // Render prefs
   const r = Object.assign({}, st.render);
-  wrap.append(h('div', { class: 'card stack', style: 'gap:12px' },
+  sec.general.append(h('div', { class: 'card stack', style: 'gap:12px' },
     h('div', { class: 'card-head' }, h('h2', null, '렌더링'), h('button', { class: 'btn sm', onclick: () => act(async () => { await api.put('/api/settings', { render: { font: r.font, fontSize: Number(r.fontSize), burnDisclosure: !!r.burnDisclosure, previewWidth: Number(r.previewWidth) } }); return null; }, { ok: '렌더 설정을 저장했습니다' }) }, '저장')),
     h('div', { class: 'grid three' },
       h('div', { class: 'field' }, h('label', null, '자막 글꼴 이름'), h('input', { type: 'text', value: r.font || '', placeholder: '기본: NanumSquareRound', oninput: (e) => (r.font = e.target.value) })),
@@ -172,25 +175,53 @@ function parts() {
   } }, '데모 참조 만들기')));
   chars.append(h('div', { class: 'small muted' }, '승인된 참조 이미지가 캐릭터의 기준입니다. 생성할 때 승인된 참조만 시작 프레임으로 사용됩니다. 스타일: ' + (s.style.summary || s.style.name || '손그림 2D 한국 웹툰/애니메이션 · 뮤트 베이지 톤')));
   chars.append(h('div', { class: 'grid two' }, s.characters.map(charCard)));
-  return { general: wrap, characters: chars };
+  return { general: sec.general, connections: sec.connections, costs: sec.costs, characters: chars };
 }
 
-const TABS = [['general', '일반 · 비용'], ['ai', 'AI 연동'], ['connections', 'API 연결'], ['voices', '음성 연결'], ['prompts', '프롬프트 매니저'], ['scriptprompts', 'AI 프롬프트 관리'], ['endings', '엔딩 템플릿'], ['usage', '사용량 · 한도'], ['characters', '캐릭터 라이브러리']];
+// Three top-level groups, each with a compact secondary nav (one line; scrolls sideways on phones instead of wrapping).
+// The leaf keys are the old tab keys (plus 'costs' and 'autodm'), so every old #/settings/<tab> deep link still resolves.
+export const GROUPS = [
+  ['general', '일반 · 비용', 'General & Cost', [['general', '일반'], ['costs', '모델 비용 · 지출 한도'], ['usage', '사용량 · 한도']]],
+  ['ai', 'AI · 연동', 'AI & Integrations', [['ai', 'AI 제공자 · 작업별 배정'], ['connections', 'API 연결'], ['prompts', '프롬프트 관리'], ['autodm', '자동 DM']]],
+  ['media', '캐릭터 · 미디어', 'Characters & Media', [['characters', '캐릭터 라이브러리'], ['voices', '음성 연결 · 배정'], ['endings', '엔딩 템플릿']]],
+];
+const LEAVES = GROUPS.flatMap((g) => g[3].map((t) => t[0]));
+/** Old key 'scriptprompts' (the Script Studio presets) is now the second tool inside Prompt Management. */
+export const isSettingsTab = (k) => LEAVES.includes(k) || k === 'scriptprompts';
+const groupOf = (tab) => GROUPS.find((g) => g[3].some((t) => t[0] === tab)) || GROUPS[0];
+const goTab = (tab) => { state.settingsTab = tab; try { history.replaceState(null, '', '#/settings/' + tab); } catch (_) { /* ignore */ } import('../state.js').then(({ hooks }) => hooks.rerender()); };
+
+/** Prompt Management keeps TWO distinct tools with separate data: shared AI prompts (promptManager) and Script Studio presets (presetManager). */
+function promptManagement() {
+  const tab = state.promptTab === 'presets' ? 'presets' : 'shared';
+  const box = h('div', { class: 'stack', style: 'gap:14px', 'data-prompt-management': '' });
+  box.append(h('div', { class: 'seg prompt-tabs', 'data-no-en': '', role: 'tablist', 'aria-label': '프롬프트 관리 도구', style: 'align-self:flex-start;flex-wrap:nowrap' },
+    [['shared', '공용 AI 프롬프트', '스토리 랩 · 대본 · 이미지/스토리보드 등 공용 생성 지침'], ['presets', '대본 프리셋', '대본 스튜디오 전용 프롬프트 템플릿']].map(([k, l, tip]) => h('button', { type: 'button', role: 'tab', title: tip, 'data-prompt-tab': k, 'aria-selected': tab === k ? 'true' : 'false', 'aria-pressed': tab === k ? 'true' : 'false', onclick: () => { state.promptTab = k; import('../state.js').then(({ hooks }) => hooks.rerender()); } }, l))));
+  box.append(h('div', { class: 'small muted' }, tab === 'shared' ? '스토리 랩 · 대본 · 이미지/스토리보드 등 공용 생성 지침입니다 (대본 스튜디오 프리셋과는 별도 데이터).' : '대본 스튜디오에서 고르는 프롬프트 템플릿입니다 (공용 AI 프롬프트와는 별도 데이터).'));
+  box.append(h('div', { 'data-prompt-pane': tab }, tab === 'shared' ? promptManager() : presetManager()));
+  return box;
+}
 
 export function settings() {
-  const wrap = h('div', { class: 'stack', style: 'gap:20px' });
-  const tab = TABS.some((t) => t[0] === state.settingsTab) ? state.settingsTab : 'general';
+  const wrap = h('div', { class: 'stack', style: 'gap:16px' });
+  if (state.settingsTab === 'scriptprompts') { state.settingsTab = 'prompts'; state.promptTab = 'presets'; }
+  const tab = LEAVES.includes(state.settingsTab) ? state.settingsTab : 'general';
+  const group = groupOf(tab);
   wrap.append(pageHead('Settings', '설정', 'API 키는 서버의 암호화 저장소에만 저장되며 이 화면에 다시 표시되지 않습니다. 키·모델·프롬프트·한도는 코드나 .env를 고치지 않고 여기서 바꿉니다.'));
-  wrap.append(h('div', { class: 'seg', role: 'tablist', style: 'align-self:flex-start;flex-wrap:wrap' }, TABS.map(([k, l]) => h('button', { role: 'tab', 'aria-pressed': tab === k ? 'true' : 'false', onclick: () => { state.settingsTab = k; import('../state.js').then(({ hooks }) => hooks.rerender()); } }, l))));
+  wrap.append(h('div', { class: 'set-groups', 'data-no-en': '', role: 'tablist', 'aria-label': '설정 그룹', 'data-settings-groups': '' }, GROUPS.map((g) => h('button', { type: 'button', role: 'tab', 'data-settings-group': g[0], title: g[2], 'aria-selected': g === group ? 'true' : 'false', onclick: () => goTab(g === group ? tab : (state.settingsLast && state.settingsLast[g[0]]) || g[3][0][0]) }, g[1]))));
+  wrap.append(h('div', { class: 'sub-nav', 'data-no-en': '', role: 'tablist', 'aria-label': group[1], 'data-settings-sub': group[0] }, group[3].map(([k, l]) => h('button', { type: 'button', role: 'tab', 'data-settings-tab': k, 'aria-selected': tab === k ? 'true' : 'false', onclick: () => goTab(k) }, l))));
+  state.settingsLast = Object.assign(state.settingsLast || {}, { [group[0]]: tab });
+  const p = tab === 'general' || tab === 'connections' || tab === 'costs' || tab === 'characters' ? parts() : null;
   if (tab === 'ai') wrap.append(aiIntegrations());
-  else if (tab === 'connections') wrap.append(manychatCard());
-  else if (tab === 'voices') wrap.append(voiceConnections());
-  else if (tab === 'prompts') wrap.append(promptManager());
-  else if (tab === 'scriptprompts') wrap.append(presetManager());
-  else if (tab === 'endings') wrap.append(endingManager());
+  else if (tab === 'connections') { wrap.append(p.connections); wrap.append(manychatCard()); }
+  else if (tab === 'costs') wrap.append(p.costs);
   else if (tab === 'usage') wrap.append(usagePanel());
+  else if (tab === 'prompts') wrap.append(promptManagement());
+  else if (tab === 'autodm') wrap.append(autodmPanel());
+  else if (tab === 'voices') wrap.append(voiceConnections());
+  else if (tab === 'endings') wrap.append(endingManager());
   else if (tab === 'characters') wrap.append(characters());
-  else wrap.append(parts().general);
+  else wrap.append(p.general);
   return wrap;
 }
 

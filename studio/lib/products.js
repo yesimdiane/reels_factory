@@ -155,7 +155,7 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     return { ok: missing.length === 0, missing };
   }
 
-  const list = () => ids().map((i) => { const p = get(i); return { id: p.id, code: p.code || '', name: p.name, url: p.url, affiliateUrl: p.affiliateUrl || '', mainImage: mainImageOf(p, referenceState(p)), linkedEpisodes: linkedEpisodes(p.id), codeLocked: !!p.codeLockedAt, suggestedCode: p.code ? '' : suggestCode(p), extraction: p.extraction && p.extraction.status, reference: referenceState(p).state, images: p.images.length, readiness: readiness(p), updatedAt: p.updatedAt }; });
+  const list = () => ids().map((i) => { const p = get(i); return { id: p.id, code: p.code || '', name: p.name, url: p.url, affiliateUrl: p.affiliateUrl || '', mainImage: mainImageOf(p, referenceState(p)), linkedEpisodes: linkedEpisodes(p.id), codeLocked: !!p.codeLockedAt, suggestedCode: p.code ? '' : suggestCode(p), extraction: p.extraction && p.extraction.status, reference: referenceState(p).state, images: p.images.length, readiness: readiness(p), createdAt: p.createdAt || '', updatedAt: p.updatedAt }; });
 
   async function create({ id, name, url = '', affiliateUrl = '', description = '', category = '', features = [], forbiddenClaims = [], legacy = false, price = null, code = '' } = {}) {
     if (!String(name || '').trim() && !String(url || '').trim()) throw new StudioError('NEED_INPUT', '상품명이나 상품 URL 중 하나는 필요합니다.', { status: 400 });

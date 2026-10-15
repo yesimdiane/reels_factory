@@ -31,7 +31,7 @@ function episodeCard(e, { archivedView = false } = {}) {
       e.concept && e.concept.linked ? h('div', { class: 'small' }, chip(e.concept.ok ? '컨셉 ' + e.concept.conceptId + ' r' + e.concept.revision : e.concept.state === 'script_stale' ? '컨셉 변경 · 대본 재생성 필요' : '컨셉 승인 필요', e.concept.ok ? 'done' : 'attention')) : e.concept && e.concept.legacy ? h('div', { class: 'small' }, chip('스토리 랩 이전', 'mock')) : null,
       h('div', { class: 'mini-dots' }, e.steps.map((st) => h('i', { class: st.state, title: st.label }))),
       h('div', { class: 'small muted' }, `${e.scenes}장면 · 약 ${Math.round(e.totalPlannedSec)}초 · 지출 ${fmtUsd(e.spentUsd)}`),
-      h('div', { class: 'row', style: 'flex-wrap:nowrap' }, h('button', { class: 'btn sm', onclick: async () => { await selectEpisode(e.id); go('overview'); } }, '열기'), h('button', { class: 'btn sm ghost', onclick: async () => { await selectEpisode(e.id); go('script'); } }, '대본'), h('span', { style: 'margin-left:auto' }, episodeMenu(e, { archivedView })))));
+      h('div', { class: 'row', style: 'flex-wrap:nowrap' }, h('button', { class: 'btn sm', 'data-open-episode': e.id, onclick: async () => { await selectEpisode(e.id); go('script'); } }, '열기'), h('span', { style: 'margin-left:auto' }, episodeMenu(e, { archivedView })))));
 }
 
 /** Episodes start from an APPROVED story concept (Product → Story Lab → Episode). */

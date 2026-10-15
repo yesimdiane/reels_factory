@@ -172,7 +172,7 @@ function drawPrompts(d) {
     prev,
     h('details', null, h('summary', { class: 'small' }, `버전 기록 (${cur.versions.length})`), h('div', { class: 'list' }, cur.versions.slice().reverse().map((v) => h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, `v${v.v}${v.v === cur.current ? ' · 현재' : ''}${v.default ? ' · 기본값' : ''}`), h('div', { class: 'small muted' }, new Date(v.at).toLocaleString('ko-KR') + ' · ' + v.by + (v.note ? ' · ' + v.note : '') + ` · ${v.chars}자`)),
       h('button', { class: 'btn sm ghost', onclick: async () => { const r = await call(() => api.get(`/api/prompts/${cur.key}/versions/${v.v}`)); if (r) modal((close) => h('div', { class: 'stack' }, h('h2', null, `${cur.title} · v${v.v}`), h('pre', { class: 'prompt' }, r.text), h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: close }, '닫기'), v.v !== cur.current ? h('button', { class: 'btn', onclick: async () => { await call(() => api.post(`/api/prompts/${cur.key}/restore`, { version: v.v }), `v${v.v}을 새 버전으로 복원했습니다`); close(); reload(); } }, '이 버전으로 복원') : null)), { wide: true }); } }, '보기'))))));
-  wrap.append(h('div', { class: 'split wide-left', style: 'grid-template-columns:260px minmax(0,1fr)' }, h('div', { class: 'card tight' }, list), editor));
+  wrap.append(h('div', { class: 'split prompt-split' }, h('div', { class: 'card tight' }, list), editor));
   root.append(wrap);
   return root;
 }

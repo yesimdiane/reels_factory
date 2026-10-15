@@ -424,7 +424,10 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   }
 
   function storylabSummary() {
-    return products.list().map((p) => { const l = storylab.list(p.id); return { productId: p.id, name: p.name, concepts: l.concepts.length, approved: l.concepts.filter((c) => c.approved).length, candidates: l.concepts.filter((c) => c.status === 'candidate').length, needsReapproval: l.concepts.filter((c) => c.needsReapproval).length }; });
+    return products.list().map((p) => { const l = storylab.list(p.id); return { productId: p.id, name: p.name, concepts: l.concepts.length, approved: l.concepts.filter((c) => c.approved).length, candidates: l.concepts.filter((c) => c.status === 'candidate').length, needsReapproval: l.concepts.filter((c) => c.needsReapproval).length, hold: l.concepts.filter((c) => c.status === 'hold').length,
+      // read-only extras for the Story Lab catalog (search by story title, sort by last activity); deleted/rejected stories are not listed
+      titles: l.concepts.filter((c) => !['deleted', 'rejected', 'superseded'].includes(c.status)).map((c) => c.title).filter(Boolean),
+      lastAt: l.concepts.reduce((m, c) => { const t = c.updatedAt || (c.approval && c.approval.at) || c.createdAt || ''; return t > m ? t : m; }, '') }; });
   }
 
   /** Idempotent, non-destructive: gives every pre-V2.3 episode a product record (reference images waived, flagged legacy). Existing data is never modified. */

@@ -48,7 +48,7 @@ test('Animation (silent, no audio/SFX gate) → Voice → Lip Sync in the browse
     await page.goto(`${base}/#/animation/${ID}`);
     await page.waitForSelector('[data-animation-studio]');
     const ko = await page.locator('#rail a.nav-item .ko').allTextContents();
-    assert.deepEqual(ko, ['제품 스튜디오', '스토리 랩', '에피소드', '대본 스튜디오', '이미지 스튜디오', '애니메이션 스튜디오', '보이스 스튜디오', '립싱크 스튜디오', '비디오 스튜디오', '최종 검토', '게시', '자동 DM', '설정']);
+    assert.deepEqual(ko, ['제품 스튜디오', '스토리 랩', '에피소드', '이미지 스튜디오', '영상 제작', '설정']);
     // 1) Animation: silent checklist only; ready without any audio / SFX
     await page.locator(`[data-anim-scene="${talk}"]`).click();
     await page.waitForSelector(`[data-anim-gates="${talk}"]`);
@@ -108,7 +108,7 @@ test('Settings → lip-sync models: registry from the official CLI is unverified
   try {
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 1800 } })).newPage();
     const errors = []; page.on('pageerror', (e) => errors.push(e.message));
-    await page.goto(`http://127.0.0.1:${app.address().port}/#/settings/general`);
+    await page.goto(`http://127.0.0.1:${app.address().port}/#/settings/connections`);
     await page.waitForSelector('[data-lipsync-settings]');
     assert.ok(await page.locator('[data-lipsync-model-row]').count() >= 6);
     assert.match(await page.locator('[data-lipsync-model-row="lipsync-sync"]').innerText(), /미확인/);
