@@ -36,8 +36,17 @@ function buildBody(model, { prompt, imageUrl, aspectRatio, duration, negativePro
   // silentParams: the model's own switch that turns generated audio off (e.g. {generate_audio:false}); only sent when the operator declared it
   const body = Object.assign({}, model.extraParams || {}, silent ? model.silentParams || {} : {}, extra);
   body[model.promptField || 'prompt'] = prompt;
-  // some endpoints take the start image as a one-element array (images_list), others as a plain image_url string
-  body[model.imageField || 'image_url'] = model.imageAsList ? [imageUrl] : imageUrl;
+  // The official MuAPI CLI catalog declares the input image shape per exact endpoint.
+  // Older saved custom models may still have the default image_url field even when their
+  // endpoint requires images_list. Resolve that stale default without guessing for unknown endpoints.
+  const catalog = require('../seed/muapi-cli-i2v.json').models;
+  const contract = catalog.find((entry) => entry.endpoint === validateEndpoint(model.endpoint));
+  const usesList = contract ? contract.imageAsList === true : model.imageAsList === true;
+  const imageField = contract && (model.imageField == null || model.imageField === 'image_url' || model.imageField === 'images_list')
+    ? contract.imageField
+    : model.imageField || (usesList ? 'images_list' : 'image_url');
+  if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.trim()) throw new Error('Approved starting image URL is required before MuAPI submission');
+  body[imageField] = usesList ? [imageUrl] : imageUrl;
   if (aspectRatio != null) body[model.aspectField || 'aspect_ratio'] = aspectRatio;
   if (duration != null) body[model.durationField || 'duration'] = duration;
   if (negativePrompt) body[model.negativeField || 'negative_prompt'] = negativePrompt;
