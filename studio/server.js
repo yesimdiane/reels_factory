@@ -386,7 +386,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
     if (info.error || !info.approved || !info.url) problems.push('승인된 시작 이미지가 필요합니다.');
     let imageField = '';
     let imageType = '';
-    if (endpoint && !problems.some((x) => x.includes('시작 이미지'))) {
+    if (endpoint) {
       try {
         const payload = buildBody(model, { prompt: scene.animationPrompt || scene.prompt?.video || 'preflight', imageUrl: 'https://preflight.invalid/approved.png', duration: (model.durations || [5])[0], aspectRatio: '9:16', silent: true });
         const imageKeys = ['images_list', 'image_url', model.imageField].filter(Boolean);
