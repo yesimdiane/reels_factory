@@ -3,6 +3,7 @@ import { state, act, requireEpisode } from '../state.js';
 import { api } from '../api.js';
 import { timingTable } from './script-timing.js';
 import { voicePicker } from './voice-connections.js';
+import { voiceScenes } from './voice-scenes.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, issueList, charAvatar, lockedNotice, videoTabs } from './common.js';
 
 export function voice() {
@@ -18,6 +19,7 @@ export function voice() {
   wrap.append(h('div', { class: 'banner ' + (live ? 'live' : 'mock') }, chip(live ? 'LIVE' : 'MOCK', live ? 'live' : 'mock'), h('div', null, h('b', null, live ? '실제 HeyGen 음성 (유료)' : '목업 음성 — 요금 없음'), live ? '음성 확인이 끝난 캐릭터만 생성할 수 있고, 생성 전 글자 수를 확인해야 합니다.' : '확인용 톤 오디오가 만들어집니다. 실제 음성은 서버 환경변수 RF_STUDIO_VOICE_MODE=live 와 HEYGEN_API_KEY가 필요합니다.')));
   if (!ep.derived.scriptApproved) wrap.append(lockedNotice('대본이 승인되어야 음성을 만들 수 있습니다.', 'script', '대본으로 이동'));
 
+  wrap.append(h('div', { class: 'card stack', style: 'gap:10px' }, h('div', { class: 'card-head' }, h('h2', null, '장면별 음성'), h('span', { class: 'small muted' }, '무음 애니메이션 승인 후 대사 음성을 만들고 승인합니다 · 대사가 없는 장면은 이 단계를 건너뜁니다')), voiceScenes(ep)));
   const cards = h('div', { class: 'grid two' }, chars.map((c) => charVoiceCard(c)));
   wrap.append(cards);
 
@@ -39,7 +41,7 @@ export function voice() {
   { const tt = timingTable(ep); if (tt) wrap.append(tt); }
   const tl = ep.derived.render.plan.timeline;
   if (tl.lines.length) wrap.append(h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, '오디오 싱크'), h('span', { class: 'small muted' }, `총 ${tl.total}초 · 대사 사이에 인위적인 무음을 넣지 않고, 대사가 길면 장면이 자동으로 늘어납니다.`)), timelineBar(tl), tl.warnings.length ? h('div', { style: 'margin-top:10px' }, issueList(tl.warnings, 'warn')) : null,
-    h('p', { class: 'small muted', style: 'margin:10px 0 0' }, ep.derived.voice.mode === 'live' ? '' : '립싱크는 제공하지 않습니다 — 선택한 영상 모델에서 지원이 확인되지 않았습니다. 대사는 장면 위에 얹히고 한국어 자막이 함께 표시됩니다.')));
+    h('p', { class: 'small muted', style: 'margin:10px 0 0' }, '승인된 음성은 립싱크 스튜디오(무음 애니메이션과 결합)와 비디오 스튜디오(최종 믹스에 정확히 한 번)에서 사용됩니다.')));
   return wrap;
 }
 

@@ -350,6 +350,19 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('DELETE', '/api/models/:id', async ({ p }) => S.removeCustomModel(p.id));
   route('POST', '/api/muapi/tts/confirm', async ({ body }) => S.confirmMuapiTts(!(body && body.confirmed === false)));
   route('GET', '/api/muapi/cli-models', async () => S.muapiCliModels());
+  route('POST', '/api/episodes/:id/lipsync/estimate', async ({ p, body }) => S.lipsync.estimate(p.id, body || {}));
+  route('POST', '/api/episodes/:id/lipsync/authorize', async ({ p, body }) => S.lipsync.authorize(p.id, body || {}));
+  route('POST', '/api/episodes/:id/lipsync/run', async ({ p, body }) => {
+    const ids = ((body && body.sceneIds) || []).slice();
+    // sequential, in the background (a live job can take minutes); each scene consumes its own single-use authorization; nothing is retried
+    bg((async () => { for (const sid of ids) await S.lipsync.runScene(p.id, body.authorizationId, sid); })(), 'lipsync');
+    return { status: 202, data: { accepted: true } };
+  });
+  route('POST', '/api/episodes/:id/scenes/:sid/lipsync/:v/review', async ({ p, body }) => { await S.lipsync.review(p.id, p.sid, p.v, body && body.action); return ep(p.id); });
+  route('PUT', '/api/lipsync/default', async ({ body }) => { S.lipsync.modelById(body && body.modelId); S.store.settings.save({ lipsyncModelId: body.modelId }); return { ok: true }; });
+  route('POST', '/api/lipsync/models', async ({ body }) => S.lipsync.addModel(body || {}));
+  route('POST', '/api/lipsync/models/:id/confirm', async ({ p }) => { S.lipsync.confirmModel(p.id); return { ok: true }; });
+  route('DELETE', '/api/lipsync/models/:id', async ({ p }) => { S.lipsync.removeModel(p.id); return { ok: true }; });
   route('POST', '/api/muapi/check', async () => S.muapiCheck());
   route('POST', '/api/episodes/:id/storyboard/revoke', async ({ p }) => S.revokeStoryboard(p.id));
   route('PUT', '/api/episodes/:id/spend-limit', async ({ p, body }) => S.setSpendLimit(p.id, body.usd));
@@ -388,15 +401,18 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   // ---- scene pipeline: audio check/approval, sound effects, scene composite, scene final approval, revoke ----
   route('POST', '/api/episodes/:id/scenes/:sid/audio/estimate', async ({ p }) => S.voice.estimate(p.id, { sceneIds: [p.sid] }));
   route('POST', '/api/episodes/:id/scenes/:sid/audio/run', async ({ p, body }) => { await S.voice.synthesize(p.id, { confirmChars: body.confirmChars, sceneIds: [p.sid] }); return ep(p.id); });
+  route('PUT', '/api/episodes/:id/scenes/:sid/voice', async ({ p, body }) => { await S.voice.saveSceneVoice(p.id, p.sid, body || {}); return ep(p.id); });
+  route('POST', '/api/episodes/:id/scenes/:sid/audio/regenerate', async ({ p, body }) => { await S.voice.regenerate(p.id, p.sid, { confirmOverwrite: !!(body && body.confirmOverwrite) }); return ep(p.id); });
   route('POST', '/api/episodes/:id/scenes/:sid/audio/approve', async ({ p }) => { await S.sceneFlow.approveAudio(p.id, p.sid); return ep(p.id); });
   route('POST', '/api/episodes/:id/scenes/:sid/audio/revoke', async ({ p }) => { await S.sceneFlow.revokeAudio(p.id, p.sid); return ep(p.id); });
   route('POST', '/api/episodes/:id/scenes/:sid/sfx/builtin', async ({ p, body }) => { await S.sfx.addBuiltin(p.id, { name: body.name, sceneId: p.sid, offsetSec: body.offsetSec }); return ep(p.id); });
   route('POST', '/api/episodes/:id/scenes/:sid/sfx/upload', async ({ p, raw, headers, query }) => { await S.sfx.addUpload(p.id, { buffer: raw, filename: decodeURIComponent(headers['x-filename'] || 'sfx.wav'), label: query.label, sceneId: p.sid, offsetSec: query.offsetSec }); return ep(p.id); }, { upload: true });
-  route('POST', '/api/episodes/:id/scenes/:sid/sfx-plan', async ({ p, body }) => { await S.animGate.decideSfx(p.id, p.sid, body && body.mode); return ep(p.id); });
-  route('DELETE', '/api/episodes/:id/scenes/:sid/sfx-plan', async ({ p }) => { await S.animGate.revokeSfx(p.id, p.sid); return ep(p.id); });
-  route('POST', '/api/episodes/:id/scenes/:sid/lipsync', async ({ p }) => { await S.animGate.acknowledgeMixOnly(p.id, p.sid); return ep(p.id); });
-  route('DELETE', '/api/episodes/:id/scenes/:sid/lipsync', async ({ p }) => { await S.animGate.clearLipSync(p.id, p.sid); return ep(p.id); });
   route('PUT', '/api/episodes/:id/video-edit/style', async ({ p, body }) => { await S.videoEdit.saveStyle(p.id, body || {}); return ep(p.id); });
+  route('PUT', '/api/episodes/:id/video-edit/transition', async ({ p, body }) => { await S.videoEdit.saveTransition(p.id, body || {}); return ep(p.id); });
+  route('PUT', '/api/episodes/:id/video-edit/music', async ({ p, body }) => { await S.videoEdit.saveMusic(p.id, body || {}); return ep(p.id); });
+  route('DELETE', '/api/episodes/:id/video-edit/music', async ({ p }) => { await S.videoEdit.saveMusic(p.id, { remove: true }); return ep(p.id); });
+  route('POST', '/api/episodes/:id/video-edit/music', async ({ p, raw, headers }) => S.uploadMusic(p.id, raw, decodeURIComponent(headers['x-filename'] || 'music.mp3')), { upload: true });
+  route('GET', '/media/music/:a', async ({ p }) => ({ file: S.mediaFile('music', p.a) }));
   route('PUT', '/api/episodes/:id/video-edit/mix', async ({ p, body }) => { await S.videoEdit.saveMix(p.id, body || {}); return ep(p.id); });
   route('PUT', '/api/episodes/:id/video-edit/subtitles/:lid', async ({ p, body }) => { await S.videoEdit.saveSubtitle(p.id, p.lid, body || {}); return ep(p.id); });
   route('DELETE', '/api/episodes/:id/video-edit/subtitles/:lid', async ({ p }) => { await S.videoEdit.resetSubtitle(p.id, p.lid); return ep(p.id); });
@@ -460,6 +476,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   // ---- media (ids only) ----
   route('GET', '/media/product/:a/:b', async ({ p }) => ({ file: S.mediaFile('product', p.a, p.b) }));
   route('GET', '/media/ref/:a/:b', async ({ p }) => ({ file: S.mediaFile('ref', p.a, p.b) }));
+  route('GET', '/media/lipsync/:a/:b/:c', async ({ p }) => ({ file: S.mediaFile('lipsync', p.a, p.b, p.c) }));
   route('GET', '/media/clip/:a/:b/:c', async ({ p }) => ({ file: S.mediaFile('clip', p.a, p.b, p.c) }));
   route('GET', '/media/render/:a/:b', async ({ p, query }) => { const file = S.mediaFile('render', p.a, p.b); return { file, download: query.download === '1', filename: S.exportName(p.a, file) }; });
   route('GET', '/media/audio/:a/:b', async ({ p }) => ({ file: S.mediaFile('audio', p.a, p.b) }));

@@ -1,4 +1,5 @@
 import { characters } from './characters.js';
+import { lipsyncModelsCard } from './lipsync-settings.js';
 import { h, chip, icon, confirmDialog, toast, fmtUsd } from '../ui.js';
 import { state, act } from '../state.js';
 import { api } from '../api.js';
@@ -127,9 +128,12 @@ function parts() {
           h('label', { class: 'row small', style: 'gap:6px;align-items:center' }, h('input', { type: 'checkbox', checked: false, onchange: (e) => (cm.neg = e.target.checked) }), '네거티브 프롬프트 지원'),
           h('label', { class: 'field' }, h('span', { class: 'small' }, '요청 필드 이름 (프롬프트 / 이미지 / 길이 / 비율 / 네거티브 — 모델마다 다를 수 있음)'), h('div', { class: 'row', style: 'gap:4px;flex-wrap:wrap' }, [['promptField', 'prompt'], ['imageField', 'image_url'], ['durationField', 'duration'], ['aspectField', 'aspect_ratio'], ['negativeField', 'negative_prompt']].map(([k, d]) => h('input', { type: 'text', 'data-model-field': k, placeholder: d, style: 'width:120px', oninput: (e) => (cm[k] = e.target.value) })))),
           h('label', { class: 'field' }, h('span', { class: 'small' }, '고정 파라미터 JSON (선택, 예: {"mode":"std"})'), h('input', { type: 'text', 'data-model-extra': '', oninput: (e) => (cm.extraParams = e.target.value) })),
+          h('label', { class: 'field' }, h('span', { class: 'small' }, '음성 끄기 파라미터 JSON (선택 — 모델이 소리 생성을 끄는 값, 예: {"generate_audio":false})'), h('input', { type: 'text', 'data-model-silent': '', oninput: (e) => (cm.silentParams = e.target.value) })),
           h('label', { class: 'field' }, h('span', { class: 'small' }, '예상 비용 / 클립 (USD, 선택 — 직접 입력)'), h('input', { type: 'number', min: 0, step: 0.01, 'data-model-cost': '', oninput: (e) => (cm.costEstimateUsd = e.target.value) })),
           h('label', { class: 'row small', style: 'gap:6px;align-items:center' }, h('input', { type: 'checkbox', 'data-model-confirmed': '', onchange: (e) => (cm.confirmed = e.target.checked) }), '플레이그라운드에서 엔드포인트·파라미터를 확인했습니다 (체크하지 않으면 미확인으로 등록되어 실제 생성이 차단됩니다)')),
-        h('button', { class: 'btn sm', type: 'button', 'data-model-save': '', onclick: () => act(() => api.post('/api/models', { id: cm.id, label: cm.label, endpoint: cm.endpoint, durations: cm.durations.split(',').map((x) => Number(x.trim())).filter(Boolean), resolutions: cm.resolutions.split(',').map((x) => x.trim()).filter(Boolean), supportsNegativePrompt: cm.neg, confirmed: !!cm.confirmed, extraParams: cm.extraParams || undefined, costEstimateUsd: cm.costEstimateUsd || undefined, promptField: cm.promptField, imageField: cm.imageField, imageAsList: !!cm.imageAsList, durationField: cm.durationField, aspectField: cm.aspectField, negativeField: cm.negativeField }), { ok: '모델을 등록했습니다. Animation Studio에서 선택할 수 있습니다. 첫 생성 전 엔드포인트와 비용을 확인하세요.' }) }, '모델 추가')))));
+        h('button', { class: 'btn sm', type: 'button', 'data-model-save': '', onclick: () => act(() => api.post('/api/models', { id: cm.id, label: cm.label, endpoint: cm.endpoint, durations: cm.durations.split(',').map((x) => Number(x.trim())).filter(Boolean), resolutions: cm.resolutions.split(',').map((x) => x.trim()).filter(Boolean), supportsNegativePrompt: cm.neg, confirmed: !!cm.confirmed, extraParams: cm.extraParams || undefined, silentParams: cm.silentParams || undefined, costEstimateUsd: cm.costEstimateUsd || undefined, promptField: cm.promptField, imageField: cm.imageField, imageAsList: !!cm.imageAsList, durationField: cm.durationField, aspectField: cm.aspectField, negativeField: cm.negativeField }), { ok: '모델을 등록했습니다. Animation Studio에서 선택할 수 있습니다. 첫 생성 전 엔드포인트와 비용을 확인하세요.' }) }, '모델 추가')))));
+
+  wrap.append(lipsyncModelsCard(state.summary));
 
   // Spend + prices
   const f = { limit: st.reelSpendLimitUsd == null ? '' : st.reelSpendLimitUsd, voice: st.voiceUsdPer1kChars == null ? '' : st.voiceUsdPer1kChars, prices: {} };

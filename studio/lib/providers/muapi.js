@@ -156,12 +156,12 @@ function createMuapiProvider({
      * Starts ONE billable generation. Returns { requestId, status, cost }.
      * model: { endpoint, imageField?, promptField?, extraParams? } from the model registry.
      */
-    async submit({ model, prompt, imageUrl, aspectRatio = '9:16', duration, negativePrompt, extra = {} }) {
+    async submit({ model, prompt, imageUrl, aspectRatio = '9:16', duration, negativePrompt, extra = {}, silent = false }) {
       need();
       if (!model || !model.endpoint) throw new ProviderError('BAD_REQUEST', '모델 엔드포인트가 설정되지 않았습니다.');
       const ep = validateEndpoint(model.endpoint);
       if (!ep) throw new ProviderError('BAD_REQUEST', '모델 엔드포인트 형식이 올바르지 않습니다 (MuAPI 기본 주소 아래의 경로만 허용).');
-      const body = buildBody(model, { prompt, imageUrl, aspectRatio, duration, negativePrompt, extra });
+      const body = buildBody(model, { prompt, imageUrl, aspectRatio, duration, negativePrompt, extra, silent });
       const url = base + '/' + ep;
       let lastErr = null;
       for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {

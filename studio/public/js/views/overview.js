@@ -74,7 +74,7 @@ function labCard(s) {
 
 
 // ---- workflow board: Product → Story Lab → Episode → Script → Storyboard → Video (one glance, one current step) ----
-const STAGES = [['products', '제품 스튜디오', 'products'], ['storylab', '스토리랩', 'storylab'], ['episodes', '에피소드', 'episodes'], ['script', '대본 스튜디오', 'script'], ['image', '이미지 스튜디오', 'image'], ['animation', '애니메이션 스튜디오', 'animation'], ['render', '비디오 스튜디오', 'render']];
+const STAGES = [['products', '제품 스튜디오', 'products'], ['storylab', '스토리랩', 'storylab'], ['episodes', '에피소드', 'episodes'], ['script', '대본 스튜디오', 'script'], ['image', '이미지 스튜디오', 'image'], ['animation', '애니메이션 스튜디오', 'animation'], ['voice', '보이스 스튜디오', 'voice'], ['lipsync', '립싱크 스튜디오', 'lipsync'], ['render', '비디오 스튜디오', 'render']];
 function stageDone(s, ep) {
   const step = (k) => ep && ep.derived.steps.find((x) => x.key === k);
   return [
@@ -83,7 +83,9 @@ function stageDone(s, ep) {
     !!ep,
     !!(ep && ep.derived.scriptApproved),
     !!(step('storyboard') && step('storyboard').state === 'done'),
-    !!(step('clips') && step('clips').state === 'done'),
+    !!(ep && ep.scenes.length && ep.scenes.every((sc) => sc.clips && sc.clips.approvedVersion)),
+    !!(ep && ep.sceneFlow && ep.scenes.every((sc) => ['approved', 'silent'].includes(ep.sceneFlow.scenes[sc.id].audio.state))),
+    !!(ep && ep.lipsync && ep.scenes.every((sc) => ['approved', 'not-needed'].includes(ep.lipsync.scenes[sc.id].state) || ep.sceneFlow.scenes[sc.id].final.state === 'approved')),
     !!(step('review') && step('review').state === 'done'),
   ];
 }

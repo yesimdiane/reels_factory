@@ -38,13 +38,17 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
     return provider();
   };
 
-  function ttsFor(char) {
+  // per-scene voice settings (Voice Studio): speaking rate override + a 'variant' counter that forces a genuinely new take on regeneration
+  const sceneVoice = (ep, sceneId) => ((ep.voiceScene || {})[sceneId]) || null;
+  const rateOf = (char, ov) => (ov && Number(ov.rate)) || Number(char.voice.speed) || 1;
+
+  function ttsFor(char, ov) {
     const v = char.voice;
     return createTtsService({
       provider: speechFor(char),
       voice: voiceIdOf(char) || 'unset',
       language: providerOf(char) === 'google' ? (v.googleVoiceLanguage || 'en-US') : (v.language || 'en'),
-      speakingRate: Number(v.speed) || 1,
+      speakingRate: rateOf(char, ov),
       cacheDir: store.cachePath('voice', char.id),
       ledgerFile: store.path('voice-usage.json'),
       maxCharsPerJob: cfg.maxCharsPerJob,
@@ -52,7 +56,7 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
     });
   }
 
-  const lineKey = (char, line) => sha256(JSON.stringify([speechFor(char).name, voiceIdOf(char), char.voice.speed, providerOf(char) === 'google' ? char.voice.googleVoiceLanguage : char.voice.language, line.en]));
+  const lineKey = (char, line, ov) => { const base = [speechFor(char).name, voiceIdOf(char), char.voice.speed, providerOf(char) === 'google' ? char.voice.googleVoiceLanguage : char.voice.language, line.en]; return sha256(JSON.stringify(ov && (ov.rate || ov.variant) ? base.concat([[Number(ov.rate) || null, ov.variant || 0]]) : base)); };
 
   /** Is the stored audio for `line` current (text, speaker voice and provider unchanged, file present)? */
   function lineAudio(ep, line) {
@@ -65,7 +69,7 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
       return { valid: false };
     }
     const file = path.join(store.dir, e.file);
-    const valid = e.key === lineKey(char, line) && fs.existsSync(file);
+    const valid = e.key === lineKey(char, line, sceneVoice(ep, line.sceneId)) && fs.existsSync(file);
     return Object.assign({ valid, file }, valid ? { durationSec: e.durationSec, mock: e.mock } : {});
   }
 
@@ -132,7 +136,8 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
         results.push({ lineId: line.id, status: 'cached' });
         continue;
       }
-      const tts = ttsFor(char);
+      const ov = sceneVoice(ep0, line.sceneId);
+      const tts = ttsFor(char, ov);
       let out;
       try {
         out = (await tts.synthesizeAll([line.en]))[0];
@@ -143,7 +148,7 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
         continue; // a failed paid line is NOT retried; the operator decides
       }
       await store.episodes.update(epId, (ep) => {
-        ep.voice.lines[line.id] = { key: lineKey(char, line), file: path.relative(store.dir, out.file), durationSec: Math.round(out.duration * 1000) / 1000, speaker: line.speaker, voiceId: voiceIdOf(char), provider: providerOf(char), mock: !isLive(char), cached: out.cached, at: nowIso(), scriptHash: scriptFingerprint(ep) };
+        ep.voice.lines[line.id] = { key: lineKey(char, line, ov), file: path.relative(store.dir, out.file), durationSec: Math.round(out.duration * 1000) / 1000, speaker: line.speaker, voiceId: voiceIdOf(char), provider: providerOf(char), mock: !isLive(char), cached: out.cached, at: nowIso(), scriptHash: scriptFingerprint(ep) };
         if (isLive(char) && !out.cached) ep.spend.push({ at: nowIso(), kind: 'voice', lineId: line.id, chars: [...line.en].length, estimatedUsd: est.usd == null ? null : Math.round((est.usd * [...line.en].length / Math.max(1, est.billableChars)) * 1e6) / 1e6, actualUsd: null, mock: false });
       });
       results.push({ lineId: line.id, status: out.cached ? 'cached' : 'synthesized', durationSec: out.duration });
@@ -168,7 +173,39 @@ function createVoiceService({ store, cfg, fetchFn = globalThis.fetch, speechProv
     return hit;
   }
 
-  return { get mode() { return modeNow(); }, estimate, synthesize, verify, lineAudio, provider: () => provider() };
+  const hasLines = (ep, sid) => (ep.lines || []).some((l) => l.sceneId === sid);
+
+  /** Per-scene speaking rate (0.7–1.2, empty = the character's own) and emotion note. Changing the rate makes the scene's audio "needs regeneration" (never silently re-bought). */
+  async function saveSceneVoice(epId, sceneId, patch) {
+    await store.episodes.update(epId, (ep) => {
+      if (!(ep.scenes || []).some((x) => x.id === sceneId)) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다.', { status: 404 });
+      ep.voiceScene = ep.voiceScene || {};
+      const cur = Object.assign({}, ep.voiceScene[sceneId] || {});
+      if (patch.rate !== undefined) { const r = patch.rate === '' || patch.rate === null ? 0 : Number(patch.rate); if (r && !(r >= 0.7 && r <= 1.2)) throw new StudioError('BAD_RATE', '속도는 0.7–1.2 사이여야 합니다.', { status: 422 }); cur.rate = r || 0; }
+      if (patch.emotion !== undefined) cur.emotion = String(patch.emotion).trim().slice(0, 80);
+      if (!cur.rate && !cur.emotion && !cur.variant) delete ep.voiceScene[sceneId]; else ep.voiceScene[sceneId] = cur;
+    });
+    store.episodes.audit(epId, 'voice.scene.settings', { sceneId });
+  }
+
+  /**
+   * Starts a genuinely NEW take for one scene without touching the animation: bumps the scene's variant so the next "음성 생성" is a new (paid in live mode) synthesis.
+   * Approved audio is never replaced silently: it needs confirmOverwrite, which also drops that approval (and so the scene's lip sync / final approval become stale).
+   */
+  async function regenerate(epId, sceneId, { confirmOverwrite = false } = {}) {
+    await store.episodes.update(epId, (ep) => {
+      if (!hasLines(ep, sceneId)) throw new StudioError('NO_DIALOGUE', '대사가 없는 장면입니다.', { status: 409 });
+      if ((ep.audioApprovals || {})[sceneId] && !confirmOverwrite) throw new StudioError('APPROVED_AUDIO', `${sceneId}: 승인된 음성이 있습니다. 덮어쓰려면 확인이 필요합니다.`, { status: 409, recovery: '승인된 음성은 자동으로 바뀌지 않습니다. 새로 만들 것을 확인하세요.' });
+      ep.voiceScene = ep.voiceScene || {};
+      const cur = Object.assign({}, ep.voiceScene[sceneId] || {});
+      cur.variant = (cur.variant || 0) + 1;
+      ep.voiceScene[sceneId] = cur;
+      if (ep.audioApprovals) delete ep.audioApprovals[sceneId];
+    });
+    store.episodes.audit(epId, 'voice.scene.regenerate', { sceneId, confirmOverwrite: !!confirmOverwrite });
+  }
+
+  return { get mode() { return modeNow(); }, estimate, synthesize, verify, lineAudio, saveSceneVoice, regenerate, provider: () => provider() };
 }
 
 module.exports = { createVoiceService };

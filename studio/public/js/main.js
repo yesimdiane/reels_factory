@@ -11,6 +11,7 @@ import { script } from './views/script.js';
 import { storyboard } from './views/storyboard.js';
 import { animation } from './views/animation.js';
 import { voice } from './views/voice.js';
+import { lipsyncStudio } from './views/lipsync-studio.js';
 import { render } from './views/render.js';
 import { review } from './views/review.js';
 import { publishing } from './views/publishing.js';
@@ -29,8 +30,9 @@ export const NAV = [
   ['script', '대본 스튜디오', 'Script Studio', script, true],
   ['image', '이미지 스튜디오', 'Image Studio', storyboard, true],
   ['animation', '애니메이션 스튜디오', 'Animation Studio', animation, true],
+  ['voice', '보이스 스튜디오', 'Voice Studio', voice, true],
+  ['lipsync', '립싱크 스튜디오', 'Lip Sync Studio', lipsyncStudio, true],
   ['render', '비디오 스튜디오', 'Video Studio', render, true],
-  ['voice', '보이스', 'Voice', voice, false],
   ['review', '최종 검토', 'Final Review', review, true],
   ['publishing', '게시', 'Publishing', publishing, true],
   ['autodm', '자동 DM', 'Auto DM', autodm, true],
@@ -39,10 +41,9 @@ export const NAV = [
 // old routes keep working: #/storyboard/EP01 → #/image/EP01, #/characters → #/settings/characters (the Character Library lives in Settings)
 export const ROUTE_ALIAS = { storyboard: 'image', characters: 'settings' };
 const ICON = { autodm: 'publishing' };
-const VIDEO_GROUP = ['voice', 'render']; // Video Studio = voice + assembly (Animation Studio is its own step)
-const TAB_VIEWS = ['overview', 'products', 'storylab', 'script', 'animation', 'settings'];
+const TAB_VIEWS = ['overview', 'products', 'script', 'animation', 'voice', 'render', 'settings'];
 const PRODUCT_VIEWS = ['products', 'storylab'];
-const EP_HEADER_VIEWS = ['script', 'image', 'animation', 'voice', 'render', 'review', 'publishing', 'autodm'];
+const EP_HEADER_VIEWS = ['script', 'image', 'animation', 'voice', 'lipsync', 'render', 'review', 'publishing', 'autodm'];
 const NO_ID_VIEWS = ['overview', 'episodes', 'settings'];
 
 let poll = null;
@@ -59,7 +60,7 @@ function parseHash() {
   if (view === 'settings' && id) { if (['general', 'ai', 'connections', 'voices', 'prompts', 'scriptprompts', 'endings', 'usage', 'characters'].includes(id)) state.settingsTab = id; id = ''; }
   return { view: NAV.some((n) => n[0] === view) ? view : 'overview', id };
 }
-const active = (key) => state.view === key || (key === 'render' && VIDEO_GROUP.includes(state.view));
+const active = (key) => state.view === key;
 const hrefFor = (key) => '#/' + key + (PRODUCT_VIEWS.includes(key) ? (state.productId ? '/' + state.productId : '') : state.episodeId && !NO_ID_VIEWS.includes(key) ? '/' + state.episodeId : '');
 
 function drawShell() {
@@ -109,7 +110,7 @@ function schedulePoll() {
   clearTimeout(poll);
   const ep = state.episode;
   const busy = ep && (ep.derived.jobsRunning || (ep.derived.render.job && ep.derived.render.job.status === 'running'));
-  if (busy && ['animation', 'voice', 'render', 'review', 'overview', 'image'].includes(state.view)) {
+  if (busy && ['animation', 'voice', 'lipsync', 'render', 'review', 'overview', 'image'].includes(state.view)) {
     poll = setTimeout(async () => {
       try {
         const activeEl = document.activeElement;

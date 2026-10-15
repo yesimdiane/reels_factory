@@ -4,6 +4,7 @@
 const mc = require('./modelcontract');
 const { createAnimGate } = require('./animgate');
 const { createVideoEdit } = require('./videoedit');
+const { createLipSync } = require('./lipsync');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
@@ -95,7 +96,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const sba = createStoryboardAssets({ store, dialogueTiming, lib: () => store.characters.load(), products });
   const brollImages = createBrollImages({ store, products, router, charRefs, sba, lib: () => store.characters.load() });
   const animplan = createAnimPlan({ store, router, sba, charRefs, lib: () => store.characters.load() });
-  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs, audioGate: (ep, sid) => sceneFlow.audioOk(ep, sid), extraBlockers: (ep, scenes, model) => animGate.blockers(ep, scenes, model), brollSource: (ep, b) => ({ file: sba.brollFile(ep, b), problem: sba.assetHealth(ep, b).problem }) });
+  const gen = createGenerationService({ store, provider: video, cfg, log, composePrompt: (ep, sid, text) => animplan.compose(ep, sid, text), charRefs, extraBlockers: (ep, scenes, model) => animGate.blockers(ep, scenes, model), brollSource: (ep, b) => ({ file: sba.brollFile(ep, b), problem: sba.assetHealth(ep, b).problem }) });
   const aiDiagnostics = createAiDiagnostics({ store });
   const promptSvc = createPromptService({ diagnostics: aiDiagnostics,
     store, cfg, geminiFactory, log,
@@ -114,10 +115,11 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const renderReadiness = createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer: { plan: (id) => renderer.plan(id) }, providerMode: () => video.mode, getModel: () => modelById(store.models(), store.settings.get().defaultModelId) });
   const brollApi = { approved: (ep) => sba.approvedBroll(ep), file: (ep, b) => sba.brollFile(ep, b), problem: (ep, b) => sba.assetHealth(ep, b).problem };
   const sceneFlow = createSceneFlow({ store, cfg, voice, broll: brollApi, log });
-  const animGate = createAnimGate({ store, sceneFlow });
+  const animGate = createAnimGate({ store });
+  const lipsync = createLipSync({ store, cfg, provider: video, voice, sceneFlow, log });
   const sfx = createSfx({ store, cfg, fetchFn, heygenKey: () => runtime.heygenKey(), log });
   const videoEdit = createVideoEdit({ store });
-  const renderer = createRenderService({ store, cfg, voice, log, videoEdit, broll: brollApi, sceneGate: { renderProblems: (ep) => sceneFlow.renderProblems(ep), hashes: (ep) => sceneFlow.hashes(ep) } });
+  const renderer = createRenderService({ store, cfg, voice, log, videoEdit, broll: brollApi, sceneGate: { renderProblems: (ep) => sceneFlow.renderProblems(ep), hashes: (ep) => sceneFlow.hashes(ep), source: (ep, sid) => sceneFlow.sourceOf(ep, sid) } });
   const publishing = createPublishingService({ store });
   store.episodes.seedDemo();
   // Projects / scene approvals / Image Development hand-off (no AI or video provider is wired in: nothing here can spend money).
@@ -172,7 +174,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
 
 
   function jobsRunning(ep) {
-    return (ep.generation.jobs || []).some((j) => ACTIVE_JOB.has(j.status));
+    return (ep.generation.jobs || []).some((j) => ACTIVE_JOB.has(j.status)) || (ep.lipsyncJobs || []).some((j) => ['preparing', 'submitting', 'processing'].includes(j.status));
   }
 
   /** Structured view of the fixed formula for the Script Studio UI (Part A beats, Part B template slots, what is template vs episode-specific). */
@@ -313,13 +315,14 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       renders: ep.renders.map((r) => Object.assign({}, r, { outdatedEdit: r.editHash !== undefined && r.editHash !== videoEdit.editHash(ep), url: `/media/render/${id}/${r.v}`, current: !!(ep.approvals.final && ep.approvals.final.v === r.v) })),
       sfx: ep.sfx,
       videoEdit: videoEdit.get(ep),
+      lipsync: (() => { const lm = lipsync.models(); let m = null; try { m = lipsync.modelById(lipsync.defaultModelId()); } catch (_) { m = lm[0]; } return { models: lm, defaultModelId: m.id, model: m, mode: video.mode, scenes: Object.fromEntries((ep.scenes || []).map((sc) => [sc.id, lipsync.sceneView(ep, sc.id, m)])) }; })(),
       sceneFlow: {
         scenes: Object.fromEntries((ep.scenes || []).map((sc) => {
           const au = sceneFlow.audioState(ep, sc.id);
           au.lines = au.lines.map((l) => Object.assign(l, { url: l.valid ? `/media/audio/${id}/${l.id}` : '' }));
           const gm = (() => { try { return modelById(store.models(), (ep.animation && ep.animation[sc.id] && ep.animation[sc.id].modelId) || store.settings.get().defaultModelId); } catch (_) { return null; } })();
           let ge = null; try { ge = gen.estimate(id, { sceneIds: [sc.id], modelId: gm && gm.id }); } catch (_) { /* shown as blockers in the checklist */ }
-          return [sc.id, { audio: au, final: sceneFlow.sceneState(ep, sc.id), sfxPlan: animGate.sfxState(ep, sc.id), gate: animGate.checklist(ep, sc.id, { model: gm, est: ge }) }];
+          return [sc.id, { voiceScene: (ep.voiceScene || {})[sc.id] || null, audio: au, final: sceneFlow.sceneState(ep, sc.id), gate: animGate.checklist(ep, sc.id, { model: gm, est: ge }) }];
         })),
         builtinSfx: sfx.BUILTIN,
         heygenConnected: !!runtime.heygenKey(),
@@ -1305,6 +1308,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         // the operator vouches for the endpoint only by ticking "confirmed in the playground"; otherwise it stays unverified and live generation is blocked
         verification: spec.confirmed ? 'user-entered' : 'unverified', notes: String(spec.notes || '').slice(0, 300) });
     if (imageAsList) m.imageAsList = true;
+    if (spec.silentParams) { try { const sp = mc.cleanExtra(spec.silentParams); if (Object.keys(sp).length) m.silentParams = sp; } catch (e) { throw new StudioError('BAD_MODEL', '음성 끄기 파라미터(JSON)가 올바르지 않습니다: ' + e.message, { status: 422 }); } }
     if (Object.keys(extraParams).length) m.extraParams = extraParams;
     if (cost != null) m.costEstimateUsd = cost;
     if (Array.isArray(spec.resolutions) && spec.resolutions.length) { m.resolutions = spec.resolutions.map(String).slice(0, 8); m.resolutionField = mc.field(spec.resolutionField, 'resolution') || 'resolution'; }
@@ -1321,6 +1325,19 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     const cur = store.settings.get();
     store.settings.save({ modelVerification: Object.assign({}, cur.modelVerification || {}, { [id]: { level: 'user-entered', at: nowIso(), by } }) });
     return publicSettings();
+  }
+  /** Background music upload (own file, nothing generated). Stored under the episode; level/fades are edited in Video Studio. */
+  async function uploadMusic(id, buffer, filename) {
+    const ext = require('node:path').extname(String(filename || '')).toLowerCase();
+    if (!['.mp3', '.wav', '.m4a', '.ogg'].includes(ext)) throw new StudioError('BAD_FILE', '음악은 mp3 · wav · m4a · ogg 파일만 올릴 수 있습니다.', { status: 422 });
+    if (!buffer || !buffer.length || buffer.length > 20 * 1024 * 1024) throw new StudioError('BAD_FILE', '음악 파일은 20MB 이하여야 합니다.', { status: 422 });
+    const hash = sha256(buffer.toString('base64').slice(0, 4096) + buffer.length);
+    const rel = require('node:path').join('music', hash.slice(0, 12) + ext);
+    store.episodes.saveFile(id, rel, buffer);
+    const info = await require('../../renderer/lib/ffmpeg').probe(cfg.ffmpeg.ffprobe, store.episodes.file(id, rel));
+    if (!info.streams.some((x) => x.codec_type === 'audio')) throw new StudioError('BAD_FILE', '오디오 스트림이 없는 파일입니다.', { status: 422 });
+    await videoEdit.saveMusic(id, { file: rel, name: String(filename).slice(0, 120), sha256: hash, durationSec: info.duration });
+    return episodeView(id);
   }
   /** Operator states they checked the MuAPI TTS endpoint + parameters in the playground. Free; no network. */
   function confirmMuapiTts(value = true) {
@@ -1462,6 +1479,16 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       if (!v) throw new StudioError('NOT_FOUND', '클립을 찾을 수 없습니다.', { status: 404 });
       return store.episodes.file(a, v.file);
     }
+    if (kind === 'lipsync') {
+      const v = (((ep.lipsync || {})[b] || {}).versions || []).find((x) => x.v === Number(c));
+      if (!v) throw new StudioError('NOT_FOUND', '립싱크 영상을 찾을 수 없습니다.', { status: 404 });
+      return store.episodes.file(a, v.file);
+    }
+    if (kind === 'music') {
+      const m = (ep.videoEdit || {}).music;
+      if (!m || !m.file) throw new StudioError('NOT_FOUND', '배경음악이 없습니다.', { status: 404 });
+      return store.episodes.file(a, m.file);
+    }
     if (kind === 'render') {
       const r = ep.renders.find((x) => x.v === Number(b));
       if (!r) throw new StudioError('NOT_FOUND', '렌더를 찾을 수 없습니다.', { status: 404 });
@@ -1506,7 +1533,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   const exportName = (id, file) => `${(store.episodes.get(id).displayId || id)}_${require('node:path').basename(file)}`;
 
   return {
-    exportName, sceneFlow, animGate, videoEdit, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
+    exportName, sceneFlow, animGate, lipsync, uploadMusic, videoEdit, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
     summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, deleteStartFrame, saveImagePrompt, resetImagePrompt, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, confirmModel, muapiCliModels, confirmMuapiTts, muapiCheck, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,

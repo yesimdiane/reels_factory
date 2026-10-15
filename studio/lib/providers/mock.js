@@ -56,6 +56,10 @@ function createMockVideoProvider({ ffmpeg = 'ffmpeg', pollsUntilDone = 2, failWh
     async listModels() {
       return { mock: true, models: [] };
     },
+    async uploadFile(file) {
+      calls.upload += 1;
+      return { url: 'mock://upload/' + require('node:path').basename(file), expiresInSec: 3600 };
+    },
     async uploadImage(file) {
       calls.upload += 1;
       return { url: 'mock://upload/' + require('node:path').basename(file), expiresInSec: 3600 };

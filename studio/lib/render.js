@@ -132,14 +132,16 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
     if (!isScriptApproved(ep)) problems.push({ code: 'SCRIPT_NOT_APPROVED', message: '대본이 승인되지 않았거나 승인 후 수정되었습니다.', recovery: 'Script Studio에서 승인하세요.' });
     const clips = {};
     (ep.scenes || []).forEach((s) => {
-      const c = ep.clips[s.id];
-      const v = c && c.approvedVersion && c.versions.find((x) => x.v === c.approvedVersion);
-      if (!v) return problems.push({ code: 'CLIP_NOT_APPROVED', message: `${s.id}: 승인된 클립이 없습니다.`, recovery: 'Storyboard의 장면별 "영상 클립 생성 · 승인"에서 클립을 생성·업로드·승인하세요.' });
+      const hasDialogue = (ep.lines || []).some((l) => l.sceneId === s.id);
+      const v = sceneGate && sceneGate.source ? sceneGate.source(ep, s.id) : (() => { const c = ep.clips[s.id]; return c && c.approvedVersion && c.versions.find((x) => x.v === c.approvedVersion); })();
+      if (!v) return problems.push(hasDialogue
+        ? { code: 'LIPSYNC_NOT_APPROVED', sceneId: s.id, message: `${s.id}: 승인된 립싱크 영상이 없습니다.`, recovery: '립싱크 스튜디오에서 무음 애니메이션과 승인된 음성으로 립싱크를 만들고 승인하세요.' }
+        : { code: 'CLIP_NOT_APPROVED', sceneId: s.id, message: `${s.id}: 승인된 클립이 없습니다.`, recovery: '애니메이션 스튜디오에서 클립을 생성·업로드·승인하세요.' });
       const f = store.episodes.file(ep.id, v.file);
       if (!fs.existsSync(f)) return problems.push({ code: 'CLIP_MISSING', message: `${s.id}: 클립 파일이 없습니다.`, recovery: '클립을 다시 생성하거나 업로드하세요.' });
       if (sha256File(f) !== v.sha256) return problems.push({ code: 'CLIP_CHECKSUM', message: `${s.id}: 클립 파일이 승인된 파일과 다릅니다 (체크섬 불일치).`, recovery: '클립을 다시 승인하세요.' });
       if ((s.inserts || []).length && !isSceneApproved(ep, s.id)) problems.push({ code: 'CUTS_NOT_APPROVED', message: `${s.id}: 컷(클로즈업) 편집이 승인되지 않았습니다. 컷을 바꾸면 씬을 다시 검토·승인해야 합니다.`, recovery: 'Script Studio에서 이 씬을 확인하고 "씬 승인"을 누르세요.' });
-      clips[s.id] = { file: f, v: v.v, sha256: v.sha256, durationSec: v.durationSec, mock: !!v.mock };
+      clips[s.id] = { file: f, v: v.v, sha256: v.sha256, durationSec: v.durationSec, mock: !!v.mock, kind: v.kind || 'animation' }; // a lip-synced video's own audio track is never used: the approved voice audio is mixed exactly once (doRender)
     });
     // Approved B-roll stills are layered over their scene; one without a usable image blocks the render instead of being skipped silently.
     const overlays = [];
@@ -197,6 +199,15 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
         const at = s.sceneId ? (sc0 ? sc0.start + Number(s.offsetSec || 0) : -1) : Number(s.atSec || 0); // scene-bound effects follow their scene
         if (fs.existsSync(f) && at >= 0 && at < tl.total) items.push({ file: f, start: at, gainDb: Number(s.gainDb || -6) + mixEd.sfxDb, fadeIn: Number(s.fadeInSec || 0), fadeOut: Number(s.fadeOutSec || 0), durationSec: Number(s.durationSec || 0) });
       });
+      // background music: one track under everything, own level + fades; skipped silently only if the file is gone (reported by plan())
+      if (ed && ed.music && ed.music.file) {
+        const mf = store.episodes.file(epId, ed.music.file);
+        if (fs.existsSync(mf)) {
+          const room = Math.max(0, tl.total - (ed.music.offsetSec || 0));
+          const len = ed.music.durationSec ? Math.min(ed.music.durationSec, room) : room;
+          items.push({ file: mf, start: ed.music.offsetSec || 0, gainDb: ed.music.volumeDb, fadeIn: ed.music.fadeInSec, fadeOut: ed.music.fadeOutSec, durationSec: len });
+        }
+      }
       await buildAudioTrack(cfg.ffmpeg.ffmpeg, items, tl.total, path.join(work, 'audio.wav'), work);
 
       const args = ['-hide_banner', '-y'];
@@ -215,6 +226,14 @@ function createRenderService({ store, cfg, voice, log = () => {}, broll = { appr
         const r = sceneVideoChains({ i, clipIn: i, dur, clipDurationSec: g.clips[s.id].durationSec, inserts: sc.inserts || [], overlays: mine, overlayIn: (o) => tl.scenes.length + 1 + overlays.indexOf(o), W, H, fps });
         chains.push(...r.chains);
         sceneOut[i] = r.label;
+        // 'dip' transition: fade the picture through black at scene boundaries (length unchanged; sound is not touched)
+        if (ed && ed.transition.type === 'dip' && tl.scenes.length > 1) {
+          const d = Math.min(ed.transition.durationSec, dur / 3);
+          const fx = [];
+          if (i > 0) fx.push(`fade=t=in:st=0:d=${d.toFixed(3)}`);
+          if (!last) fx.push(`fade=t=out:st=${(dur - d).toFixed(3)}:d=${d.toFixed(3)}`);
+          if (fx.length) { chains.push(`[${r.label}]${fx.join(',')}[vt${i}]`); sceneOut[i] = 'vt' + i; }
+        }
       });
       const fontsArg = cfg.fontsDir ? `:fontsdir=${cfg.fontsDir.replace(/([:\\'])/g, '\\$1')}` : '';
       chains.push(tl.scenes.map((_, i) => `[${sceneOut[i] || 'v' + i}]`).join('') + `concat=n=${tl.scenes.length}:v=1:a=0[vc]`, `[vc]ass=subs.ass${fontsArg}[vout]`);
