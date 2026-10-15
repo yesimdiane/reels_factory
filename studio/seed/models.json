@@ -34,28 +34,55 @@
       "imageField": "image_url",
       "durationField": "duration",
       "durations": [
-        5
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30
       ],
       "aspectRatios": [
         "9:16"
       ],
       "resolutions": [
-        "720p"
+        "480p",
+        "720p",
+        "1080p",
+        "4k"
       ],
       "resolutionField": "resolution",
       "extraParams": {
-        "resolution": "720p",
-        "seed": 42,
+        "resolution": "480p",
+        "seed": -1,
         "high_bitrate": false,
-        "draft": false,
-        "draft_request_id": ""
+        "draft": false
       },
       "omitAspectRatio": true,
       "supportsNegativePrompt": false,
       "lipSync": false,
       "verification": "unverified",
-      "docsUrl": "https://muapi.ai/playground/seedance-2.5-image-to-video/api",
-      "notes": "Endpoint and fields from operator-supplied MuAPI curl example. Duration 5 and 720p are demonstrated values, not confirmed full supported ranges. No model field. Cost unknown; explicit estimate and approval required before LIVE generation."
+      "docsUrl": "https://muapi.ai/playground/seedance-2.5-image-to-video/llms.txt",
+      "notes": "Official MuAPI per-model llms.txt: prompt/image_url required; 480p, 720p, 1080p, 4k; up to 30 sec; default 5 sec. 480p selected for cheaper trials. Draft mode requires 480p; finalization via completed draft_request_id requires 1080p and explicit new authorization. Cost depends on parameters; do not assume fixed credit cost."
     }
   ]
 }
