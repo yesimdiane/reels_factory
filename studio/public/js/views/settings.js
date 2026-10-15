@@ -141,7 +141,7 @@ function parts() {
   // Spend + prices: responsive model cards. Existing backend stores per-duration
   // estimates; resolution-specific rates below are reference-only until the
   // server supports per-resolution cost estimates.
-  const f = { limit: st.reelSpendLimitUsd == null ? '' : st.reelSpendLimitUsd, voice: st.voiceUsdPer1kChars == null ? '' : st.voiceUsdPer1kChars, prices: {} };
+  const f = { limit: st.reelSpendLimitUsd == null ? '' : st.reelSpendLimitUsd, voice: st.voiceUsdPer1kChars == null ? '' : st.voiceUsdPer1kChars, prices: {}, resolutionPrices: {} };
   const published = {
     'grok-imagine-image-to-video': ['480p: $0.025/초 · 720p: $0.05/초', '6~30초 지원 · 5초 미지원'],
     'seedance-pro-i2v': ['$0.18/회 공개 단가', '해상도·길이별 실제 청구액 미확인'],
@@ -155,6 +155,9 @@ function parts() {
     const ds = m.durations || [];
     const ref = published[m.endpoint] || published[m.id] || ['공식 단가 미확인', 'MuAPI 계정에서 가격을 확인하세요'];
     f.prices[m.id] = Object.fromEntries(ds.map((d) => [String(d), cur[String(d)] === undefined ? '' : cur[String(d)]]));
+    const savedMatrix = ((st.modelEstimates || {})[m.id] || {}).usdByResolution || {};
+    f.resolutionPrices[m.id] = Object.fromEntries((m.resolutions || []).map((res) => [res,
+      Object.fromEntries(ds.map((d) => [String(d), (savedMatrix[res] || {})[String(d)] ?? '']))]));
     return h('div', { class: 'card stack', style: 'gap:12px;min-width:0', 'data-model-price-card': m.id },
       h('div', { class: 'row between', style: 'gap:8px;align-items:flex-start;flex-wrap:wrap' },
         h('div', { style: 'min-width:0;overflow-wrap:anywhere' },
@@ -162,8 +165,18 @@ function parts() {
           h('div', { class: 'small muted mono', style: 'overflow-wrap:anywhere' }, m.endpoint)),
         chip(m.verification === 'verified' ? '생성 검증됨' : m.verification === 'user-entered' ? '사용자 확인' : '미검증', m.verification === 'verified' ? 'done' : 'attention')),
       h('div', { class: 'small muted' }, '공개 참고 가격: ' + ref.join(' · ')),
-      h('div', { class: 'small muted' }, '현재 저장 방식은 길이별 단일 가격입니다. 해상도에 따라 요금이 달라지면 정확한 예상액을 보장할 수 없으므로 선택한 해상도의 실제 가격만 입력하세요.'),
-      h('div', { class: 'grid two', style: 'gap:10px' }, ds.length
+      h('div', { class: 'small muted' }, (m.resolutions || []).length ? '해상도와 길이별로 실제 비용을 입력하세요. 비어 있는 조합은 유료 생성이 차단됩니다.' : '길이별 예상 비용을 입력하세요.'),
+      ...(m.resolutions || []).map((res) => h('div', { class: 'stack', style: 'gap:8px' },
+        h('b', { class: 'small' }, res),
+        h('div', { class: 'grid two', style: 'gap:10px' },
+          ...ds.map((d) => h('label', { class: 'field', style: 'min-width:0' },
+            h('span', { class: 'small' }, d + '초 · USD'),
+            h('input', { type: 'number', min: 0, step: 0.001, inputmode: 'decimal',
+              'aria-label': (m.label || m.id) + ' ' + res + ' ' + d + '초 예상 비용',
+              placeholder: '미확인', value: f.resolutionPrices[m.id][res][String(d)],
+              style: 'width:100%;min-width:0;max-width:100%',
+              oninput: (e) => (f.resolutionPrices[m.id][res][String(d)] = e.target.value) })))))),
+      ...(m.resolutions || []).length ? [] : [h('div', { class: 'grid two', style: 'gap:10px' }, ds.length
         ? ds.map((d) => h('label', { class: 'field', style: 'min-width:0' },
           h('span', { class: 'small' }, d + '초 · USD/클립'),
           h('input', { type: 'number', min: 0, step: 0.001, inputmode: 'decimal',
@@ -171,7 +184,7 @@ function parts() {
             placeholder: '미확인', value: f.prices[m.id][String(d)],
             style: 'width:100%;min-width:0;max-width:100%',
             oninput: (e) => (f.prices[m.id][String(d)] = e.target.value) })))
-        : [h('span', { class: 'small muted' }, '지원 길이가 등록되지 않았습니다.')]));
+        : [h('span', { class: 'small muted' }, '지원 길이가 등록되지 않았습니다.')]))]);
   });
   sec.costs.append(h('div', { class: 'stack', style: 'gap:14px', 'data-pricing-settings': '' },
     h('div', { class: 'card stack', style: 'gap:12px' },
@@ -180,7 +193,7 @@ function parts() {
         h('button', { class: 'btn sm', type: 'button', onclick: () => act(async () => {
           await api.put('/api/settings', {
             reelSpendLimitUsd: f.limit, voiceUsdPer1kChars: f.voice,
-            modelEstimates: Object.fromEntries(Object.entries(f.prices).map(([k, v]) => [k, { usdByDuration: v }]))
+            modelEstimates: Object.fromEntries(Object.entries(f.prices).map(([k, v]) => [k, { usdByDuration: v, usdByResolution: f.resolutionPrices[k] || {} }]))
           }); return null;
         }, { ok: '비용 설정을 저장했습니다' }) }, '가격 저장')),
       h('div', { class: 'banner warn' }, icon('lock'),
