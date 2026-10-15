@@ -284,6 +284,18 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/broll/suggest', async ({ p }) => { const made = await S.sba.suggestBroll(p.id); const v = ep(p.id); v.suggested = made.length; return v; });
   route('POST', '/api/episodes/:id/broll/:bid/status', async ({ p, body }) => { await S.sba.setBrollStatus(p.id, p.bid, body.status); return ep(p.id); });
   route('DELETE', '/api/episodes/:id/broll/:bid', async ({ p }) => { await S.sba.removeBroll(p.id, p.bid); return ep(p.id); });
+  // B-roll video endpoints used by Video Production. Keep the estimate free and require explicit price confirmation.
+  route('POST', '/api/episodes/:id/broll/:bid/clip/estimate', async ({ p, body }) => S.gen.estimateBroll(p.id, p.bid, { modelId: body.modelId }));
+  route('POST', '/api/episodes/:id/broll/:bid/clip/generate', async ({ p, body }) => {
+    S.assertNotHeld(p.id);
+    const { accepted, done } = await S.gen.generateBroll(p.id, p.bid, { modelId: body.modelId, prompt: body.prompt, confirmUsd: body.confirmUsd, confirmUnknown: body.confirmUnknown === true });
+    bg(done, 'broll-clip');
+    return accepted;
+  });
+  route('POST', '/api/episodes/:id/broll/:bid/clip/:v/review', async ({ p, body }) => {
+    await S.gen.reviewBroll(p.id, p.bid, Number(p.v), body.decision);
+    return ep(p.id);
+  });
   route('GET', '/api/episodes/:id/broll/:bid/image/plan', async ({ p, query }) => S.brollImages.plan(p.id, p.bid, { exclude: String(query.exclude || '').split(',').filter(Boolean) }));
   route('PUT', '/api/episodes/:id/broll/:bid/image/prompt', async ({ p, body }) => S.brollImages.savePrompt(p.id, p.bid, body || {}));
   route('DELETE', '/api/episodes/:id/broll/:bid/image/prompt', async ({ p }) => S.brollImages.resetPrompt(p.id, p.bid));
