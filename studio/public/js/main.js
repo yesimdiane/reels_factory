@@ -15,35 +15,47 @@ import { lipsyncStudio } from './views/lipsync-studio.js';
 import { render } from './views/render.js';
 import { review } from './views/review.js';
 import { publishing } from './views/publishing.js';
-import { autodm } from './views/autodm.js';
-import { settings } from './views/settings.js';
+import { settings, isSettingsTab } from './views/settings.js';
 import { guardLeave } from './views/leave-guard.js';
 import { startBilingual } from './bilingual.js';
 import { episodeHeader } from './views/episode-actions.js';
+import { episodeFlow } from './views/episode-flow.js';
 
-// [key, ko, en, view, inRail]   Dashboard → Products → Story Lab → Script → Storyboard → Video Studio → Review → Publishing → Settings
+// [key, ko, en, view, inRail]. Every route keeps working (deep links); only six of them are rail items.
+// Production sequence: Product Studio → Story Lab → Episodes (episode workspace: Script → Image → Video → Review → Publishing) → Image Studio → Video Production → Settings.
 export const NAV = [
   ['overview', '홈', 'Home', overview, false], // reached through the brand link (not part of the production sequence)
   ['products', '제품 스튜디오', 'Product Studio', products, true],
   ['storylab', '스토리 랩', 'Story Lab', storylab, true],
   ['episodes', '에피소드', 'Episodes', episodes, true],
-  ['script', '대본 스튜디오', 'Script Studio', script, true],
+  ['script', '대본 스튜디오', 'Script Studio', script, false], // lives inside the selected Episode workspace
   ['image', '이미지 스튜디오', 'Image Studio', storyboard, true],
-  ['animation', '애니메이션 스튜디오', 'Animation Studio', animation, true],
-  ['voice', '보이스 스튜디오', 'Voice Studio', voice, true],
-  ['lipsync', '립싱크 스튜디오', 'Lip Sync Studio', lipsyncStudio, true],
-  ['render', '비디오 스튜디오', 'Video Studio', render, true],
-  ['review', '최종 검토', 'Final Review', review, true],
-  ['publishing', '게시', 'Publishing', publishing, true],
-  ['autodm', '자동 DM', 'Auto DM', autodm, true],
+  ['animation', '애니메이션', 'Animation', animation, false], // Video Production tabs …
+  ['voice', '보이스', 'Voice', voice, false],
+  ['lipsync', '립싱크', 'Lip Sync', lipsyncStudio, false],
+  ['render', '편집', 'Editing', render, false],
+  ['review', '최종 검토', 'Final Review', review, false], // Episode completion workflow
+  ['publishing', '게시', 'Publishing', publishing, false],
   ['settings', '설정', 'Settings', settings, true],
 ];
-// old routes keep working: #/storyboard/EP01 → #/image/EP01, #/characters → #/settings/characters (the Character Library lives in Settings)
-export const ROUTE_ALIAS = { storyboard: 'image', characters: 'settings' };
-const ICON = { autodm: 'publishing' };
-const TAB_VIEWS = ['overview', 'products', 'script', 'animation', 'voice', 'render', 'settings'];
+// The six sidebar items. 'video' is a pseudo-route (#/video/EP01) that opens the last used Video Production tab.
+export const RAIL = [
+  ['products', '제품 스튜디오', 'Product Studio'],
+  ['storylab', '스토리 랩', 'Story Lab'],
+  ['episodes', '에피소드', 'Episodes'],
+  ['image', '이미지 스튜디오', 'Image Studio'],
+  ['video', '영상 제작', 'Video Production'],
+  ['settings', '설정', 'Settings'],
+];
+export const VIDEO_TABS = ['animation', 'voice', 'lipsync', 'render'];
+// which rail item a route belongs to (for the active state)
+const RAIL_OF = { script: 'episodes', review: 'episodes', publishing: 'episodes', animation: 'video', voice: 'video', lipsync: 'video', render: 'video', autodm: 'settings' };
+// old routes keep working: #/storyboard/EP01 → #/image/EP01, #/characters → #/settings/characters, #/autodm/EP01 → #/settings/autodm (Auto DM lives in Settings), #/video/EP01 → last Video Production tab
+export const ROUTE_ALIAS = { storyboard: 'image', characters: 'settings', autodm: 'settings', video: 'animation' };
+const ICON = { video: 'video', image: 'storyboard' };
 const PRODUCT_VIEWS = ['products', 'storylab'];
-const EP_HEADER_VIEWS = ['script', 'image', 'animation', 'voice', 'lipsync', 'render', 'review', 'publishing', 'autodm'];
+const EP_HEADER_VIEWS = ['script', 'image', 'animation', 'voice', 'lipsync', 'render', 'review', 'publishing'];
+const EPISODE_VIEWS = ['script', 'image', 'animation', 'voice', 'lipsync', 'render', 'review', 'publishing'];
 const NO_ID_VIEWS = ['overview', 'episodes', 'settings'];
 
 let poll = null;
@@ -53,25 +65,35 @@ function parseHash() {
   const alias = ROUTE_ALIAS[view];
   if (alias) {
     // legacy route: rewrite the address bar in place (no history entry) and keep the episode id
-    if (view === 'characters') { state.settingsTab = 'characters'; id = ''; }
-    view = alias;
-    history.replaceState(null, '', '#/' + view + (id ? '/' + id : view === 'settings' && state.settingsTab === 'characters' ? '/characters' : ''));
+    const was = view;
+    if (was === 'characters') { state.settingsTab = 'characters'; id = ''; }
+    if (was === 'autodm') { state.settingsTab = 'autodm'; if (id) { state.episodeId = id; state.draft = {}; } id = ''; }
+    view = was === 'video' ? (VIDEO_TABS.includes(state.videoTab) ? state.videoTab : 'animation') : alias;
+    history.replaceState(null, '', '#/' + view + (id ? '/' + id : view === 'settings' ? '/' + state.settingsTab : ''));
   }
-  if (view === 'settings' && id) { if (['general', 'ai', 'connections', 'voices', 'prompts', 'scriptprompts', 'endings', 'usage', 'characters'].includes(id)) state.settingsTab = id; id = ''; }
+  if (view === 'settings' && id) { if (isSettingsTab(id)) state.settingsTab = id; id = ''; }
+  if (VIDEO_TABS.includes(view)) state.videoTab = view;
   return { view: NAV.some((n) => n[0] === view) ? view : 'overview', id };
 }
-const active = (key) => state.view === key;
-const hrefFor = (key) => '#/' + key + (PRODUCT_VIEWS.includes(key) ? (state.productId ? '/' + state.productId : '') : state.episodeId && !NO_ID_VIEWS.includes(key) ? '/' + state.episodeId : '');
+const railKey = () => RAIL_OF[state.view] || state.view;
+const active = (key) => railKey() === key;
+// catalog pages (Product Studio, Story Lab) always open on the catalog; the editor is reached by clicking an item
+const hrefFor = (key) => {
+  if (PRODUCT_VIEWS.includes(key)) return '#/' + key;
+  if (key === 'video') return '#/video' + (state.episodeId ? '/' + state.episodeId : '');
+  return '#/' + key + (state.episodeId && !NO_ID_VIEWS.includes(key) ? '/' + state.episodeId : '');
+};
 
 function drawShell() {
   const rail = document.getElementById('rail');
   rail.replaceChildren(
     h('a', { class: 'brand', href: '#/overview', 'aria-label': 'Reels Factory 홈', 'data-brand-home': '' }, h('div', { class: 'brand-mark', html: '<svg viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>' }), h('div', null, h('b', null, 'Reels Factory'), h('span', null, 'Studio · Jack & Diane'))),
-    ...NAV.filter((n) => n[4]).flatMap(([key, ko, en]) => [key === 'script' || key === 'settings' ? h('div', { class: 'nav-sep' }) : null, h('a', { class: 'nav-item', href: hrefFor(key), 'aria-current': active(key) ? 'page' : null }, icon(ICON[key] || key), h('span', null, h('span', { class: 'ko' }, ko), h('span', { class: 'en' }, en)))]).filter(Boolean),
+    ...RAIL.flatMap(([key, ko, en]) => [key === 'settings' ? h('div', { class: 'nav-sep' }) : null, h('a', { class: 'nav-item', href: hrefFor(key), 'data-nav': key, 'aria-current': active(key) ? 'page' : null }, icon(ICON[key] || key), h('span', null, h('span', { class: 'ko' }, ko), h('span', { class: 'en' }, en)))]).filter(Boolean),
     h('div', { class: 'rail-foot' }, state.summary ? modePill() : '', authFoot(), state.summary && state.summary.build ? h('div', { class: 'small muted mono', 'data-build': '', title: '지금 실행 중인 코드의 버전 · 커밋 (배포가 최신인지 확인용)' }, `v${state.summary.build.version} · ${state.summary.build.shortSha || '커밋 정보 없음'}`) : null)
   );
   const tabs = document.getElementById('tabbar');
-  tabs.replaceChildren(...TAB_VIEWS.map((k) => { const n = NAV.find((x) => x[0] === k); return h('button', { 'aria-current': active(k) ? 'page' : null, onclick: () => { location.hash = hrefFor(k); } }, icon(ICON[k] || k), n[1].replace(' 스튜디오', '').replace('비디오', '비디오')); }));
+  // phone bottom bar: persistent Home access + the six sidebar items (the sidebar itself is hidden on phones)
+  tabs.replaceChildren(...[['overview', '홈']].concat(RAIL.map(([k, ko]) => [k, ko])).map(([k, ko]) => h('button', { 'aria-current': (k === 'overview' ? state.view === 'overview' : active(k)) ? 'page' : null, 'data-tab-nav': k, onclick: () => { location.hash = hrefFor(k); } }, icon(ICON[k] || k), ko.replace(' 스튜디오', ''))));
 }
 
 function authFoot() {
@@ -97,6 +119,7 @@ export function rerender() {
   stage.replaceChildren();
   try {
     if (state.episode && EP_HEADER_VIEWS.includes(state.view)) { const eh = episodeHeader(state.episode); if (eh) stage.append(eh); }
+    if (state.episode && EPISODE_VIEWS.includes(state.view)) stage.append(episodeFlow(state.view, state.episode));
     stage.append(nav[3](state));
   } catch (e) {
     console.error(e);
@@ -144,9 +167,8 @@ async function route() {
   const { view, id } = parseHash();
   state.view = view;
   if (PRODUCT_VIEWS.includes(view)) {
-    if (id) setProduct(id);
+    if (id) setProduct(id); // only an explicit product in the address opens an editor; the bare route is the catalog
     try { await refresh(); } catch (e) { if (!state.summary) throw e; toast(e.message, { error: true }); }
-    if (!state.productId && state.summary.products && state.summary.products[0]) setProduct(state.summary.products[0].id);
   } else if (id && id !== state.episodeId) {
     state.episodeId = id;
     state.draft = {};

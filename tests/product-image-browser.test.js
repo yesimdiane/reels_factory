@@ -131,17 +131,21 @@ test('a product created without a code can get one from the summary card (no nee
   } finally { await browser.close(); app.close(); }
 });
 
-test('the Product Studio landing list lets a product without a code get one right on its card', { skip, timeout: 60000 }, async () => {
+test('the Product Studio landing is a catalog: a product without a code opens its editor from the card and gets one there', { skip, timeout: 60000 }, async () => {
   const { s, app, browser, base } = await boot();
   try {
     const p = await s.products.create({ name: '랜딩 제품', features: ['f'] });
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
     await page.goto(base + '#/products');
     const card = page.locator(`[data-product-card="${p.id}"]`);
-    await card.locator('[data-summary-code-input]').waitFor();
-    await card.locator('[data-summary-code-input]').fill('lnd');
-    await card.locator('[data-summary-code-save]').click();
-    await page.waitForFunction((id) => ((document.querySelector(`[data-product-card="${id}"] .eyebrow`) || {}).textContent || '').includes('LND'), p.id);
+    await card.waitFor();
+    assert.equal(await card.locator('input').count(), 0, 'catalog cards are compact: no form inputs');
+    await card.click();
+    await page.locator('[data-summary-code-input]').waitFor();
+    assert.equal(await page.evaluate(() => location.hash), '#/products/' + p.id);
+    await page.locator('[data-summary-code-input]').fill('lnd');
+    await page.locator('[data-summary-code-save]').click();
+    await page.waitForFunction((id) => ((document.querySelector('[data-product-summary] .ep-code') || {}).textContent || '').includes('LND'), p.id);
     assert.equal(s.products.get(p.id).code, 'LND');
   } finally { await browser.close(); app.close(); }
 });

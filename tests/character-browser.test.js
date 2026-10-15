@@ -18,7 +18,7 @@ async function boot() {
   return { s, pid, app, browser, base: `http://127.0.0.1:${app.address().port}/` };
 }
 
-test('Story Lab: universe cards, multi-select characters, narrator/guest, remembered after reload, mobile layout', { skip, timeout: 120000 }, async () => {
+test('Story Lab: compact universe dropdown + character chips, multi-select, narrator/guest, remembered after reload, mobile layout', { skip, timeout: 120000 }, async () => {
   const { s, pid, app, browser, base } = await boot();
   try {
     for (const ctx of [{ viewport: { width: 1280, height: 900 } }, { ...pw.devices['iPhone 13'] }]) {
@@ -27,14 +27,30 @@ test('Story Lab: universe cards, multi-select characters, narrator/guest, rememb
       await s.storylab.saveCast(pid, { universeId: 'jackdiane', characterIds: ['jack', 'diane'] });
       await page.goto(base + '#/storylab/' + pid);
       await page.waitForSelector('[data-cast-picker]');
-      assert.equal(await page.locator('[data-universe]').count(), 2, 'two universe cards');
-      assert.equal(await page.locator('[data-character]').count(), 2, 'Jack and Diane');
-      await page.locator('[data-universe="gregory-cats"]').click();
+      const sel = page.locator('select[data-universe-select]');
+      assert.equal(await sel.locator('option').count(), 2, 'one dropdown with the two universes');
+      assert.equal(await page.locator('[data-universe]').count(), 0, 'no large universe cards');
+      assert.equal(await page.locator('[data-character]').count(), 2, 'only Jack and Diane (the selected universe)');
+      assert.equal(await page.locator('[data-cast-count]').getAttribute('data-cast-count'), '2');
+      assert.match(await page.locator('[data-cast-count]').innerText(), /선택 2명/);
+      assert.equal(await page.locator('[data-cast-picker] .cast-char, [data-cast-picker] [data-library-character]').count(), 0, 'no full character profile cards during story creation');
+      assert.equal(await page.getByRole('button', { name: /프로필 편집|캐릭터 추가/ }).count(), 0, 'character editing lives in Settings');
+      assert.match(await page.locator('[data-cast-picker] a[href="#/settings/characters"]').innerText(), /캐릭터 라이브러리/);
+      const h = await page.locator('[data-cast-picker]').evaluate((e) => e.getBoundingClientRect().height);
+      assert.ok(h < (ctx.viewport.width > 600 ? 200 : 330), 'compact: ' + h + 'px');
+      await sel.selectOption('gregory-cats');
       await page.waitForFunction(() => document.querySelectorAll('[data-character]').length === 3);
       assert.deepEqual(s.storylab.castState(pid).characterIds, ['cloud', 'louie', 'lucy']);
       await page.locator('[data-character="louie"]').click();
       await page.waitForFunction(() => ((document.querySelector('[data-character="louie"]') || { getAttribute: () => '' }).getAttribute('aria-pressed')) === 'false');
       assert.deepEqual(s.storylab.castState(pid).characterIds, ['cloud', 'lucy']);
+      assert.match(await page.locator('[data-cast-count]').innerText(), /선택 2명/);
+      // switching away and back keeps the characters chosen inside each universe
+      await sel.selectOption('jackdiane');
+      await page.waitForFunction(() => document.querySelectorAll('[data-character]').length === 2);
+      await sel.selectOption('gregory-cats');
+      await page.waitForFunction(() => document.querySelectorAll('[data-character]').length === 3);
+      assert.deepEqual(s.storylab.castState(pid).characterIds, ['cloud', 'lucy'], 'previous selection restored');
       await page.locator('[data-guest] summary').click();
       await page.locator('[data-narrator]').check();
       await page.waitForFunction(() => !!((document.querySelector('[data-narrator]') || {}).checked));
@@ -42,6 +58,7 @@ test('Story Lab: universe cards, multi-select characters, narrator/guest, rememb
       await page.reload(); await page.waitForSelector('[data-cast-picker]');
       assert.equal(await page.locator('[data-character="cloud"]').getAttribute('aria-pressed'), 'true', 'remembered after reload');
       assert.equal(await page.locator('[data-character="louie"]').getAttribute('aria-pressed'), 'false');
+      assert.equal(await sel.inputValue(), 'gregory-cats');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'no horizontal overflow');
       assert.match(await page.locator('[data-cast-summary]').innerText(), /Gregory Cats · 2명 \+ 내레이터/);
       assert.deepEqual(errors, []);

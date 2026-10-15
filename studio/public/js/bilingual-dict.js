@@ -6,6 +6,7 @@ export const EN = {
   '원본 보기': 'View full image', '참조 변경': 'Change reference', '캐릭터 참조 이미지': 'Character references', '기본 참조로 되돌리기': 'Reset to default reference',
   '연결 테스트': 'Test connection', '음성 목록 가져오기': 'Fetch voices', '연결 해제': 'Disconnect', '키 저장': 'Save key', '기본 목소리로 저장': 'Save as default voice', '미리듣기': 'Preview', '지정 해제': 'Clear voice', '제공자 연결': 'Connect provider', '목소리 변경': 'Change voice', '미리듣기 생성': 'Generate preview', '음성 연결': 'Voice connections',
   // navigation / generic
+  '애니메이션': 'Animation', '보이스': 'Voice', '립싱크': 'Lip Sync', '편집': 'Editing', '영상 제작': 'Video Production', '스토리 랩 목록': 'Story Lab list', '필터 지우기': 'Clear filters', '카탈로그': 'Catalog',
   '대시보드': 'Dashboard', '제품 스튜디오': 'Product Studio', '스토리 랩': 'Story Lab', '에피소드': 'Episodes', '대본 스튜디오': 'Script Studio',
   '스토리보드': 'Image Studio', '이미지 스튜디오': 'Image Studio', '보이스 스튜디오': 'Voice Studio', '립싱크 스튜디오': 'Lip Sync Studio', '립싱크 만들기 (비용 확인)': 'Create lip sync (check cost)', '립싱크 다시 만들기 (비용 확인)': 'Redo lip sync (check cost)', '새로 만들기 (재생성)': 'Regenerate', '설정 저장': 'Save settings', '다음: 보이스 스튜디오': 'Next: Voice Studio', '음악 파일 올리기': 'Upload music', '플레이그라운드에서 확인함': 'Confirmed in playground', '모델 추가': 'Add model', '빼기': 'Remove', '이미지 스튜디오로 이동': 'Go to Image Studio', '제품 스튜디오': 'Product Studio', '스토리 랩': 'Story Lab', '비디오 스튜디오': 'Video Studio', '애니메이션 스튜디오': 'Animation Studio', '보이스': 'Voice', '렌더': 'Render', '최종 검토': 'Final Review', '게시': 'Publishing', '설정': 'Settings',
   '비디오': 'Video', '대본': 'Script', '스튜디오': 'Studio',

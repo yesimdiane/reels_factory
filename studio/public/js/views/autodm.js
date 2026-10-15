@@ -2,7 +2,7 @@
 // ManyChat's public API cannot create/attach/activate comment automations, so nothing here pretends to. "Active"
 // is only reachable by recording evidence of a real end-to-end test.
 import { h, chip, icon, copyText, toast, confirmDialog, modal } from '../ui.js';
-import { state, act, requireEpisode } from '../state.js';
+import { state, act, requireEpisode, selectEpisode } from '../state.js';
 import { api } from '../api.js';
 import { pageHead, pipelineBar, noEpisode, episodePicker, asyncBlock } from './common.js';
 
@@ -12,6 +12,19 @@ const STEPS = [['draft', '초안'], ['setup_required', 'ManyChat 설정'], ['rea
 function statusStrip(c) {
   const idx = c ? STEPS.findIndex((s) => s[0] === c.status) : -1;
   return h('div', { class: 'dm-steps', role: 'list' }, STEPS.map(([k, l], i) => h('div', { role: 'listitem', class: 'dm-step' + (i <= idx ? ' on' : '') + (c && c.status === k ? ' cur' : '') }, h('span', { class: 'ko' }, l))));
+}
+
+/** Auto DM now lives in Settings → AI · 연동 → 자동 DM: the same per-episode campaign editor, with an episode picker (no episode-specific page header). */
+export function autodmPanel() {
+  const ep = requireEpisode();
+  const wrap = h('div', { class: 'stack', style: 'gap:16px', 'data-autodm-panel': '' });
+  const live = (state.summary.episodes || []).filter((e) => !e.archived);
+  wrap.append(h('div', { class: 'row between', style: 'gap:12px;flex-wrap:wrap' },
+    h('div', null, h('h2', { style: 'margin:0' }, '자동 DM (ManyChat)'), h('p', { class: 'small muted', style: 'margin:4px 0 0' }, '인스타그램 댓글 → DM은 ManyChat이 처리합니다. 에피소드별 캠페인 설정을 정리하고 ManyChat 설정을 안내합니다. ManyChat 연결(토큰)은 "API 연결"에서 설정합니다.')),
+    live.length > 1 ? h('select', { 'aria-label': '에피소드 선택', 'data-autodm-episode': '', style: 'width:auto;padding:7px 12px;border-radius:999px', onchange: (e) => selectEpisode(e.target.value) }, live.map((e) => h('option', { value: e.id, selected: ep && e.id === ep.id }, (e.displayId || e.id) + ' · ' + (e.title || '').slice(0, 24)))) : null));
+  if (!ep) { wrap.append(noEpisode()); return wrap; }
+  wrap.append(asyncBlock(() => api.get(`/api/episodes/${ep.id}/dm`), (data) => editor(ep, data)));
+  return wrap;
 }
 
 export function autodm() {
