@@ -1429,7 +1429,21 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
           if (!(Number(usd) >= 0)) throw new StudioError('BAD_VALUE', '가격은 0 이상의 숫자여야 합니다.');
           table[String(sec)] = Number(usd);
         });
-        next.modelEstimates[mid] = { usdByDuration: table, enteredAt: nowIso() };
+        const model = modelById(store.models(), mid);
+        const byResolution = {};
+        Object.entries((e && e.usdByResolution) || {}).forEach(([resolution, values]) => {
+          if (!(model.resolutions || []).includes(resolution)) throw new StudioError('BAD_VALUE', '지원하지 않는 해상도입니다: ' + resolution);
+          if (!values || typeof values !== 'object' || Array.isArray(values)) throw new StudioError('BAD_VALUE', '해상도별 가격표가 올바르지 않습니다.');
+          const prices = {};
+          Object.entries(values).forEach(([sec, usd]) => {
+            if (!(model.durations || []).includes(Number(sec))) throw new StudioError('BAD_VALUE', '지원하지 않는 길이입니다: ' + sec);
+            if (usd === '' || usd === null) return;
+            if (typeof usd === 'boolean' || !Number.isFinite(Number(usd)) || Number(usd) < 0) throw new StudioError('BAD_VALUE', '가격은 0 이상의 숫자여야 합니다.');
+            prices[String(sec)] = Number(usd);
+          });
+          byResolution[resolution] = prices;
+        });
+        next.modelEstimates[mid] = { usdByDuration: table, usdByResolution: byResolution, enteredAt: nowIso() };
       });
     }
     if (patch.voiceUsdPer1kChars !== undefined) next.voiceUsdPer1kChars = patch.voiceUsdPer1kChars === '' || patch.voiceUsdPer1kChars === null ? null : Number(patch.voiceUsdPer1kChars);

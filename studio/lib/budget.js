@@ -37,14 +37,31 @@ function jobKey({ model, prompt, negative, clipSec, aspectRatio, imageSha256 }) 
  * cached(sceneId) → true if a clip with the same job key already exists (free).
  */
 function estimateRun({ ep, scenes, model, settings, cfg, cached = () => false }) {
-  // Operator-entered estimate per clip length, e.g. { usdByDuration: { "5": 0.4, "10": 0.8 } }. Unset → unknown.
-  const table = (settings.modelEstimates && settings.modelEstimates[model.id] && settings.modelEstimates[model.id].usdByDuration) || {};
-  const priceFor = (sec) => (table[String(sec)] != null && table[String(sec)] !== '' && Number.isFinite(Number(table[String(sec)])) ? Number(table[String(sec)]) : null);
+  // Resolution-aware pricing. For models with resolution options, NEVER fall back to
+  // legacy duration-only prices: that could understate the cost of 1080p/4K.
+  const entry = (settings.modelEstimates && settings.modelEstimates[model.id]) || {};
+  const table = entry.usdByDuration || {};
+  const byResolution = entry.usdByResolution || {};
+  const resolutions = model.resolutions || [];
+  const priceFor = (sec, resolution) => {
+    const source = resolutions.length ? (byResolution[resolution] || {}) : table;
+    const value = source[String(sec)];
+    return value !== '' && value != null && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
+  };
+  const sceneResolution = (scene) => {
+    const anim = ep.animation && ep.animation[scene.id];
+    if (model.id === 'seedance-2.5' && anim && anim.seedanceMode === 'draft') return '480p';
+    if (model.id === 'seedance-2.5' && anim && anim.seedanceMode === 'finalize') return '1080p';
+    const selected = anim && anim.resolution;
+    const fallback = model.extraParams && model.extraParams[model.resolutionField || 'resolution'];
+    return selected || (resolutions.includes(fallback) ? fallback : resolutions.length === 1 ? resolutions[0] : null);
+  };
   const items = scenes.map((s) => {
     const clipSec = clipSecFor(model, s.durationSec);
     const isCached = cached(s.id);
-    const price = priceFor(clipSec);
-    return { sceneId: s.id, clipSec, cached: isCached, usd: isCached ? 0 : price != null ? round(price) : null };
+    const resolution = sceneResolution(s);
+    const price = priceFor(clipSec, resolution);
+    return { sceneId: s.id, clipSec, resolution, cached: isCached, usd: isCached ? 0 : price != null ? round(price) : null };
   });
   const billable = items.filter((i) => !i.cached);
   const unknown = billable.some((i) => i.usd == null);
