@@ -48,6 +48,17 @@ function buildBody(model, { prompt, imageUrl, aspectRatio, duration, negativePro
       throw new Error('MuAPI model field contains a UI alias or endpoint, not a confirmed AIR identifier. Verify the exact AIR ID in MuAPI documentation/playground before generating. No generation submitted.');
     }
   }
+  // Seedance 2.5 has two separate, billable steps. Never infer finalization
+  // from a draft response: it requires a fresh, explicit operator decision.
+  if (validateEndpoint(model.endpoint) === 'seedance-2.5-image-to-video') {
+    const draft = body.draft === true;
+    const draftId = body.draft_request_id;
+    if (draftId != null && draftId !== '' && (typeof draftId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(draftId))) throw new Error('Invalid Seedance draft_request_id');
+    if (draft && draftId) throw new Error('Seedance draft and finalize cannot run together');
+    if (draft && body.resolution !== undefined && body.resolution !== '480p') throw new Error('Seedance draft requires 480p');
+    if (draftId && body.resolution !== undefined && body.resolution !== '1080p') throw new Error('Seedance finalization requires 1080p');
+    if (draftId && draft !== false) throw new Error('Seedance finalization must have draft=false');
+  }
   body[model.promptField || 'prompt'] = prompt;
   // The official MuAPI CLI catalog declares the input image shape per exact endpoint.
   // Older saved custom models may still have the default image_url field even when their
@@ -60,9 +71,9 @@ function buildBody(model, { prompt, imageUrl, aspectRatio, duration, negativePro
     : model.imageField || (usesList ? 'images_list' : 'image_url');
   if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.trim()) throw new Error('Approved starting image URL is required before MuAPI submission');
   body[imageField] = usesList ? [imageUrl] : imageUrl;
-  if (aspectRatio != null) body[model.aspectField || 'aspect_ratio'] = aspectRatio;
+  if (aspectRatio != null && !model.omitAspectRatio) body[model.aspectField || 'aspect_ratio'] = aspectRatio;
   if (duration != null) body[model.durationField || 'duration'] = duration;
-  if (negativePrompt) body[model.negativeField || 'negative_prompt'] = negativePrompt;
+  if (negativePrompt && model.supportsNegativePrompt !== false) body[model.negativeField || 'negative_prompt'] = negativePrompt;
   return body;
 }
 

@@ -1281,6 +1281,17 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
         else if (!(model.resolutions || []).includes(String(patch.resolution))) throw new StudioError('BAD_RESOLUTION', '이 모델 설정에 선언된 해상도가 아닙니다.', { status: 422 });
         else cur.resolution = String(patch.resolution);
       }
+      if (patch.seedanceMode !== undefined) {
+        if (model.id !== 'seedance-2.5') throw new StudioError('BAD_MODEL', 'Seedance 모드는 Seedance 2.5 전용입니다.', { status: 422 });
+        if (!['standard', 'draft', 'finalize'].includes(patch.seedanceMode)) throw new StudioError('BAD_MODE', 'standard/draft/finalize 중 선택하세요.', { status: 422 });
+        cur.seedanceMode = patch.seedanceMode;
+        if (patch.seedanceMode !== 'finalize') delete cur.draftRequestId;
+      }
+      if (patch.draftRequestId !== undefined) {
+        if (model.id !== 'seedance-2.5' || cur.seedanceMode !== 'finalize') throw new StudioError('BAD_MODE', 'Seedance finalize 모드에서만 초안 ID를 지정할 수 있습니다.', { status: 422 });
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(String(patch.draftRequestId))) throw new StudioError('BAD_DRAFT_ID', '유효한 초안 request_id가 필요합니다.', { status: 422 });
+        cur.draftRequestId = String(patch.draftRequestId);
+      }
       if (Object.keys(cur).length) ep.animation[sceneId] = Object.assign(cur, { updatedAt: nowIso() }); else delete ep.animation[sceneId];
     });
     store.episodes.audit(id, 'animation.settings', { sceneId, by });

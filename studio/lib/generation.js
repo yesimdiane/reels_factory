@@ -40,9 +40,41 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     return o && Number(o.durationSec) > 0 ? Object.assign({}, scene, { durationSec: Number(o.durationSec) }) : scene;
   }
 
+  // Embed approved dialogue timing as motion guidance for 480p drafts.
+  // This is prompt guidance, NOT an audio track: TTS remains the source of truth.
+  function seedanceTimedPrompt(ep, sceneId, model, basePrompt) {
+    const mode = ep.animation && ep.animation[sceneId] && ep.animation[sceneId].seedanceMode;
+    if (!model || model.id !== 'seedance-2.5' || mode !== 'draft') return basePrompt;
+    const lines = (ep.lines || []).filter(l => l.sceneId === sceneId && (l.en || l.ko));
+    if (!lines.length) return basePrompt;
+    const scene = (ep.scenes || []).find(sc => sc.id === sceneId);
+    const total = Number(scene && scene.durationSec) || 5;
+    const weights = lines.map(l => Math.max(1, String(l.en || l.ko).trim().split(/\\s+/).length));
+    const sum = weights.reduce((a, b) => a + b, 0);
+    let cursor = 0;
+    const timed = lines.map((l, i) => {
+      const end = i === lines.length - 1 ? total : Math.min(total, cursor + total * weights[i] / sum);
+      const row = `[${cursor.toFixed(1)}s–${end.toFixed(1)}s] ${l.speaker || 'Narrator'}: "${String(l.en || l.ko).replace(/"/g, "'")}"`;
+      cursor = end;
+      return row;
+    });
+    return [basePrompt, 'Dialogue timing reference for character gestures and reactions (no generated audio, captions or text):', ...timed, 'Use the dialogue beats to time reactions; keep output silent. Actual approved voice audio is mixed separately.'].join('\\n');
+  }
+
   function resolutionExtra(ep, sceneId, model) {
     const o = ep.animation && ep.animation[sceneId];
-    return o && o.resolution && (model.resolutions || []).includes(o.resolution) ? { [model.resolutionField || 'resolution']: o.resolution } : {};
+    const extra = o && o.resolution && (model.resolutions || []).includes(o.resolution) ? { [model.resolutionField || 'resolution']: o.resolution } : {};
+    if (model.id !== 'seedance-2.5') return extra;
+    const mode = o && o.seedanceMode || 'standard';
+    if (mode === 'draft') return { resolution: '480p', draft: true };
+    if (mode === 'finalize') {
+      const drafts = (ep.generation && ep.generation.jobs || []).filter(j => j.modelId === model.id && j.sceneId === sceneId && j.requestId && j.seedanceMode === 'draft' && j.status === 'completed' && j.updatedAt && Date.now() - Date.parse(j.updatedAt) <= 7 * 86400000 && Date.parse(j.updatedAt) <= Date.now());
+      const requestedId = o && o.draftRequestId;
+      const prior = requestedId ? drafts.find(j => j.requestId === requestedId) : drafts.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+      if (!prior) throw new StudioError('DRAFT_NOT_READY', '7일 이내 완료된 동일 장면의 Seedance 초안이 필요합니다.', { status: 409 });
+      return { resolution: '1080p', draft: false, draft_request_id: prior.requestId };
+    }
+    return { draft: false, ...extra };
   }
 
   function sceneOf(ep, id) {
@@ -129,7 +161,8 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     const p = ep.prompts && ep.prompts[scene.id];
     const img = startImage(ep, scene);
     if (!p || img.error) return '';
-    return jobKey({ model, prompt: composePrompt(ep, scene.id, p.video), negative: p.negative, clipSec: clipSecFor(model, clipTarget(ep, scene).durationSec), aspectRatio: '9:16', imageSha256: img.sha256 });
+    const variant = model.id === 'seedance-2.5' ? JSON.stringify(ep.animation && ep.animation[scene.id] && { mode: ep.animation[scene.id].seedanceMode, draftId: ep.animation[scene.id].draftRequestId, resolution: ep.animation[scene.id].resolution }) : '';
+    return jobKey({ model, prompt: composePrompt(ep, scene.id, p.video) + variant, negative: p.negative, clipSec: clipSecFor(model, clipTarget(ep, scene).durationSec), aspectRatio: '9:16', imageSha256: img.sha256 });
   }
 
   function pickScenes(ep, sceneIds) {
@@ -187,6 +220,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       modelId: est.model.id,
       mode: provider.mode,
       estimatedUsd: est.totalUsd,
+      seedanceConfig: est.scenes.map(id => [id, store.episodes.get(epId).animation && store.episodes.get(epId).animation[id] || null]),
       scriptHash: scriptFingerprint(store.episodes.get(epId)),
       storyboardHash: sceneSetHash(store.episodes.get(epId), est.scenes),
       createdAt: new Date(now()).toISOString(),
@@ -208,6 +242,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     if (!a.sceneIds.includes(sceneId)) throw new StudioError('AUTH_SCENE', `${sceneId}는 이 승인에 포함되지 않았습니다.`, { status: 403 });
     if (a.consumed.includes(sceneId)) throw new StudioError('AUTH_USED', `${sceneId}에 대한 승인은 이미 사용되었습니다. 다시 생성하려면 새로 승인하세요.`, { status: 403 });
     if (a.scriptHash !== scriptFingerprint(ep) || a.storyboardHash !== sceneSetHash(ep, a.sceneIds)) throw new StudioError('AUTH_STALE', '승인 후 대본/이 장면들의 스토리보드가 바뀌었습니다.', { recovery: '다시 승인하세요.', status: 403 });
+    if (a.seedanceConfig && JSON.stringify(a.seedanceConfig) !== JSON.stringify(a.sceneIds.map(id => [id, ep.animation && ep.animation[id] || null]))) throw new StudioError('AUTH_STALE', '승인 후 Seedance 설정이 변경되었습니다. 다시 승인하세요.', { status: 403 });
     if (a.modelId !== model.id) throw new StudioError('AUTH_MODEL', '승인된 모델과 다릅니다.', { status: 403 });
   }
 
@@ -305,9 +340,10 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       const img = startImage(ep0, scene);
       const prompt = ep0.prompts[sceneId];
       const clipSec = clipSecFor(model, clipTarget(ep0, scene).durationSec);
+      const seedanceExtra = resolutionExtra(ep0, sceneId, model); // validate draft provenance BEFORE billable submission
       const key = keyFor(ep0, scene, model);
       const est = estimateRun({ ep: ep0, scenes: [clipTarget(ep0, scene)], model, settings: store.settings.get(), cfg, cached: cachedFor(ep0, model) });
-      job = { id: uid('job'), sceneId, key, modelId: model.id, mode: provider.mode, authorizationId: authId, status: 'preparing', estimatedUsd: est.totalUsd, promptHash: require('./util').sha256(prompt.video), imageSha256: img.sha256 || '', sourceImageLabel: img.label || '', promptRev: prompt.rev || 1, clipSec, aspectRatio: '9:16', requestId: '', error: null, createdAt: nowIso(), updatedAt: nowIso() };
+      job = { id: uid('job'), sceneId, key, modelId: model.id, seedanceMode: model.id === 'seedance-2.5' ? (ep0.animation && ep0.animation[sceneId] && ep0.animation[sceneId].seedanceMode || 'standard') : undefined, mode: provider.mode, authorizationId: authId, status: 'preparing', estimatedUsd: est.totalUsd, promptHash: require('./util').sha256(prompt.video), imageSha256: img.sha256 || '', sourceImageLabel: img.label || '', promptRev: prompt.rev || 1, clipSec, aspectRatio: '9:16', requestId: '', error: null, createdAt: nowIso(), updatedAt: nowIso() };
 
       // 1) Cache hit: reuse, no network, no charge.
       const cachedFile = store.cachePath('clips', key + '.mp4');
@@ -351,7 +387,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       });
       let sub;
       try {
-        sub = await provider.submit({ model, prompt: composePrompt(store.episodes.get(epId), sceneId, prompt.video), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative && model.supportsNegativePrompt !== false ? prompt.negative + SILENT_NEGATIVE : undefined, extra: resolutionExtra(ep0, sceneId, model), silent: true });
+        sub = await provider.submit({ model, prompt: seedanceTimedPrompt(store.episodes.get(epId), sceneId, model, composePrompt(store.episodes.get(epId), sceneId, prompt.video)), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative && model.supportsNegativePrompt !== false ? prompt.negative + SILENT_NEGATIVE : undefined, extra: seedanceExtra, silent: true });
       } catch (e) {
         const definitelyRefused = ['AUTH', 'BAD_REQUEST', 'CREDITS', 'RATE_LIMIT'].includes(e.code);
         await setJob(epId, job.id, { status: definitelyRefused ? 'failed' : 'uncertain', billed: definitelyRefused ? false : null, error: errInfo(e) });

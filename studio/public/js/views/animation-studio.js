@@ -144,6 +144,28 @@ function leftColumn(ep, sc) {
       h('label', { class: 'field' }, h('span', { class: 'small' }, '클립 길이'), h('select', { 'data-anim-duration': sc.id, onchange: (e) => saveSettings({ durationSec: e.target.value === '' ? null : Number(e.target.value) }) }, [h('option', { value: '' }, `자동 (${autoSec}초)`)].concat(durs.map((x) => h('option', { value: x, selected: set.durationSec === x }, `${x}초`))))),
       h('div', { class: 'small', 'data-anim-duration-note': sc.id, style: chosen !== planned ? 'color:var(--clay)' : '' }, chosen === planned ? `장면 ${planned}초 = 클립 ${chosen}초` : `장면 ${planned}초 ≠ 클립 ${chosen}초 — 모델이 고정 길이만 지원하면 길이가 다릅니다. 비디오 스튜디오에서 자르거나 늘려 맞춥니다.`),
       (model.resolutions || []).length ? h('label', { class: 'field' }, h('span', { class: 'small' }, '해상도'), h('select', { 'data-anim-resolution': sc.id, onchange: (e) => saveSettings({ resolution: e.target.value || null }) }, [h('option', { value: '' }, '모델 기본값')].concat(model.resolutions.map((x) => h('option', { value: x, selected: set.resolution === x }, x))))) : h('div', { class: 'small muted' }, '해상도: 이 모델은 선택 가능한 해상도가 선언되어 있지 않습니다 (모델 기본값 사용).'),
+      model.id === 'seedance-2.5' ? h('div', { class: 'card flat stack', style: 'gap:8px', 'data-seedance-workflow': sc.id },
+        h('b', null, 'Seedance 2.5 · 저비용 초안 → 최종 렌더링'),
+        h('label', { class: 'field' }, h('span', { class: 'small' }, '생성 단계'),
+          h('select', { 'data-seedance-mode': sc.id, onchange: (e) => saveSettings({ seedanceMode: e.target.value, resolution: e.target.value === 'draft' ? '480p' : e.target.value === 'finalize' ? '1080p' : null }) },
+            [['standard', '일반 생성 (선택한 해상도)'], ['draft', '① 480p 초안 생성 · 저비용'], ['finalize', '② 마음에 드는 초안 → 1080p 완성']].map(([v, label]) => h('option', { value: v, selected: (set.seedanceMode || 'standard') === v }, label)))),
+        (set.seedanceMode || 'standard') === 'draft'
+          ? h('div', { class: 'small muted' }, '480p로 초안을 생성합니다. 완료 후 오른쪽 영상 플레이어에서 확인하세요. 최종 렌더링은 자동으로 실행되지 않습니다.')
+          : (set.seedanceMode || 'standard') === 'finalize'
+            ? h('div', { class: 'stack', style: 'gap:6px' },
+                h('div', { class: 'small muted' }, '완료된 480p 초안을 선택하면 같은 요청의 프롬프트·이미지·길이·시드를 재사용해 1080p로 완성합니다. 7일 이내 초안만 가능합니다.'),
+                (() => {
+                  const drafts = (ep.generation.jobs || []).filter(j => j.sceneId === sc.id && j.modelId === 'seedance-2.5' && j.seedanceMode === 'draft' && j.status === 'completed' && j.requestId && j.updatedAt && Date.now() - Date.parse(j.updatedAt) <= 7 * 86400000);
+                  const selected = set.draftRequestId || (drafts.length ? drafts.slice().sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0].requestId : '');
+                  return drafts.length
+                    ? h('label', { class: 'field' }, h('span', { class: 'small' }, '완성할 초안'),
+                        h('select', { 'data-seedance-draft-id': sc.id, onchange: (e) => saveSettings({ draftRequestId: e.target.value }) },
+                          drafts.map(j => h('option', { value: j.requestId, selected: j.requestId === selected }, `초안 · ${String(j.updatedAt).slice(0, 16).replace('T', ' ')} · ${j.requestId.slice(0, 12)}…`))))
+                    : h('div', { class: 'issue err' }, '완료된 초안이 없습니다. 먼저 ① 480p 초안을 생성하세요.');
+                })(),
+                h('div', { class: 'small', style: 'color:var(--clay)' }, '1080p 최종 렌더링은 별도 유료 작업입니다. 생성 전 비용 확인과 재승인이 필요합니다.'))
+            : h('div', { class: 'small muted' }, '일반 생성은 초안 없이 바로 렌더링합니다. 비용 절약을 원하면 ① 초안 생성을 선택하세요.'))
+        : null,
       h('div', { class: 'small muted' }, '화면 비율: 9:16 고정 (릴스 세로 영상)'),
       priceFor(model, chosen) != null ? h('div', { class: 'small' }, `내가 입력한 예상 단가: ${fmtUsd(priceFor(model, chosen))} / ${chosen}초 클립`) : h('div', { class: 'small', style: 'color:var(--clay)' }, '예상 단가가 입력되지 않았습니다 (설정 → 비용 한도와 가격 추정). 실제 모드에서는 단가가 없으면 생성이 막힙니다.')),
     checkStatus,
