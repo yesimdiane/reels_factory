@@ -195,9 +195,9 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     const settings = store.settings.get();
     const model = modelById(store.models(), modelId || settings.defaultModelId);
     const scenes = pickScenes(ep, sceneIds);
-    const est = estimateRun({ ep, scenes: scenes.map((x) => clipTarget(ep, x)), model, settings, cfg, cached: cachedFor(ep, model) });
+    const est = estimateRun({ ep, scenes: scenes.map((x) => ({ ...clipTarget(ep, x), id: x.id })), model, settings, cfg, cached: cachedFor(ep, model) });
     const b = blockers(ep, scenes, model);
-    if (provider.mode === 'live' && est.unknown) b.push({ code: 'ESTIMATE_UNKNOWN', message: '이 모델의 클립당 가격 추정치가 없습니다. Muapi는 가격표를 공개하지 않습니다.', recovery: 'Muapi 플레이그라운드의 모델 페이지에 표시된 가격을 Settings → 비용에 입력하세요.' });
+    if (provider.mode === 'live' && est.unknown) b.push({ code: 'ESTIMATE_UNKNOWN', message: '선택한 해상도와 길이의 예상 비용이 없습니다.', recovery: 'Muapi 플레이그라운드의 모델 페이지에 표시된 가격을 Settings → 비용에 입력하세요.' });
     const compat = compatibility(model, scenes.map((x) => clipTarget(ep, x)));
     if (provider.mode === 'live' && !compat.ok) compat.items.filter((i) => !i.ok).forEach((i) => b.push({ code: 'MODEL_INCOMPATIBLE', message: i.message, recovery: '다른 모델을 고르거나 장면 길이를 조정하세요. 유료 호출은 시작하지 않았습니다.' }));
     if (est.withinLimit === false) b.push({ code: 'OVER_LIMIT', message: `예상 비용 $${est.totalUsd}이(가) 릴스 한도 남은 금액 $${est.remainingUsd}을(를) 넘습니다.`, recovery: 'Settings에서 릴스당 한도를 올리거나 장면 수를 줄이세요.' });
@@ -342,7 +342,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       const clipSec = clipSecFor(model, clipTarget(ep0, scene).durationSec);
       const seedanceExtra = resolutionExtra(ep0, sceneId, model); // validate draft provenance BEFORE billable submission
       const key = keyFor(ep0, scene, model);
-      const est = estimateRun({ ep: ep0, scenes: [clipTarget(ep0, scene)], model, settings: store.settings.get(), cfg, cached: cachedFor(ep0, model) });
+      const est = estimateRun({ ep: ep0, scenes: [{ ...clipTarget(ep0, scene), id: scene.id }], model, settings: store.settings.get(), cfg, cached: cachedFor(ep0, model) });
       job = { id: uid('job'), sceneId, key, modelId: model.id, seedanceMode: model.id === 'seedance-2.5' ? (ep0.animation && ep0.animation[sceneId] && ep0.animation[sceneId].seedanceMode || 'standard') : undefined, mode: provider.mode, authorizationId: authId, status: 'preparing', estimatedUsd: est.totalUsd, promptHash: require('./util').sha256(prompt.video), imageSha256: img.sha256 || '', sourceImageLabel: img.label || '', promptRev: prompt.rev || 1, clipSec, aspectRatio: '9:16', requestId: '', error: null, createdAt: nowIso(), updatedAt: nowIso() };
 
       // 1) Cache hit: reuse, no network, no charge.
