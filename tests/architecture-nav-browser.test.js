@@ -34,15 +34,15 @@ test('sidebar shows the studios in workflow order, no Characters entry, no dupli
     await page.goto(`${base}/#/products`);
     await page.waitForSelector('nav a.nav-item, #rail a.nav-item');
     const ko = await page.locator('#rail a.nav-item .ko').allTextContents();
-    assert.deepEqual(ko, ['제품 스튜디오', '스토리 랩', '에피소드', '대본 스튜디오', '이미지 스튜디오', '애니메이션 스튜디오', '비디오 스튜디오', '최종 검토', '게시', '자동 DM', '설정']);
+    assert.deepEqual(ko, ['제품 스튜디오', '스토리 랩', '에피소드', '대본 스튜디오', '이미지 스튜디오', '애니메이션 스튜디오', '보이스 스튜디오', '립싱크 스튜디오', '비디오 스튜디오', '최종 검토', '게시', '자동 DM', '설정']);
     const en = await page.locator('#rail a.nav-item .en').allTextContents();
-    assert.deepEqual(en, ['Product Studio', 'Story Lab', 'Episodes', 'Script Studio', 'Image Studio', 'Animation Studio', 'Video Studio', 'Final Review', 'Publishing', 'Auto DM', 'Settings']);
+    assert.deepEqual(en, ['Product Studio', 'Story Lab', 'Episodes', 'Script Studio', 'Image Studio', 'Animation Studio', 'Voice Studio', 'Lip Sync Studio', 'Video Studio', 'Final Review', 'Publishing', 'Auto DM', 'Settings']);
   });
 });
 
 test('every studio route renders without a console error', { skip, timeout: 180000 }, async () => {
   await withPage(async ({ page, base }) => {
-    for (const v of ['products', 'storylab', 'episodes', 'script', 'image', 'animation', 'render', 'review', 'publishing', 'autodm', 'settings']) {
+    for (const v of ['products', 'storylab', 'episodes', 'script', 'image', 'animation', 'voice', 'lipsync', 'render', 'review', 'publishing', 'autodm', 'settings']) {
       await page.goto(`${base}/#/${v}/${v === 'products' || v === 'storylab' || v === 'episodes' || v === 'settings' ? '' : ID}`);
       await page.waitForSelector('#stage h1, #stage h2');
       assert.equal(await page.locator('#stage .banner.err').count(), 0, v + ' rendered an error banner');

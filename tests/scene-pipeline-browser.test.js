@@ -40,13 +40,12 @@ test('storyboard: notice click → audio panel → generate/listen/approve → c
   try {
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 1600 } })).newPage();
     const errors = []; page.on('pageerror', (e) => errors.push(e.message));
-    await page.goto(`http://127.0.0.1:${app.address().port}/#/storyboard/${ID}`);
-    await page.waitForSelector('[data-render-readiness]');
-    // clicking the notice itself (not only its button) jumps to the audio section of the scene
-    await page.locator('[data-ready-pend="AUDIO_NOT_APPROVED"]').click();
+    // dialogue audio lives in Voice Studio (after the silent animation)
+    await page.goto(`http://127.0.0.1:${app.address().port}/#/voice/${ID}`);
+    await page.waitForSelector('[data-voice-scenes]');
+    await page.locator(`[data-voice-scene="${target}"] summary`).click();
     await page.waitForSelector(`[data-audio-panel="${target}"]`);
     assert.equal(await page.locator(`[data-audio-panel="${target}"]`).isVisible(), true);
-    assert.equal(await page.locator(`[data-step="audio"]`).first().isVisible(), true);
     assert.equal(await page.locator(`[data-audio-approve="${target}"]`).isDisabled(), true, 'no audio yet → cannot approve');
     await page.locator(`[data-audio-generate="${target}"]`).click();
     await page.locator('[role=dialog]').getByRole('button', { name: '생성', exact: true }).click();

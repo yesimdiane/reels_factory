@@ -51,11 +51,9 @@ test('workflow: script → storyboard → images → generate (no clip required)
   const ids = await upToStoryboard(s);
   assert.ok(ids.length >= 7, 'the episode has S1–S7+: ' + ids.join());
   r = R(s);
-  // generation waits for approved audio (the animation follows the approved audio length)
-  assert.ok(s.gen.estimate(ID, { sceneIds: [s.store.episodes.get(ID).lines[0].sceneId] }).blockers.some((b) => b.code === 'AUDIO_NOT_APPROVED'));
-  assert.ok(r.items.filter((i) => i.code === 'AUDIO_NOT_APPROVED').every((i) => i.severity === 'pending' && i.action.panel === 'audio'));
-  await approveAllAudio(s, ID);
-  r = R(s);
+  // the animation is SILENT: generation does not wait for audio (voice, lip sync and SFX come after it)
+  assert.ok(!s.gen.estimate(ID, { sceneIds: [s.store.episodes.get(ID).lines[0].sceneId] }).blockers.some((b) => /AUDIO|SFX|LIPSYNC/.test(b.code)));
+  assert.ok(!r.items.some((i) => i.code === 'AUDIO_NOT_APPROVED' && i.stage === 'generate'));
   assert.equal(r.canGenerateVideo, true, JSON.stringify(open(r, 'generate').map((i) => i.code + ':' + i.message)));
   assert.equal(r.stages.generate.status, 'ready');
   // no clip exists yet: every scene is "waiting for video generation" — neutral pending items, never a red error
