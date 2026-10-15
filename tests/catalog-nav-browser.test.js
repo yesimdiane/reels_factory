@@ -85,6 +85,8 @@ test('sidebar has exactly six items; episode stages, Video Production tabs and S
     for (const [route, key] of Object.entries(activeFor)) {
       await page.goto(`${base}/#/${route}`);
       await page.waitForSelector('#stage h1, #stage h2');
+      // the previous route's heading can still be on screen for a moment: wait for the rail to settle on the expected item
+      await page.waitForFunction((k) => { const a = document.querySelector('#rail a[aria-current=page]'); return a && a.getAttribute('data-nav') === k; }, key, { timeout: 15000 }).catch(() => {});
       assert.equal(await page.locator('#rail a[aria-current=page]').count(), 1, route);
       assert.equal(await page.locator('#rail a[aria-current=page]').getAttribute('data-nav'), key, route);
       assert.equal(await page.locator('#stage .banner.err').count(), 0, route + ' rendered an error');
