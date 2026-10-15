@@ -23,6 +23,39 @@
       "verification": "unverified",
       "docsUrl": "https://muapi.ai/cli",
       "notes": "Endpoint from the official muapi-cli registry (I2V_MODELS['kling-master'] = kling-v2.1-master-i2v). The earlier value 'kling-master' was copied from a text-to-video docs example and is not the image-to-video endpoint. Durations 5/10 s and 9:16 come from the Kling guide. Still unverified until you confirm it in the MuAPI playground or a real job completes. The docs do not list a price."
+    },
+    {
+      "id": "seedance-2.5",
+      "label": "Seedance 2.5 · image-to-video",
+      "provider": "muapi",
+      "endpoint": "seedance-2.5-image-to-video",
+      "mode": "image-to-video",
+      "promptField": "prompt",
+      "imageField": "image_url",
+      "durationField": "duration",
+      "durations": [
+        5
+      ],
+      "aspectRatios": [
+        "9:16"
+      ],
+      "resolutions": [
+        "720p"
+      ],
+      "resolutionField": "resolution",
+      "extraParams": {
+        "resolution": "720p",
+        "seed": 42,
+        "high_bitrate": false,
+        "draft": false,
+        "draft_request_id": ""
+      },
+      "omitAspectRatio": true,
+      "supportsNegativePrompt": false,
+      "lipSync": false,
+      "verification": "unverified",
+      "docsUrl": "https://muapi.ai/playground/seedance-2.5-image-to-video/api",
+      "notes": "Endpoint and fields from operator-supplied MuAPI curl example. Duration 5 and 720p are demonstrated values, not confirmed full supported ranges. No model field. Cost unknown; explicit estimate and approval required before LIVE generation."
     }
   ]
 }
