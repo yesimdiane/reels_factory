@@ -121,3 +121,29 @@ test('upload enforces the 10 MB image limit before sending', async () => {
   await assert.rejects(p.uploadImage(f), (e) => e.code === 'BAD_REQUEST');
   assert.equal(n, 0);
 });
+
+test('Seedance image-to-video sends images_list even for stale saved image_url model settings', async () => {
+  const calls = [];
+  const p = mk(async (url, init) => { calls.push({ url, body: JSON.parse(init.body) }); return res(200, { request_id: 'seedance-job', status: 'queued' }); });
+  const selected = { endpoint: 'seedance-2-image-to-video', imageField: 'image_url', imageAsList: false };
+  const result = await p.submit({ model: selected, prompt: 'silent movement', imageUrl: 'https://cdn.example/approved.png', duration: 5 });
+  assert.equal(result.requestId, 'seedance-job');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].body.images_list, ['https://cdn.example/approved.png']);
+  assert.equal(Object.hasOwn(calls[0].body, 'image_url'), false);
+});
+
+test('MuAPI catalog preserves string image_url for Kling endpoints', async () => {
+  let sent;
+  const p = mk(async (_url, init) => { sent = JSON.parse(init.body); return res(200, { request_id: 'kling-job' }); });
+  await p.submit({ model: { endpoint: 'kling-v2.1-master-i2v', imageAsList: true, imageField: 'images_list' }, prompt: 'motion', imageUrl: 'https://cdn.example/frame.png', duration: 5 });
+  assert.equal(sent.image_url, 'https://cdn.example/frame.png');
+  assert.equal(Object.hasOwn(sent, 'images_list'), false);
+});
+
+test('MuAPI rejects missing approved starting image before any paid submit', async () => {
+  let calls = 0;
+  const p = mk(async () => { calls++; return res(200, { request_id: 'unexpected' }); });
+  await assert.rejects(p.submit({ model: { endpoint: 'seedance-2-image-to-video' }, prompt: 'test', imageUrl: '' }), /starting image URL/);
+  assert.equal(calls, 0);
+});
