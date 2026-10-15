@@ -182,7 +182,7 @@ function parts() {
             placeholder: '미확인', value: f.prices[m.id][String(d)],
             style: 'width:100%;min-width:0;max-width:100%',
             oninput: (e) => (f.prices[m.id][String(d)] = e.target.value) })))
-        : [h('span', { class: 'small muted' }, '지원 길이가 등록되지 않았습니다.')]))]));
+        : [h('span', { class: 'small muted' }, '지원 길이가 등록되지 않았습니다.')])]));
   });
   sec.costs.append(h('div', { class: 'stack', style: 'gap:14px', 'data-pricing-settings': '' },
     h('div', { class: 'card stack', style: 'gap:12px' },
