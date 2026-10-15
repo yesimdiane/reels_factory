@@ -27,6 +27,9 @@ const AUTH_TTL_MS = 30 * 60 * 1000;
 const ACTIVE = new Set(['preparing', 'submitting', 'processing']);
 const RECOVERABLE = new Set(['processing', 'polling_interrupted', 'download_failed']);
 
+// The animation is SILENT: speech and talking mouths are added later (Voice Studio, Lip Sync Studio), never generated here.
+const SILENT_NEGATIVE = ', speech, talking, mouth moving as if speaking, lip movement, dialogue, singing, subtitles, captions, text overlay';
+
 function createGenerationService({ store, provider, cfg, now = () => Date.now(), log = () => {}, composePrompt = (ep, sid, text) => text, charRefs = null, audioGate = null, extraBlockers = null, brollSource = null }) {
   const running = new Set();
   const lib = () => store.characters.load();
@@ -348,7 +351,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       });
       let sub;
       try {
-        sub = await provider.submit({ model, prompt: composePrompt(store.episodes.get(epId), sceneId, prompt.video), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative && model.supportsNegativePrompt !== false ? prompt.negative : undefined, extra: resolutionExtra(ep0, sceneId, model) });
+        sub = await provider.submit({ model, prompt: composePrompt(store.episodes.get(epId), sceneId, prompt.video), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative && model.supportsNegativePrompt !== false ? prompt.negative + SILENT_NEGATIVE : undefined, extra: resolutionExtra(ep0, sceneId, model), silent: true });
       } catch (e) {
         const definitelyRefused = ['AUTH', 'BAD_REQUEST', 'CREDITS', 'RATE_LIMIT'].includes(e.code);
         await setJob(epId, job.id, { status: definitelyRefused ? 'failed' : 'uncertain', billed: definitelyRefused ? false : null, error: errInfo(e) });

@@ -39,7 +39,7 @@ export function modeBanner(summary) {
 
 /** Production sub-navigation: Animation Studio (clips) → Voice → Video Studio (assembly). */
 export function videoTabs(active) {
-  const tabs = [['animation', '애니메이션 스튜디오'], ['voice', '보이스'], ['render', '비디오 스튜디오']];
+  const tabs = [['animation', '1. 애니메이션'], ['voice', '2. 보이스'], ['lipsync', '3. 립싱크'], ['render', '4. 비디오']]; // production order after the images
   return h('div', { class: 'seg', role: 'tablist', 'aria-label': '영상 제작 단계' }, tabs.map(([k, label]) => h('button', { role: 'tab', 'aria-pressed': active === k ? 'true' : 'false', onclick: () => { location.hash = '#/' + k + (state.episodeId ? '/' + state.episodeId : ''); } }, label)));
 }
 

@@ -35,19 +35,18 @@ const authorize = (s, sceneIds) => { const est = s.gen.estimate(ID, { sceneIds }
 async function clipFor(s, sid) { const a = await authorize(s, [sid]); await (await s.gen.run(ID, a.id)).done; const v = s.store.episodes.get(ID).clips[sid].versions.slice(-1)[0]; await s.gen.review(ID, sid, v.v, 'approve'); return v; }
 const withLines = (s) => { const ep = s.store.episodes.get(ID); return ep.scenes.map((x) => x.id).filter((sid) => ep.lines.some((l) => l.sceneId === sid)); };
 
-test('audio: per-scene generation, approval, stale detection, revoke; video generation waits for approved audio', { skip, timeout: 240000 }, async () => {
+test('audio: per-scene generation, approval, stale detection, revoke; the silent animation does NOT wait for audio', { skip, timeout: 240000 }, async () => {
   const { s } = make();
   const ids = await upToStoryboard(s);
   const talk = withLines(s);
   assert.ok(talk.length >= 2, 'the demo episode has dialogue');
   const sid = talk[0], other = talk[1];
-  // before any audio: the scene is blocked (pending, neutral) with a precise message and a way to the audio panel
+  // before any audio: the silent animation is NOT blocked (voice, lip sync and SFX come after it)
   let est = s.gen.estimate(ID, { sceneIds: [sid] });
-  assert.equal(est.canAuthorize, false);
-  assert.deepEqual(est.blockers.map((b) => b.code).filter((c) => c !== 'SFX_NOT_DECIDED' && c !== 'LIPSYNC_NOT_CHOSEN'), ['AUDIO_NOT_APPROVED']); // the SFX / lip-sync decisions are separate gates (animation-gates.test.js)
+  assert.equal(est.canAuthorize, true, JSON.stringify(est.blockers));
+  assert.ok(!est.blockers.some((b) => /AUDIO|SFX|LIPSYNC/.test(b.code)));
   const rd = s.renderReadiness.check(s.store.episodes.get(ID));
-  const item = rd.items.find((i) => i.code === 'AUDIO_NOT_APPROVED' && i.sceneId === sid);
-  assert.equal(item.severity, 'pending'); assert.equal(item.cat, 'audio'); assert.deepEqual([item.action.view, item.action.panel, item.action.sceneId], ['storyboard', 'audio', sid]);
+  assert.ok(!rd.items.some((i) => i.code === 'AUDIO_NOT_APPROVED' && i.stage === 'generate'));
   // a scene without dialogue never needs audio approval
   const silent = ids.find((x) => !talk.includes(x));
   if (silent) assert.equal(s.sceneFlow.audioState(s.store.episodes.get(ID), silent).state, 'silent');
@@ -60,18 +59,16 @@ test('audio: per-scene generation, approval, stale detection, revoke; video gene
   await assert.rejects(s.sceneFlow.approveAudio(ID, other), (e) => e.code === 'AUDIO_INCOMPLETE');
   await s.sceneFlow.approveAudio(ID, sid);
   assert.equal(s.sceneFlow.audioState(s.store.episodes.get(ID), sid).state, 'approved');
-  await decideAllGates(s, ID);
   est = s.gen.estimate(ID, { sceneIds: [sid] });
   assert.equal(est.canAuthorize, true, JSON.stringify(est.blockers));
-  // revoke → blocked again, audio files are kept
+  // revoke → back to "waiting for approval", audio files are kept; the animation gate is unaffected
   await s.sceneFlow.revokeAudio(ID, sid);
   assert.equal(s.sceneFlow.audioState(s.store.episodes.get(ID), sid).state, 'unapproved');
-  assert.equal(s.gen.estimate(ID, { sceneIds: [sid] }).canAuthorize, false);
+  assert.equal(s.gen.estimate(ID, { sceneIds: [sid] }).canAuthorize, true);
   await s.sceneFlow.approveAudio(ID, sid);
   // editing a line after approval → stale, never silently approved
   await s.store.episodes.update(ID, (e) => { const l = e.lines.find((x) => x.sceneId === sid); l.en += ' really'; });
   assert.equal(s.sceneFlow.audioState(s.store.episodes.get(ID), sid).state, 'none', 'changed text has no valid audio yet');
-  assert.equal(s.gen.estimate(ID, { sceneIds: [sid] }).canAuthorize, false);
 });
 
 test('clip approval can be revoked without deleting the clip', { skip, timeout: 240000 }, async () => {
@@ -127,7 +124,7 @@ test('scene composite, sound effects, scene final approval, stale detection and 
   const v = s.store.episodes.get(ID).clips[a].approvedVersion;
   await s.gen.review(ID, a, v, 'unapprove');
   st = s.sceneFlow.sceneState(s.store.episodes.get(ID), a);
-  assert.equal(st.state, 'stale'); assert.ok(st.changed.includes('영상 클립') || st.missing.includes('영상 클립'));
+  assert.equal(st.state, 'stale'); assert.ok(st.changed.includes('무음 애니메이션') || st.missing.includes('무음 애니메이션'));
   assert.equal(s.renderer.plan(ID).canRender, false);
 });
 
@@ -138,7 +135,7 @@ test('readiness: every pending/blocking item is clickable (has an action to the 
   const open = rd.items.filter((i) => i.severity === 'pending' || i.severity === 'block');
   assert.ok(open.length > 0);
   assert.deepEqual(open.filter((i) => !i.action).map((i) => i.code), [], 'no unclickable notice');
-  assert.ok(open.filter((i) => i.sceneId).every((i) => (i.action.view === 'storyboard' || (i.action.view === 'animation' && /^(CLIP_|SFX_NOT_DECIDED|LIPSYNC_NOT_CHOSEN)/.test(i.code))) && i.action.sceneId === i.sceneId));
+  assert.ok(open.filter((i) => i.sceneId).every((i) => (i.action.view === 'storyboard' || (i.action.view === 'animation' && /^CLIP_/.test(i.code)) || (i.action.view === 'voice' && /AUDIO/.test(i.code)) || (i.action.view === 'lipsync' && i.code === 'LIPSYNC_NOT_APPROVED')) && i.action.sceneId === i.sceneId));
   const nostory = open.find((i) => i.code === 'STORYBOARD_NOT_APPROVED');
   assert.equal(nostory.action.view, 'storyboard');
   await s.revokeStoryboard(ID);

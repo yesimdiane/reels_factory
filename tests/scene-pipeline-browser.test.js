@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { approveWithScenes } = require('./helpers/approve');
-const { approveAllAudio, approveAllScenes, decideAllGates } = require('./helpers/scene-flow');
+const { approveAllAudio, approveAllScenes, approveAllLipsync, decideAllGates } = require('./helpers/scene-flow');
 const { png } = require('./helpers/v23');
 const { loadConfig } = require('../renderer/lib/config');
 const { createStudio } = require('../studio/lib/studio');
@@ -40,13 +40,12 @@ test('storyboard: notice click → audio panel → generate/listen/approve → c
   try {
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 1600 } })).newPage();
     const errors = []; page.on('pageerror', (e) => errors.push(e.message));
-    await page.goto(`http://127.0.0.1:${app.address().port}/#/storyboard/${ID}`);
-    await page.waitForSelector('[data-render-readiness]');
-    // clicking the notice itself (not only its button) jumps to the audio section of the scene
-    await page.locator('[data-ready-pend="AUDIO_NOT_APPROVED"]').click();
+    // dialogue audio lives in Voice Studio (after the silent animation)
+    await page.goto(`http://127.0.0.1:${app.address().port}/#/voice/${ID}`);
+    await page.waitForSelector('[data-voice-scenes]');
+    await page.locator(`[data-voice-scene="${target}"] summary`).click();
     await page.waitForSelector(`[data-audio-panel="${target}"]`);
     assert.equal(await page.locator(`[data-audio-panel="${target}"]`).isVisible(), true);
-    assert.equal(await page.locator(`[data-step="audio"]`).first().isVisible(), true);
     assert.equal(await page.locator(`[data-audio-approve="${target}"]`).isDisabled(), true, 'no audio yet → cannot approve');
     await page.locator(`[data-audio-generate="${target}"]`).click();
     await page.locator('[role=dialog]').getByRole('button', { name: '생성', exact: true }).click();
@@ -69,7 +68,8 @@ test('storyboard: notice click → audio panel → generate/listen/approve → c
     const a = await s.gen.authorize(ID, { sceneIds: [target], confirmUsd: est.totalUsd, confirmUnknown: est.totalUsd == null });
     await (await s.gen.run(ID, a.id)).done;
     await s.gen.review(ID, target, 1, 'approve');
-    await page.reload();
+    await approveAllLipsync(s, ID); // dialogue scenes are assembled from their approved lip-synced video
+    await page.goto(`http://127.0.0.1:${app.address().port}/#/image/${ID}`);
     await page.waitForSelector('[data-sb-tab]');
     await page.locator(`[data-sb-tab="${target}"]`).click();
     await page.waitForSelector(`[data-sb-stepper="${target}"]`);

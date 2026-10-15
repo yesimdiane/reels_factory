@@ -13,11 +13,11 @@ const { isGeneric } = require('./animdraft');
 
 const CATS = [
   ['script', '승인된 대본'], ['storyboard', '승인된 스토리보드'], ['images', '장면 이미지 (시작 프레임)'], ['animation', '애니메이션 타임라인'], ['prompt', '영상 생성 프롬프트'],
-  ['references', '캐릭터 참조 이미지'], ['provider', '렌더링 제공자'], ['assets', '파일 경로 · 권한'], ['audio', '오디오 확인 · 승인'], ['clips', '영상 클립'], ['scenes', '씬 합본 · 최종 승인'],
+  ['references', '캐릭터 참조 이미지'], ['provider', '렌더링 제공자'], ['assets', '파일 경로 · 권한'], ['audio', '오디오 확인 · 승인'], ['lipsync', '립싱크 영상'], ['clips', '영상 클립'], ['scenes', '씬 합본 · 최종 승인'],
 ];
 /** generation-gate codes that are ordinary unfinished steps rather than errors */
-const PENDING_CODES = new Set(['STORYBOARD_NOT_APPROVED', 'STORYBOARD_SCENE_CHANGED', 'STORYBOARD_CHANGED', 'NO_PROMPT', 'NO_START_IMAGE', 'START_IMAGE_NOT_APPROVED', 'SCRIPT_NOT_APPROVED', 'AUDIO_NOT_APPROVED', 'SFX_NOT_DECIDED', 'LIPSYNC_NOT_CHOSEN']);
-const CAT_OF = { SCRIPT_NOT_APPROVED: 'script', STORYBOARD_NOT_APPROVED: 'storyboard', STORYBOARD_SCENE_CHANGED: 'storyboard', STORYBOARD_CHANGED: 'storyboard', NO_PROMPT: 'prompt', NO_START_IMAGE: 'images', START_IMAGE_NOT_APPROVED: 'images', SHEET_AS_START_FRAME: 'images', PLACEHOLDER_IMAGE: 'images', AUDIO_NOT_APPROVED: 'audio', SFX_NOT_DECIDED: 'audio', LIPSYNC_NOT_CHOSEN: 'audio', MODEL_UNVERIFIED: 'provider' };
+const PENDING_CODES = new Set(['STORYBOARD_NOT_APPROVED', 'STORYBOARD_SCENE_CHANGED', 'STORYBOARD_CHANGED', 'NO_PROMPT', 'NO_START_IMAGE', 'START_IMAGE_NOT_APPROVED', 'SCRIPT_NOT_APPROVED', 'AUDIO_NOT_APPROVED', 'LIPSYNC_NOT_APPROVED']);
+const CAT_OF = { SCRIPT_NOT_APPROVED: 'script', STORYBOARD_NOT_APPROVED: 'storyboard', STORYBOARD_SCENE_CHANGED: 'storyboard', STORYBOARD_CHANGED: 'storyboard', NO_PROMPT: 'prompt', NO_START_IMAGE: 'images', START_IMAGE_NOT_APPROVED: 'images', SHEET_AS_START_FRAME: 'images', PLACEHOLDER_IMAGE: 'images', AUDIO_NOT_APPROVED: 'audio', LIPSYNC_NOT_APPROVED: 'lipsync', MODEL_UNVERIFIED: 'provider' };
 
 function createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer, providerMode, getModel }) {
   const readable = (f) => { try { fs.accessSync(f, fs.constants.R_OK); return true; } catch (_) { return false; } };
@@ -95,14 +95,16 @@ function createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer, 
     plan.problems.forEach((p) => {
       if (p.code === 'SCRIPT_NOT_APPROVED' || p.code === 'CLIP_NOT_APPROVED') return; // covered above, with the exact state per scene
       const sid = (/^([A-Z]+\d+):/.exec(p.message) || [])[1] || '';
-      const pending = p.code === 'NO_AUDIO' || p.code === 'CUTS_NOT_APPROVED' || p.code === 'SCENE_NOT_APPROVED';
-      add(p.code === 'NO_AUDIO' ? 'audio' : p.code === 'SCENE_NOT_APPROVED' ? 'scenes' : pending || /^CLIP|^CUTS|^BROLL/.test(p.code) ? 'clips' : 'assets', pending ? 'pending' : 'block', p.code, p.message, p.recovery || '', p.sceneId || sid, 'render');
+      const pending = p.code === 'NO_AUDIO' || p.code === 'CUTS_NOT_APPROVED' || p.code === 'SCENE_NOT_APPROVED' || p.code === 'LIPSYNC_NOT_APPROVED';
+      add(p.code === 'NO_AUDIO' ? 'audio' : p.code === 'LIPSYNC_NOT_APPROVED' ? 'lipsync' : p.code === 'SCENE_NOT_APPROVED' ? 'scenes' : pending || /^CLIP|^CUTS|^BROLL/.test(p.code) ? 'clips' : 'assets', pending ? 'pending' : 'block', p.code, p.message, p.recovery || '', p.sceneId || sid, 'render');
     });
 
     // where to go: every finding points at the scene and the collapsible Storyboard section where it is fixed
     const PANEL = { CLIP_NOT_GENERATED: 'clips', CLIP_AWAITING_APPROVAL: 'clips', CLIP_APPROVAL_BROKEN: 'clips', CLIP_MISSING: 'clips', CLIP_CHECKSUM: 'clips', CUTS_NOT_APPROVED: 'cuts', BROLL_IMAGE_MISSING: 'cuts', CLIP_STALE_IMAGE: 'clips', NO_ANIMATION: 'motion', INVALID_ANIMATION: 'motion', ANIMATION_GENERIC: 'motion', ANIMATION_SHORT: 'motion', NO_PROMPT: 'prompt', PROMPT_TOO_SHORT: 'prompt', AUDIO_NOT_APPROVED: 'audio', NO_AUDIO: 'audio', SCENE_NOT_APPROVED: 'compose' };
     items.forEach((i) => {
-      if (i.sceneId && (/^CLIP_/.test(i.code) || ['SFX_NOT_DECIDED', 'LIPSYNC_NOT_CHOSEN'].includes(i.code))) i.action = { view: 'animation', sceneId: i.sceneId, label: '애니메이션 스튜디오로 이동' };
+      if (i.sceneId && /^CLIP_/.test(i.code)) i.action = { view: 'animation', sceneId: i.sceneId, label: '애니메이션 스튜디오로 이동' };
+      else if (['AUDIO_NOT_APPROVED', 'NO_AUDIO'].includes(i.code)) i.action = { view: 'voice', sceneId: i.sceneId || '', label: '보이스 스튜디오로 이동' };
+      else if (i.code === 'LIPSYNC_NOT_APPROVED') i.action = { view: 'lipsync', sceneId: i.sceneId || '', label: '립싱크 스튜디오로 이동' };
       else if (i.sceneId) i.action = { view: 'storyboard', sceneId: i.sceneId, panel: PANEL[i.code] || (/^CHARACTER_REF/.test(i.code) ? 'charrefs' : ''), label: '이 장면으로 이동' };
       else if (i.cat === 'script') i.action = { view: 'script', label: '대본으로 이동' };
       else if (i.cat === 'storyboard') i.action = { view: 'storyboard', sceneId: (storyboardApprovalStatus(ep).changedScenes || [])[0] || '', panel: '', label: 'Storyboard로 이동' };

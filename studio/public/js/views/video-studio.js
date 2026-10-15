@@ -10,7 +10,7 @@ export const STEP = 0.3; // UI grid: 0.3 s
 const snap = (n) => Math.round(Math.round(Number(n) / STEP) * STEP * 100) / 100;
 const r2 = (n) => Math.round(n * 100) / 100;
 const PX = 36; // px per second on the timeline
-const ui = () => (state.ui = state.ui || {});
+const ui = () => { state.ui = state.ui || { open: {} }; state.ui.open = state.ui.open || {}; return state.ui; };
 
 export const VIDEO_TABS = [['review', '장면 검토'], ['timeline', '타임라인'], ['subtitles', '자막'], ['sound', '사운드'], ['final', '최종 렌더']];
 export const videoTab = (ep) => (ui().videoTab && ui().videoTab[ep.id]) || 'review';
@@ -27,12 +27,15 @@ export function reviewTab(ep) {
     const src = fin.composite ? fin.composite.url : clip ? clip.url : '';
     return h('article', { class: 'card stack', style: 'gap:8px', 'data-vs-scene': sc.id, 'data-vs-state': fin.state },
       h('div', { class: 'row between' }, h('b', null, `${sc.id} · ${sc.title_ko || sc.title || ''}`), chip(lab, kind)),
+      h('div', { class: 'small', 'data-vs-source': sc.id }, (() => { const ls = ep.lipsync && ep.lipsync.scenes[sc.id]; if (ls && ls.dialogue) return ls.state === 'approved' ? '사용 영상: 승인된 립싱크 영상 (음성은 최종 믹스에서 한 번만 사용)' : fin.state === 'approved' ? '사용 영상: 이전 방식으로 승인된 장면 (애니메이션 + 음성 합성)' : '사용 영상: 립싱크 승인 대기'; return '사용 영상: 승인된 무음 애니메이션 (대사 없음)'; })()),
       src ? h('video', { src, controls: true, preload: 'metadata', playsinline: true, style: 'max-width:200px;border-radius:8px;align-self:center' }) : h('div', { class: 'empty small' }, '승인된 클립이 아직 없습니다.'),
       h('div', { class: 'small muted' }, fin.composite ? '씬 합본 (클립 + 오디오 + 컷 + 효과음)' : clip ? '승인된 클립 (합본 전)' : ''),
       fin.missing && fin.missing.length ? h('div', { class: 'small', style: 'color:var(--clay)' }, '필요: ' + fin.missing.join(', ')) : null,
       fin.state === 'stale' ? h('div', { class: 'issue err' }, `승인 후 바뀐 부분: ${(fin.changed || []).join(', ') || '내용'}`) : null,
       h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
-        h('button', { class: 'btn sm ghost', type: 'button', onclick: () => { state.ui = state.ui || {}; goToScenePanel(ep, sc.id, 'clips'); } }, '애니메이션 스튜디오에서 열기'),
+        h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'clips') }, '애니메이션'),
+        h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'audio') }, '보이스'),
+        h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'lipsync') }, '립싱크'),
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'compose') }, '합본·승인 열기')));
   }));
 }
@@ -62,7 +65,14 @@ export function timelineTab(ep, rerender) {
   const lanes = h('div', { class: 'stack', style: 'gap:6px;min-width:max-content', 'data-vs-timeline': '' }, ruler,
     track('장면', total, scenes, pick, sel), track('음성', total, voice, pick, sel), track('효과음', total, sfx, pick, sel), track('B-roll', total, broll, pick, sel), track('자막', total, subs, pick, sel),
     h('div', { class: 'row', style: 'gap:8px;align-items:center' }, h('div', { class: 'small', style: 'width:64px;flex:none' }, '음악'), h('div', { class: 'small muted', 'data-vs-music': '' }, '배경음악 트랙 없음 — 이 버전은 음악 파일을 만들거나 가져오지 않습니다.')));
+  const tr = ep.videoEdit.transition;
+  const putTr = (patch) => act(() => api.put(`/api/episodes/${ep.id}/video-edit/transition`, patch), { ok: '전환을 저장했습니다' });
+  const transition = h('div', { class: 'card flat row', style: 'gap:10px;flex-wrap:wrap;align-items:flex-end', 'data-vs-transition': '' }, h('b', { class: 'small' }, '장면 전환'),
+    h('div', { class: 'seg' }, [['cut', '컷'], ['dip', '암전 디졸브']].map(([k, l]) => h('button', { type: 'button', 'data-vs-transition-type': k, 'aria-pressed': String(tr.type === k), onclick: () => putTr({ type: k }) }, l))),
+    numField('길이 (초)', tr.durationSec, { step: 0.1, min: 0.1, max: 0.9, 'data-vs-transition-sec': '' }, (v) => putTr({ durationSec: v })),
+    h('span', { class: 'small muted' }, '화면만 어두워졌다 밝아지며 전체 길이와 음성 타이밍은 바뀌지 않습니다.'));
   return h('div', { class: 'stack', style: 'gap:12px' },
+    transition,
     h('div', { class: 'small muted' }, `총 ${fmtSec(total)} · 편집 단위 ${STEP}초. 승인된 대사 오디오의 타이밍은 여기서 바꾸지 않습니다 (대사를 고치려면 대본·음성 단계로).`),
     h('div', { style: 'overflow-x:auto;padding-bottom:6px' }, lanes),
     selectedEditor(ep, tl, sel, rerender));
@@ -159,23 +169,44 @@ export function soundTab(ep, rerender) {
         numField('음성 볼륨 (dB)', mix.voiceDb, { step: 1, min: -18, max: 12, 'data-vs-mix-voice': '' }, (v) => putMix({ voiceDb: v })),
         numField('효과음 전체 볼륨 (dB)', mix.sfxDb, { step: 1, min: -18, max: 12, 'data-vs-mix-sfx': '' }, (v) => putMix({ sfxDb: v }))),
       h('div', { class: 'small muted' }, '최종 믹스는 마지막에 loudnorm(-16 LUFS)으로 정리됩니다. 씬 합본(미리보기)에는 이 전체 볼륨이 적용되지 않습니다. 승인된 음성의 길이·위치는 바뀌지 않습니다.')),
-    h('div', { class: 'card stack', style: 'gap:8px' }, h('b', null, '효과음 배치'),
+    musicCard(ep),
+    h('div', { class: 'card stack', style: 'gap:8px' }, h('b', null, '효과음 배치 (선택 — 애니메이션 전에는 필요하지 않습니다)'),
       list.length ? list.map((x) => h('div', { class: 'row between', style: 'gap:8px;flex-wrap:wrap', 'data-vs-sfx-row': x.id }, h('span', null, `${x.sceneId} · ${x.label} · ${x.offsetSec}s · ${x.gainDb}dB` + (x.fadeInSec || x.fadeOutSec ? ` · 페이드 ${x.fadeInSec || 0}/${x.fadeOutSec || 0}s` : '')),
         h('div', { class: 'row', style: 'gap:6px' }, h('audio', { controls: true, preload: 'none', src: `/media/sfx/${ep.id}/${x.id}`, style: 'height:30px' }),
           h('button', { class: 'btn sm ghost', type: 'button', onclick: () => { ui().vsSel = 'sfx:' + x.id; setVideoTab(ep, 'timeline', rerender); } }, '타임라인에서 편집'))))
         : h('div', { class: 'small muted' }, '효과음이 없습니다. 애니메이션 스튜디오의 효과음 단계에서 추가하세요.')));
 }
 
+function musicCard(ep) {
+  const m = ep.videoEdit.music;
+  const put = (patch) => act(() => api.put(`/api/episodes/${ep.id}/video-edit/music`, patch), { ok: '음악 설정을 저장했습니다' });
+  const input = h('input', { type: 'file', accept: 'audio/*', style: 'display:none', 'data-vs-music-file': '', onchange: async (e) => { const f = e.target.files[0]; if (f) await act(() => api.upload(`/api/episodes/${ep.id}/video-edit/music`, f), { ok: '배경음악을 올렸습니다' }); e.target.value = ''; } });
+  return h('div', { class: 'card stack', style: 'gap:8px', 'data-vs-music-card': '' }, h('b', null, '배경음악 (직접 올린 파일 · 자동 생성 없음)'),
+    input,
+    m ? h('div', { class: 'stack', style: 'gap:8px' }, h('div', { class: 'small', 'data-vs-music-name': '' }, `${m.name} · ${m.durationSec || '?'}초`),
+      h('audio', { controls: true, preload: 'none', src: `/media/music/${ep.id}`, style: 'height:32px' }),
+      h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' },
+        numField('볼륨 (dB)', m.volumeDb, { step: 1, min: -40, max: 0, 'data-vs-music-vol': '' }, (v) => put({ volumeDb: v })),
+        numField('시작 (초)', m.offsetSec, { step: STEP, min: 0, 'data-vs-music-offset': '' }, (v) => put({ offsetSec: snap(v) })),
+        numField('페이드 인 (초)', m.fadeInSec, { step: 0.5, min: 0, max: 5, 'data-vs-music-fadein': '' }, (v) => put({ fadeInSec: v })),
+        numField('페이드 아웃 (초)', m.fadeOutSec, { step: 0.5, min: 0, max: 5, 'data-vs-music-fadeout': '' }, (v) => put({ fadeOutSec: v }))),
+      h('div', { class: 'row', style: 'gap:6px' }, h('button', { class: 'btn sm ghost', type: 'button', onclick: () => input.click() }, '다른 파일로 바꾸기'), h('button', { class: 'btn sm danger', type: 'button', 'data-vs-music-remove': '', onclick: () => act(() => api.del(`/api/episodes/${ep.id}/video-edit/music`), { ok: '배경음악을 뺐습니다' }) }, '빼기')),
+      h('div', { class: 'small muted' }, '음악은 대사 아래에서 낮은 볼륨으로 깔리며 반복되지 않습니다(영상보다 짧으면 끝에서 멈춤). 자동 덕킹은 없으니 볼륨으로 조절하세요.'))
+      : h('div', { class: 'row', style: 'gap:8px;align-items:center' }, h('button', { class: 'btn sm', type: 'button', 'data-vs-music-add': '', onclick: () => input.click() }, '음악 파일 올리기'), h('span', { class: 'small muted' }, 'mp3 · wav · m4a · ogg, 20MB 이하')));
+}
+
 // ------------------------------------------------------------ pre-render checklist
 export function finalChecklist(ep) {
   const plan = ep.derived.render.plan;
   const flows = ep.scenes.map((s) => flowOf(ep, s.id));
+  const dlg = ep.scenes.filter((sc) => flowOf(ep, sc.id) && flowOf(ep, sc.id).audio.state !== 'silent');
   const items = [
     { key: 'scenes', label: '모든 장면 최종 승인', ok: flows.every((f) => f && f.final.state === 'approved'), detail: flows.filter((f) => !f || f.final.state !== 'approved').length + '개 남음' },
-    { key: 'audio', label: '모든 대사 오디오 승인', ok: flows.every((f) => f && ['approved', 'silent'].includes(f.audio.state)) },
-    { key: 'sfx', label: '효과음 결정 (계획 승인 또는 없음)', ok: flows.every((f) => f && f.gate && ['approved', 'none'].includes(f.gate.sfx.state)) },
+    { key: 'audio', label: '대사 장면의 음성 승인 (대사 없는 장면은 명시적으로 건너뜀)', ok: dlg.every((sc) => flowOf(ep, sc.id).audio.state === 'approved') },
+    { key: 'lipsync', label: '대사 장면의 립싱크 영상 승인', ok: dlg.every((sc) => { const l = ep.lipsync && ep.lipsync.scenes[sc.id]; const fin = flowOf(ep, sc.id).final; return (l && l.state === 'approved') || fin.state === 'approved'; }), detail: dlg.filter((sc) => !(ep.lipsync && ep.lipsync.scenes[sc.id].state === 'approved') && flowOf(ep, sc.id).final.state !== 'approved').length + '개 남음' },
     { key: 'subs', label: '자막 오류 없음', ok: !plan.subtitleChecks.some((c) => !/HIDDEN/.test(c.code)), detail: plan.subtitleChecks.filter((c) => !/HIDDEN/.test(c.code)).length + '건' },
     { key: 'problems', label: '렌더 차단 항목 없음', ok: plan.canRender, detail: plan.problems.length + '건' },
+    { key: 'once', label: '승인된 음성은 최종 믹스에 한 번만 들어갑니다 (립싱크 영상의 자체 오디오는 쓰지 않음)', ok: true, info: true },
     { key: 'paid', label: '이 단계는 유료 호출이 없습니다 (FFmpeg 로컬 렌더)', ok: true },
   ];
   return { items, ok: items.every((i) => i.ok) };

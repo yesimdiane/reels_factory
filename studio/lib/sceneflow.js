@@ -12,7 +12,7 @@ const { buildAudioTrack, sceneVideoChains } = require('./render');
 const { run, probe } = require('../../renderer/lib/ffmpeg');
 
 const h = (v) => sha256(canonical(v));
-const PART_LABEL = { clip: '영상 클립', audio: '오디오', cuts: '컷·B컷', sfx: '효과음' };
+const PART_LABEL = { clip: '무음 애니메이션', lipsync: '립싱크 영상', audio: '오디오', cuts: '컷·B컷', sfx: '효과음' };
 
 function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
   const sceneOf = (ep, id) => {
@@ -70,6 +70,27 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
     const v = c && c.approvedVersion && c.versions.find((x) => x.v === c.approvedVersion);
     return v || null;
   }
+  /** The approved lip-synced version of a dialogue scene (stored apart from the silent animation, ep.lipsync). */
+  function approvedLipsync(ep, sid) {
+    const l = (ep.lipsync || {})[sid];
+    return (l && l.approvedVersion && l.versions.find((x) => x.v === l.approvedVersion)) || null;
+  }
+  /**
+   * Which approved video this scene is assembled from:
+   *   - no dialogue            → the approved silent animation
+   *   - dialogue + approved lip sync → the lip-synced video
+   *   - dialogue approved BEFORE the lip-sync stage existed (scene final approved without a lipsync part) → the approved animation (legacy, kept valid)
+   * null = something is missing (the scene needs an approved lip sync).
+   */
+  function sourceOf(ep, sid) {
+    const anim = approvedClip(ep, sid);
+    if (!linesOf(ep, sid).length) return anim ? Object.assign({ kind: 'animation' }, anim) : null;
+    const ls = approvedLipsync(ep, sid);
+    if (ls && anim) return Object.assign({ kind: 'lipsync' }, ls);
+    const rec = ((ep.sceneFinal || {})[sid]) || {};
+    if (!ls && anim && rec.approved && rec.approved.parts && rec.approved.parts.lipsync === undefined) return Object.assign({ kind: 'animation', legacy: true }, anim);
+    return null;
+  }
   function cutsOf(ep, sid) {
     const sc = sceneOf(ep, sid);
     const items = broll.approved(ep).filter((b) => b.sceneId === sid).map((b) => {
@@ -83,12 +104,16 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
   function partHashes(ep, sid) {
     const clip = approvedClip(ep, sid);
     const cuts = cutsOf(ep, sid);
-    return {
+    const ls = approvedLipsync(ep, sid);
+    const parts = {
       clip: clip ? h([clip.v, clip.sha256]) : '',
       audio: audioState(ep, sid).hash,
       cuts: h([cuts.inserts, cuts.broll.map((b) => [b.id, b.at, b.dur, b.sha])]),
       sfx: h(sfxOf(ep, sid).map((x) => [x.id, x.sha256, x.offsetSec, x.gainDb].concat(x.fadeInSec || x.fadeOutSec ? [x.fadeInSec || 0, x.fadeOutSec || 0] : []))),
     };
+    // only present when a lip-synced video is in use, so scenes approved before the lip-sync stage keep their hash
+    if (ls && linesOf(ep, sid).length) parts.lipsync = h([ls.v, ls.sha256]);
+    return parts;
   }
   const sceneHash = (parts) => h(parts);
 
@@ -106,8 +131,9 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
     const hash = sceneHash(parts);
     const missing = [];
     if (!parts.clip) missing.push('clip');
+    if (parts.clip && !sourceOf(ep, sid)) missing.push('lipsync');
     if (!audioOk(ep, sid)) missing.push('audio');
-    const changed = (old) => old ? Object.keys(PART_LABEL).filter((k) => old[k] !== parts[k]) : [];
+    const changed = (old) => old ? Object.keys(PART_LABEL).filter((k) => (old[k] || '') !== (parts[k] || '')) : [];
     const comp = rec.composite && rec.composite.hash === hash && rec.composite.file && fs.existsSync(store.episodes.file(ep.id, rec.composite.file)) ? rec.composite : null;
     let state;
     if (missing.length) state = rec.approved ? 'stale' : 'incomplete';
@@ -130,7 +156,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
       const sc = sceneOf(ep, sid);
       const st = sceneState(ep, sid);
       if (st.missing.length) throw new StudioError('SCENE_INCOMPLETE', `${sid}: ${st.missing.join(', ')} 승인이 먼저 필요합니다.`, { status: 409, recovery: '장면의 단계 표시에서 비어 있는 단계로 이동하세요.' });
-      const clip = approvedClip(ep, sid);
+      const clip = sourceOf(ep, sid);
       const clipFile = store.episodes.file(epId, clip.file);
       if (!fs.existsSync(clipFile) || sha256File(clipFile) !== clip.sha256) throw new StudioError('CLIP_CHECKSUM', `${sid}: 승인된 클립 파일이 없거나 바뀌었습니다.`, { status: 409, recovery: '클립을 다시 승인하세요.' });
       const au = audioState(ep, sid);
@@ -212,7 +238,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
   }
   const hashes = (ep) => Object.fromEntries((ep.scenes || []).map((s) => [s.id, sceneState(ep, s.id).hash]));
 
-  return { audioState, audioOk, approveAudio, revokeAudio, sceneState, allStates, buildComposite, approveScene, revokeScene, renderProblems, hashes, PART_LABEL };
+  return { sourceOf, approvedLipsync, audioState, audioOk, approveAudio, revokeAudio, sceneState, allStates, buildComposite, approveScene, revokeScene, renderProblems, hashes, PART_LABEL };
 }
 
 module.exports = { createSceneFlow, PART_LABEL };

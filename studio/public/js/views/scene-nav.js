@@ -7,6 +7,8 @@ export function goToScenePanel(ep, sceneId, panel) {
   state.ui.sbScene = state.ui.sbScene || {};
   if (sceneId) state.ui.sbScene[ep.id] = sceneId;
   if (panel === 'clips' && sceneId) { state.ui.anim = state.ui.anim || {}; state.ui.anim[ep.id] = sceneId; location.hash = `#/animation/${ep.id}`; return; } // video generation lives in Animation Studio
+  if (panel === 'audio' && sceneId) { state.ui.voiceOpen = state.ui.voiceOpen || {}; state.ui.voiceOpen[sceneId] = true; location.hash = `#/voice/${ep.id}`; return; } // dialogue audio lives in Voice Studio
+  if (panel === 'lipsync') { location.hash = `#/lipsync/${ep.id}`; return; }
   if (panel === 'product') panel = 'charrefs';
   if (sceneId && ['charrefs', 'look', 'face', 'camera', 'imageprompt'].includes(panel)) { state.ui.sbEdit = state.ui.sbEdit || {}; state.ui.sbEdit[`${ep.id}:${sceneId}`] = true; } // approved scenes hide these sections until reopened
   if (sceneId && panel) state.ui.open[`sb:${ep.id}:${sceneId}:${panel}`] = true;

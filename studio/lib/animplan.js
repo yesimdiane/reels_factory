@@ -98,10 +98,11 @@ function createAnimPlan({ store, router, sba, charRefs, lib }) {
 
   // ---------------------------------------------------------------- video prompt compilation
   /** What the video model receives: the approved prompt + start frame/reference rules + the beat timeline + continuity. Unchanged when a scene has no beats. */
+  const SILENT_RULE = 'SILENT ANIMATION: no speech and no sound. Mouths stay closed or relaxed — no talking or lip-movement; express emotion with eyes, brows, head and body. Dialogue and lip sync are added in later steps.';
   function compose(ep, sid, videoText) {
     const base = String(videoText || '');
     const m = ep.motion && ep.motion[sid];
-    if (!m || !m.beats || !m.beats.length) return base;
+    if (!m || !m.beats || !m.beats.length) return [base.trim(), SILENT_RULE].filter(Boolean).join('\n\n');
     const sc = (ep.scenes || []).find((x) => x.id === sid);
     const i = (ep.scenes || []).findIndex((x) => x.id === sid);
     const refs = sc ? charRefs.forScene(ep, sc).filter((r) => r.status === 'approved') : [];
@@ -112,6 +113,7 @@ function createAnimPlan({ store, router, sba, charRefs, lib }) {
       'START FRAME: the approved image of this scene is the first frame. Keep its composition, the characters\' design, clothing and the product exactly as shown, and animate from it.',
       refs.length ? 'CHARACTER REFERENCES (identity must not change): ' + refs.map((r) => `${r.name} (${r.assetId})`).join(', ') + '.' : '',
       sba.timelineText(m.beats),
+      SILENT_RULE,
       'CONTINUITY: ' + [prev ? `continues from ${prev.id}${lastBeat(prev) ? ` (${lastBeat(prev)})` : ''}` : 'opening scene', next ? `leads into ${next.id}` : 'closing scene', 'same art style, lighting and character proportions throughout'].join('; ') + '.',
     ].filter(Boolean).join('\n\n');
   }

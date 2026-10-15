@@ -21,12 +21,16 @@ export function sceneSteps(ep, sc) {
   const brollOpen = (sc.broll || []).filter((b) => b.status === 'proposed').length;
   const audioOk = ['approved', 'silent'].includes(f.audio.state);
   const clipOk = !!(sc.clips && sc.clips.approvedVersion);
+  const dlg = f.audio.state !== 'silent';
+  const ls = (ep.lipsync && ep.lipsync.scenes && ep.lipsync.scenes[sc.id]) || { state: dlg ? 'blocked' : 'not-needed' };
+  const lsDone = !dlg || ls.state === 'approved' || (f.final && f.final.state === 'approved');
   return [
     { key: 'image', n: 1, label: '이미지 · B컷', done: imgOk && !brollOpen, note: !imgOk ? '이미지 승인 필요' : brollOpen ? `B컷 ${brollOpen}개 검토 대기` : '완료', panel: imgOk ? 'cuts' : '' },
-    { key: 'audio', n: 2, label: '오디오', done: audioOk, note: AUDIO_LABEL[f.audio.state], panel: 'audio', attention: f.audio.state === 'stale' },
-    { key: 'clips', n: 3, label: '애니메이션', done: clipOk, note: !audioOk ? '오디오 승인 후' : clipOk ? '클립 승인됨' : sc.clips && sc.clips.versions.length ? '클립 승인 대기' : '생성 대기', panel: 'clips', locked: !audioOk && !clipOk },
-    { key: 'compose', n: 4, label: '합본 · 효과음', done: ['built', 'approved'].includes(f.final.state), note: f.final.state === 'incomplete' ? '앞 단계 대기' : f.final.composite ? '합본 있음' : '합본 대기', panel: 'compose' },
-    { key: 'final', n: 5, label: '씬 최종 승인', done: f.final.state === 'approved', note: FINAL_LABEL[f.final.state], panel: 'compose', attention: f.final.state === 'stale' },
+    { key: 'clips', n: 2, label: '무음 애니메이션', done: clipOk, note: clipOk ? '무음 클립 승인됨' : sc.clips && sc.clips.versions.length ? '클립 승인 대기' : '생성 대기', panel: 'clips', view: 'animation' },
+    { key: 'audio', n: 3, label: '보이스', done: audioOk, note: AUDIO_LABEL[f.audio.state], panel: 'audio', attention: f.audio.state === 'stale', view: 'voice' },
+    { key: 'lipsync', n: 4, label: '립싱크', done: lsDone, note: !dlg ? '대사 없음 — 건너뜀' : ls.state === 'approved' ? '립싱크 승인됨' : !clipOk || !audioOk ? '무음 애니메이션·음성 승인 후' : '립싱크 대기', panel: 'lipsync', attention: ls.state === 'stale', view: 'lipsync' },
+    { key: 'compose', n: 5, label: '합본 · 효과음', done: ['built', 'approved'].includes(f.final.state), note: f.final.state === 'incomplete' ? '앞 단계 대기' : f.final.composite ? '합본 있음' : '합본 대기', panel: 'compose' },
+    { key: 'final', n: 6, label: '씬 최종 승인', done: f.final.state === 'approved', note: FINAL_LABEL[f.final.state], panel: 'compose', attention: f.final.state === 'stale' },
   ];
 }
 

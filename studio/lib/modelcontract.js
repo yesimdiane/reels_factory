@@ -32,8 +32,9 @@ function cleanExtra(x) {
 }
 
 /** The request body for one submit. Field names come from the model; unset optional fields are simply not sent. */
-function buildBody(model, { prompt, imageUrl, aspectRatio, duration, negativePrompt, extra = {} }) {
-  const body = Object.assign({}, model.extraParams || {}, extra);
+function buildBody(model, { prompt, imageUrl, aspectRatio, duration, negativePrompt, extra = {}, silent = false }) {
+  // silentParams: the model's own switch that turns generated audio off (e.g. {generate_audio:false}); only sent when the operator declared it
+  const body = Object.assign({}, model.extraParams || {}, silent ? model.silentParams || {} : {}, extra);
   body[model.promptField || 'prompt'] = prompt;
   // some endpoints take the start image as a one-element array (images_list), others as a plain image_url string
   body[model.imageField || 'image_url'] = model.imageAsList ? [imageUrl] : imageUrl;
