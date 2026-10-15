@@ -118,7 +118,7 @@ test('video prompt compilation: start frame, character references, timeline, cam
   assert.match(text, /^BASE PROMPT/); assert.match(text, /START FRAME: the approved image/); assert.match(text, /CHARACTER REFERENCES .*\(jack:|CHARACTER REFERENCES .*\(diane:/);
   assert.match(text, /ANIMATION TIMELINE/); assert.match(text, /face: /); assert.match(text, /CONTINUITY: continues from /); assert.match(text, /leads into /);
   await m.s.store.episodes.update(m.id, (e) => { delete e.motion; });
-  assert.equal(m.s.animplan.compose(m.s.store.episodes.get(m.id), m.sid2, 'BASE PROMPT'), 'BASE PROMPT');
+  assert.ok(m.s.animplan.compose(m.s.store.episodes.get(m.id), m.sid2, 'BASE PROMPT').startsWith('BASE PROMPT'), 'without a plan the approved prompt stays first (only the silent-animation rule is appended)');
   // the generation service uses the compiled text (job key follows it)
   const fs = require('node:fs'); const path = require('node:path');
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'studio', 'lib', 'studio.js'), 'utf8'), /composePrompt: \(ep, sid, text\) => animplan\.compose/);
@@ -151,7 +151,7 @@ test('Rendering Readiness names the exact blockers, then clears them step by ste
   r = m.s.renderReadiness.check(m.s.store.episodes.get(m.id));
   assert.equal(r.canGenerateVideo, true, JSON.stringify(r.items.filter((i) => (i.severity === 'block' || i.severity === 'pending') && i.stage === 'generate').map((i) => i.code + ':' + i.message)));
   assert.equal(r.canRender, false, 'clips and audio are still missing');
-  assert.ok(codes().every((c) => /CLIP|AUDIO|SCENE/.test(c)), codes().join());
+  assert.ok(codes().every((c) => /CLIP|AUDIO|SCENE|LIPSYNC/.test(c)), codes().join());
   // a deleted start-frame file is reported specifically (not a generic failure)
   const sc0 = m.s.store.episodes.get(m.id).scenes[0];
   require('node:fs').rmSync(m.s.store.episodes.file(m.id, 'startframes', sc0.startImage.file));

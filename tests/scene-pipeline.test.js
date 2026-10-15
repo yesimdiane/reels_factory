@@ -124,7 +124,7 @@ test('scene composite, sound effects, scene final approval, stale detection and 
   const v = s.store.episodes.get(ID).clips[a].approvedVersion;
   await s.gen.review(ID, a, v, 'unapprove');
   st = s.sceneFlow.sceneState(s.store.episodes.get(ID), a);
-  assert.equal(st.state, 'stale'); assert.ok(st.changed.includes('영상 클립') || st.missing.includes('영상 클립'));
+  assert.equal(st.state, 'stale'); assert.ok(st.changed.includes('무음 애니메이션') || st.missing.includes('무음 애니메이션'));
   assert.equal(s.renderer.plan(ID).canRender, false);
 });
 
@@ -135,7 +135,7 @@ test('readiness: every pending/blocking item is clickable (has an action to the 
   const open = rd.items.filter((i) => i.severity === 'pending' || i.severity === 'block');
   assert.ok(open.length > 0);
   assert.deepEqual(open.filter((i) => !i.action).map((i) => i.code), [], 'no unclickable notice');
-  assert.ok(open.filter((i) => i.sceneId).every((i) => (i.action.view === 'storyboard' || (i.action.view === 'animation' && /^(CLIP_|SFX_NOT_DECIDED|LIPSYNC_NOT_CHOSEN)/.test(i.code))) && i.action.sceneId === i.sceneId));
+  assert.ok(open.filter((i) => i.sceneId).every((i) => (i.action.view === 'storyboard' || (i.action.view === 'animation' && /^CLIP_/.test(i.code)) || (i.action.view === 'voice' && /AUDIO/.test(i.code)) || (i.action.view === 'lipsync' && i.code === 'LIPSYNC_NOT_APPROVED')) && i.action.sceneId === i.sceneId));
   const nostory = open.find((i) => i.code === 'STORYBOARD_NOT_APPROVED');
   assert.equal(nostory.action.view, 'storyboard');
   await s.revokeStoryboard(ID);

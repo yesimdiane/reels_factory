@@ -72,7 +72,10 @@ test('workflow: script → storyboard → images → generate (no clip required)
   for (const sid of ids) { const v = s.store.episodes.get(ID).clips[sid].versions.slice(-1)[0]; await s.gen.review(ID, sid, v.v, 'approve'); }
   r = R(s);
   assert.equal(r.clips.approved, ids.length); assert.equal(r.stages.clipGeneration.status, 'done'); assert.equal(r.stages.clipApproval.status, 'done');
-  assert.ok(open(r, 'render').every((i) => i.code === 'SCENE_NOT_APPROVED'), 'only the scene finals are left: ' + JSON.stringify(open(r, 'render').map((i) => i.code)));
+  // voice comes AFTER the silent animation: now approve the dialogue audio; lip sync + scene finals are what is left
+  await approveAllAudio(s, ID);
+  r = R(s);
+  assert.ok(open(r, 'render').every((i) => ['SCENE_NOT_APPROVED', 'LIPSYNC_NOT_APPROVED'].includes(i.code)), 'only lip sync and the scene finals are left: ' + JSON.stringify(open(r, 'render').map((i) => i.code)));
   assert.ok(r.items.filter((i) => i.code === 'SCENE_NOT_APPROVED').every((i) => i.severity === 'pending' && i.action.panel === 'compose'));
   await approveAllScenes(s, ID);
   r = R(s);

@@ -13,7 +13,7 @@ const { isGeneric } = require('./animdraft');
 
 const CATS = [
   ['script', '승인된 대본'], ['storyboard', '승인된 스토리보드'], ['images', '장면 이미지 (시작 프레임)'], ['animation', '애니메이션 타임라인'], ['prompt', '영상 생성 프롬프트'],
-  ['references', '캐릭터 참조 이미지'], ['provider', '렌더링 제공자'], ['assets', '파일 경로 · 권한'], ['audio', '오디오 확인 · 승인'], ['clips', '영상 클립'], ['scenes', '씬 합본 · 최종 승인'],
+  ['references', '캐릭터 참조 이미지'], ['provider', '렌더링 제공자'], ['assets', '파일 경로 · 권한'], ['audio', '오디오 확인 · 승인'], ['lipsync', '립싱크 영상'], ['clips', '영상 클립'], ['scenes', '씬 합본 · 최종 승인'],
 ];
 /** generation-gate codes that are ordinary unfinished steps rather than errors */
 const PENDING_CODES = new Set(['STORYBOARD_NOT_APPROVED', 'STORYBOARD_SCENE_CHANGED', 'STORYBOARD_CHANGED', 'NO_PROMPT', 'NO_START_IMAGE', 'START_IMAGE_NOT_APPROVED', 'SCRIPT_NOT_APPROVED', 'AUDIO_NOT_APPROVED', 'LIPSYNC_NOT_APPROVED']);
@@ -95,8 +95,8 @@ function createRenderReadiness({ store, gen, charRefs, animplan, sba, renderer, 
     plan.problems.forEach((p) => {
       if (p.code === 'SCRIPT_NOT_APPROVED' || p.code === 'CLIP_NOT_APPROVED') return; // covered above, with the exact state per scene
       const sid = (/^([A-Z]+\d+):/.exec(p.message) || [])[1] || '';
-      const pending = p.code === 'NO_AUDIO' || p.code === 'CUTS_NOT_APPROVED' || p.code === 'SCENE_NOT_APPROVED';
-      add(p.code === 'NO_AUDIO' ? 'audio' : p.code === 'SCENE_NOT_APPROVED' ? 'scenes' : pending || /^CLIP|^CUTS|^BROLL/.test(p.code) ? 'clips' : 'assets', pending ? 'pending' : 'block', p.code, p.message, p.recovery || '', p.sceneId || sid, 'render');
+      const pending = p.code === 'NO_AUDIO' || p.code === 'CUTS_NOT_APPROVED' || p.code === 'SCENE_NOT_APPROVED' || p.code === 'LIPSYNC_NOT_APPROVED';
+      add(p.code === 'NO_AUDIO' ? 'audio' : p.code === 'LIPSYNC_NOT_APPROVED' ? 'lipsync' : p.code === 'SCENE_NOT_APPROVED' ? 'scenes' : pending || /^CLIP|^CUTS|^BROLL/.test(p.code) ? 'clips' : 'assets', pending ? 'pending' : 'block', p.code, p.message, p.recovery || '', p.sceneId || sid, 'render');
     });
 
     // where to go: every finding points at the scene and the collapsible Storyboard section where it is fixed

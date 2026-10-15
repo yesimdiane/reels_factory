@@ -11,15 +11,18 @@ async function approveAllAudio(s, epId) {
 async function decideAllGates() {}
 /** mock lip sync for every dialogue scene that has an approved silent animation + approved audio, then approve it (free, local FFmpeg) */
 async function approveAllLipsync(s, epId) {
+  // a scene with two speakers needs a model that DECLARES multi-person support (the app never assumes it)
+  if (!s.lipsync.models().some((m) => m.id === 'lipsync-test-multi')) s.lipsync.addModel({ id: 'lipsync-test-multi', endpoint: 'test-multi-lipsync', speakers: 'multi', confirmed: true });
   for (const sc of s.store.episodes.get(epId).scenes) {
     const ep = s.store.episodes.get(epId);
     if (!(ep.lines || []).some((l) => l.sceneId === sc.id)) continue;
     if (s.lipsync.approvedVersion(ep, sc.id)) continue;
-    const v = s.lipsync.sceneView(ep, sc.id);
-    if (v.state === 'blocked') continue;
-    if (!v.versions.length) {
-      const est = s.lipsync.estimate(epId, { sceneIds: [sc.id] });
-      const a = await s.lipsync.authorize(epId, { sceneIds: [sc.id], confirmUsd: est.totalUsd, confirmUnknown: est.totalUsd == null });
+    const multi = new Set(ep.lines.filter((l) => l.sceneId === sc.id).map((l) => l.speaker)).size > 1;
+    const modelId = multi ? 'lipsync-test-multi' : undefined;
+    const est = s.lipsync.estimate(epId, { sceneIds: [sc.id], modelId });
+    if (!s.lipsync.state(ep, sc.id).versions.length) {
+      if (est.blockers.length) continue;
+      const a = await s.lipsync.authorize(epId, { sceneIds: [sc.id], modelId, confirmUsd: est.totalUsd, confirmUnknown: est.totalUsd == null });
       await s.lipsync.runScene(epId, a.id, sc.id);
     }
     const last = s.lipsync.state(s.store.episodes.get(epId), sc.id).versions.slice(-1)[0];

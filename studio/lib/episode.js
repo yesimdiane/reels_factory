@@ -221,7 +221,10 @@ function pipeline(ep, lib, ctx = {}) {
   const clipsMatch = (r) => scenes.length > 0 && scenes.every((s) => {
     const c = clips[s.id];
     const v = c && c.approvedVersion && c.versions.find((x) => x.v === c.approvedVersion);
-    return !!(v && r.clipRefs && r.clipRefs[s.id] && r.clipRefs[s.id].sha256 === v.sha256);
+    const ls = ep.lipsync && ep.lipsync[s.id];
+    const lv = ls && ls.approvedVersion && (ls.versions || []).find((x) => x.v === ls.approvedVersion);
+    // a dialogue scene is rendered from its approved lip-synced video, a silent scene from the approved animation
+    return !!(v && r.clipRefs && r.clipRefs[s.id] && (r.clipRefs[s.id].sha256 === v.sha256 || (lv && r.clipRefs[s.id].sha256 === lv.sha256)));
   });
   const renderFresh = !!(lastFinal && lastFinal.scriptHash === scriptFingerprint(ep) && clipsMatch(lastFinal) && (lastFinal.cutsHash || '') === cutsFingerprint(ep));
   const finalOk = !!(ep.approvals && ep.approvals.final && lastFinal && ep.approvals.final.sha256 === lastFinal.sha256 && renderFresh);
