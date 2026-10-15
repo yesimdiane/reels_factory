@@ -138,9 +138,7 @@ function parts() {
 
   sec.connections.append(lipsyncModelsCard(state.summary));
 
-  // Spend + prices: responsive model cards. Existing backend stores per-duration
-  // estimates; resolution-specific rates below are reference-only until the
-  // server supports per-resolution cost estimates.
+  // Spend + prices: responsive cards with server-backed resolution/duration estimates.
   const f = { limit: st.reelSpendLimitUsd == null ? '' : st.reelSpendLimitUsd, voice: st.voiceUsdPer1kChars == null ? '' : st.voiceUsdPer1kChars, prices: {}, resolutionPrices: {} };
   const published = {
     'grok-imagine-image-to-video': ['480p: $0.025/초 · 720p: $0.05/초', '6~30초 지원 · 5초 미지원'],
@@ -176,7 +174,7 @@ function parts() {
               placeholder: '미확인', value: f.resolutionPrices[m.id][res][String(d)],
               style: 'width:100%;min-width:0;max-width:100%',
               oninput: (e) => (f.resolutionPrices[m.id][res][String(d)] = e.target.value) })))))),
-      ...(m.resolutions || []).length ? [] : [h('div', { class: 'grid two', style: 'gap:10px' }, ds.length
+      ...((m.resolutions || []).length ? [] : [h('div', { class: 'grid two', style: 'gap:10px' }, ds.length
         ? ds.map((d) => h('label', { class: 'field', style: 'min-width:0' },
           h('span', { class: 'small' }, d + '초 · USD/클립'),
           h('input', { type: 'number', min: 0, step: 0.001, inputmode: 'decimal',
@@ -184,7 +182,7 @@ function parts() {
             placeholder: '미확인', value: f.prices[m.id][String(d)],
             style: 'width:100%;min-width:0;max-width:100%',
             oninput: (e) => (f.prices[m.id][String(d)] = e.target.value) })))
-        : [h('span', { class: 'small muted' }, '지원 길이가 등록되지 않았습니다.')]))]);
+        : [h('span', { class: 'small muted' }, '지원 길이가 등록되지 않았습니다.')]))]));
   });
   sec.costs.append(h('div', { class: 'stack', style: 'gap:14px', 'data-pricing-settings': '' },
     h('div', { class: 'card stack', style: 'gap:12px' },
