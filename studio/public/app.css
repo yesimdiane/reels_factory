@@ -739,3 +739,8 @@ body.scene-dragging-body { cursor: grabbing; user-select: none; -webkit-user-sel
 @media (max-width: 900px) { .split.prompt-split { grid-template-columns: minmax(0, 1fr); } }
 .chip { max-width: 100%; }
 @media (max-width: 640px) { .chip { white-space: normal; overflow-wrap: anywhere; } } /* long status chips (e.g. voice not assigned) wrap instead of widening the page */
+.catalog-top { gap: 4px 8px; }
+.catalog-card .chip, .catalog-row .chip { white-space: nowrap; }
+.catalog-code { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+.ep-flow { margin: -4px 0 14px; }
+@media (max-width: 640px) { .cast-bar-field { flex-direction: column; align-items: stretch; gap: 4px; } }

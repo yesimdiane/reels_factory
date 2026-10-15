@@ -44,7 +44,7 @@ export function catalog(opts) {
   const results = h('div', { class: 'catalog-results', 'aria-live': 'polite' });
   const count = h('span', { class: 'small muted', 'data-catalog-count': '' });
 
-  const search = h('input', { type: 'search', class: 'catalog-search', value: q, placeholder: opts.searchPlaceholder || '이름 · 코드로 검색', 'aria-label': '검색', 'data-catalog-search': '', autocomplete: 'off', oninput: (e) => { q = e.target.value; searches[opts.id] = q; draw(); } });
+  const search = h('input', { type: 'text', inputmode: 'search', enterkeyhint: 'search', class: 'catalog-search', value: q, placeholder: opts.searchPlaceholder || '이름 · 코드로 검색', 'aria-label': '검색', 'data-catalog-search': '', autocomplete: 'off', oninput: (e) => { q = e.target.value; searches[opts.id] = q; draw(); } });
   const seg = h('div', { class: 'seg catalog-view', 'data-no-en': '', role: 'group', 'aria-label': '보기 방식' });
   const drawSeg = () => seg.replaceChildren(...[['grid', '이미지 보기', 'grid'], ['list', '이름 목록', 'list']].map(([k, label, ic]) => h('button', { type: 'button', 'data-view': k, 'aria-pressed': prefs.view === k ? 'true' : 'false', 'aria-label': label, title: label, onclick: () => { prefs.view = k; savePrefs(opts.id, prefs); drawSeg(); draw(); } }, icon(ic), h('span', { class: 'catalog-view-label' }, label))));
   const sort = h('select', { class: 'catalog-select', 'aria-label': '정렬', 'data-catalog-sort': '', onchange: (e) => { prefs.sort = e.target.value; savePrefs(opts.id, prefs); draw(); } }, SORTS.map(([k, l]) => h('option', { value: k, selected: prefs.sort === k }, l)));
@@ -57,7 +57,7 @@ export function catalog(opts) {
   const card = (it) => h('a', Object.assign({ class: 'catalog-card', href: it.href || '#', 'data-catalog-item': it.id, onclick: (e) => { e.preventDefault(); open(it); } }, it.attr || {}),
     thumb(it),
     h('div', { class: 'catalog-body' },
-      h('div', { class: 'row between', style: 'gap:6px;flex-wrap:nowrap' }, h('span', { class: 'eyebrow catalog-code' }, it.id + (it.code ? ' · ' + it.code : '')), chip(it.statusLabel, it.tone || '')),
+      h('div', { class: 'row between catalog-top' }, h('span', { class: 'eyebrow catalog-code' }, it.id + (it.code ? ' · ' + it.code : '')), chip(it.statusLabel, it.tone || '')),
       h('div', { class: 'catalog-name' }, it.name || '(이름 없음)'),
       ...(it.meta || []).map((m) => h('div', { class: 'small muted catalog-meta' }, m)),
       it.note ? h('div', { class: 'small catalog-note', style: it.note.tone === 'warn' ? 'color:var(--clay)' : '' }, it.note.text) : null));
