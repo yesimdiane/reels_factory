@@ -35,6 +35,19 @@ function cleanExtra(x) {
 function buildBody(model, { prompt, imageUrl, aspectRatio, duration, negativePrompt, extra = {}, silent = false }) {
   // silentParams: the model's own switch that turns generated audio off (e.g. {generate_audio:false}); only sent when the operator declared it
   const body = Object.assign({}, model.extraParams || {}, silent ? model.silentParams || {} : {}, extra);
+  // An endpoint slug or UI alias is NOT a MuAPI AIR identifier. Never send a
+  // guessed 'model' value to a potentially billable endpoint.
+  if (Object.prototype.hasOwnProperty.call(body, 'model')) {
+    const value = body.model;
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new Error('MuAPI model must be a non-empty AIR identifier string; check model extraParams. No generation submitted.');
+    }
+    const catalog = require('../seed/muapi-cli-i2v.json').models;
+    const knownAliases = new Set(catalog.flatMap((entry) => [entry.alias, entry.endpoint]));
+    if (knownAliases.has(value.trim()) || value.trim() === model.id || value.trim() === model.endpoint) {
+      throw new Error('MuAPI model field contains a UI alias or endpoint, not a confirmed AIR identifier. Verify the exact AIR ID in MuAPI documentation/playground before generating. No generation submitted.');
+    }
+  }
   body[model.promptField || 'prompt'] = prompt;
   // The official MuAPI CLI catalog declares the input image shape per exact endpoint.
   // Older saved custom models may still have the default image_url field even when their
