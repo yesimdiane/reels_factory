@@ -19,7 +19,49 @@ export function setVideoTab(ep, k, rerender) { ui().videoTab = Object.assign({},
 // ------------------------------------------------------------ 1. scene review
 const FINAL = { incomplete: ['앞 단계 대기', 'attention'], ready: ['합본 만들기 대기', 'attention'], built: ['합본 확인·승인 대기', 'attention'], approved: ['최종 승인됨', 'done'], stale: ['승인 후 바뀜', 'err'] };
 export function reviewTab(ep) {
-  return h('div', { class: 'grid two', 'data-vs-review': '' }, ep.scenes.map((sc) => {
+  const eligible = ep.scenes.filter((sc) => {
+    const f = flowOf(ep, sc.id);
+    return f && ['ready', 'stale'].includes(f.final.state);
+  });
+  const skipped = ep.scenes.length - eligible.length;
+  const status = h('div', { class: 'small muted', 'data-batch-compose-status': '' },
+    eligible.length + '개 합본 가능 · ' + skipped + '개 건너뜀 (미준비/이미 합본 또는 승인됨)');
+  const start = h('button', { class: 'btn clay', type: 'button', 'data-batch-compose': ep.id, disabled: !eligible.length,
+    onclick: async () => {
+      const ok = await confirmDialog({
+        title: eligible.length + '개 장면을 한 번에 합칠까요?',
+        body: h('div', { class: 'stack small' },
+          h('div', null, '대상: ' + eligible.map((s) => s.id).join(', ')),
+          h('div', null, '준비되지 않은 장면과 이미 승인된 합본은 건너뜁니다. 합본은 무료이며 최종 승인은 자동으로 하지 않습니다.')),
+        confirm: '일괄 합본 시작', tone: 'clay',
+      });
+      if (!ok) return;
+      start.disabled = true;
+      const completed = [], failed = [];
+      for (const sc of eligible) {
+        status.textContent = '합본 중… ' + (completed.length + failed.length + 1) + '/' + eligible.length + ' · ' + sc.id;
+        try {
+          await api.post(`/api/episodes/${ep.id}/scenes/${sc.id}/compose`, {});
+          completed.push(sc.id);
+        } catch (e) {
+          failed.push(sc.id + ': ' + e.message);
+        }
+      }
+      status.textContent = '완료 ' + completed.length + '개 · 실패 ' + failed.length + '개 · 건너뜀 ' + skipped + '개'
+        + (failed.length ? ' · ' + failed.join(' / ') : '');
+      if (failed.length) toast(failed.join(' / '), { error: true });
+      else toast('장면 ' + completed.length + '개 합본 완료 — 영상 검토 후 씬 최종 승인하세요.');
+      // Refresh once, not after every scene, to preserve progress and avoid racing edits.
+      await act(async () => null);
+    } }, '영상·음성 전체 일괄 합본 (' + eligible.length + ')');
+  const batch = h('section', { class: 'card stack', 'data-batch-compose-panel': ep.id, style: 'gap:10px' },
+    h('div', { class: 'row between', style: 'flex-wrap:wrap;gap:8px' },
+      h('div', null, h('b', null, '영상 + 음성 일괄 합본'), h('div', { class: 'small muted' }, '승인된 영상·음성을 장면별로 한 번에 합칩니다. 효과음과 B컷도 기존 씬 합본 규칙대로 적용합니다.')),
+      start),
+    status,
+    h('div', { class: 'small muted' }, '각 장면의 영상/음성/필요한 립싱크 승인 조건은 서버에서 다시 확인합니다. 오류는 장면별로 보고하고 다음 장면은 계속 처리합니다.'));
+  return h('div', { class: 'stack', style: 'gap:12px' }, batch,
+    h('div', { class: 'grid two', 'data-vs-review': '' }, ep.scenes.map((sc) => {
     const f = flowOf(ep, sc.id);
     const fin = f ? f.final : { state: 'incomplete', missing: [] };
     const [lab, kind] = FINAL[fin.state] || [fin.state, ''];
@@ -37,7 +79,7 @@ export function reviewTab(ep) {
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'audio') }, '보이스'),
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'lipsync') }, '립싱크'),
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'compose') }, '합본·승인 열기')));
-  }));
+  })));
 }
 
 // ------------------------------------------------------------ 2. timeline
