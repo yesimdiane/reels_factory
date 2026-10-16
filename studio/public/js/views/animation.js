@@ -15,7 +15,8 @@ export function animation() {
   wrap.append(pageHead('Animation Studio', '애니메이션 스튜디오', '승인된 캐릭터 이미지로 장면별 9:16 클립을 만듭니다. 생성 전 예상 비용을 확인·승인하고, 만들어진 클립은 하나씩 검토해 승인합니다.', episodePicker()));
   wrap.append(videoTabs('animation'));
   if (!ep.derived.storyboardApproved) wrap.append(lockedNotice('대본과 이미지 스튜디오 승인이 되어야 생성을 시작할 수 있습니다.', 'image', '이미지 스튜디오로 이동'));
-  wrap.append(animationStudio(ep));
+  const studioEl = animationStudio(ep);
+  wrap.append(studioEl);
   // everything below is the multi-scene overview (batch generation with one confirmation, all clips, job history) — collapsed by default
   const all = h('div', { class: 'stack', style: 'gap:16px' });
   all.append(videoSummary(ep, { startVideo: (sceneIds) => startGeneration(ep, sceneIds) }));
@@ -40,7 +41,8 @@ export function animation() {
         j.requestId && ['processing', 'polling_interrupted', 'download_failed'].includes(j.status) && !ep.derived.jobsRunning ? h('button', { class: 'btn sm ghost', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/jobs/${j.id}/resume`), { ok: '이어서 확인합니다 (추가 요금 없음)' }) }, '다시 확인') : null,
         ['failed', 'uncertain', 'polling_interrupted', 'download_failed'].includes(j.status) ? h('button', { class: 'btn sm ghost', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/jobs/${j.id}/dismiss`)) }, '닫기') : null))))))
       : h('div', { class: 'muted' }, '아직 생성 작업이 없습니다.')));
-  wrap.append(h('details', { class: 'card', 'data-anim-overview': '' }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '여러 장면 한꺼번에 · 전체 요약 · 작업 내역'), h('span', { class: 'small muted' }, '고급 (일괄 생성도 비용 확인과 승인이 필요합니다)')), h('div', { style: 'margin-top:12px' }, all)));
+  // the multi-scene overview (batch generate / approve, summary, job history) comes first, right under the tabs
+  wrap.insertBefore(h('details', { class: 'card', 'data-anim-overview': '' }, h('summary', { style: 'cursor:pointer;min-height:40px;display:flex;align-items:center;gap:8px' }, h('b', null, '여러 장면 한꺼번에 · 전체 요약 · 작업 내역'), h('span', { class: 'small muted' }, '고급 (일괄 생성도 비용 확인과 승인이 필요합니다)')), h('div', { style: 'margin-top:12px' }, all)), studioEl);
   return wrap;
 }
 
