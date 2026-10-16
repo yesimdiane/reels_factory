@@ -80,7 +80,7 @@ test('Animation (silent, no audio/SFX gate) → Voice → Lip Sync in the browse
     // 3) Lip Sync Studio: model card with limits, prerequisites, mock run, approve
     await page.goto(`${base}/#/lipsync/${ID}`);
     await page.waitForSelector('[data-lipsync-studio]');
-    assert.match(await page.locator('[data-lipsync-caps]').innerText(), /다인 립싱크 지원/);
+    assert.match(await page.locator('[data-lipsync-caps]').textContent(), /다인 립싱크 지원/);
     if (quiet) assert.equal(await page.locator(`[data-lipsync-scene="${quiet}"]`).getAttribute('data-lipsync-state'), 'not-needed');
     assert.equal(await page.locator(`[data-lipsync-scene="${talk}"] [data-lipsync-check-ok="1"]`).count() >= 2, true, 'animation + audio prerequisites are shown as met');
     await page.locator(`[data-lipsync-start="${talk}"]`).click();
