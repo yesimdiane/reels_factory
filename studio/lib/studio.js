@@ -1368,7 +1368,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   function removeCustomModel(id) {
     const cur = store.settings.get();
     if (!(cur.customModels || []).some((m) => m.id === id)) throw new StudioError('NOT_FOUND', '직접 추가한 모델이 아닙니다.', { status: 404 });
-    if (cur.defaultModelId === id) throw new StudioError('IN_USE', '기본 모델은 지울 수 없습니다. 다른 모델을 기본으로 정한 뒤 지우세요.', { status: 409 });
+    if (cur.defaultModelId === id || cur.brollModelId === id) throw new StudioError('IN_USE', '기본 모델은 지울 수 없습니다. 다른 모델을 기본으로 정한 뒤 지우세요.', { status: 409 });
     store.settings.save({ customModels: cur.customModels.filter((m) => m.id !== id) });
     return publicSettings();
   }
@@ -1454,6 +1454,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     }
     if (patch.voiceUsdPer1kChars !== undefined) next.voiceUsdPer1kChars = patch.voiceUsdPer1kChars === '' || patch.voiceUsdPer1kChars === null ? null : Number(patch.voiceUsdPer1kChars);
     if (patch.defaultModelId) { modelById(store.models(), patch.defaultModelId); next.defaultModelId = patch.defaultModelId; }
+    if (patch.brollModelId !== undefined) { modelById(store.models(), patch.brollModelId); next.brollModelId = patch.brollModelId; }
     if (patch.render) next.render = Object.assign({}, cur.render, patch.render);
     store.settings.save(next);
     return publicSettings();
