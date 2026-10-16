@@ -172,7 +172,18 @@ function sceneCard(ep, sc, i, chars, go) {
   const rerender = () => import('../state.js').then(({ hooks }) => hooks.rerender());
   const zoom = () => { if (!img || !img.url) return; modal((close) => h('div', { class: 'stack', style: 'align-items:center;gap:8px' }, h('img', { src: img.url, alt: sc.id, 'data-sb-full': sc.id, style: 'max-height:75vh;max-width:100%;border-radius:10px' }), h('div', { class: 'small muted' }, img.fileName || img.label || ''), h('button', { class: 'btn ghost', type: 'button', onclick: close }, '닫기')), { wide: true }); };
   const delBtn = isFrame ? h('button', { class: 'btn ghost danger', type: 'button', 'data-sb-delete-image': sc.id, disabled: img.approved, title: img.approved ? '승인된 이미지는 먼저 승인을 취소하세요' : '이 이미지 파일만 지웁니다. 캐릭터·제품 참조 이미지는 지워지지 않습니다', onclick: async () => { if (await confirmDialog({ title: '이 시작 이미지를 삭제할까요?', body: '이 장면에 연결된 이미지만 목록에서 빼고 파일은 복구 가능한 보관 폴더로 옮깁니다. 캐릭터 라이브러리와 제품 사진은 그대로입니다.', confirm: '삭제', tone: 'clay' })) act(() => api.del(`/api/episodes/${ep.id}/scenes/${sc.id}/start-frame`), { ok: '시작 이미지를 삭제했습니다 (참조 이미지는 그대로)' }); } }, icon('trash'), '삭제') : null;
-  const genBtn = h('button', { class: 'btn clay', type: 'button', 'data-sb-regenerate': sc.id, disabled: !ep.derived.scriptApproved || img && img.approved && isFrame, title: img && img.approved && isFrame ? '승인된 이미지는 먼저 승인을 취소하세요' : '비용 확인 후에만 생성됩니다', onclick: () => makeStartImages(ep, [sc.id], { force: true, after: refresh }) }, icon('play'), isFrame ? '다시 만들기' : '이미지 만들기');
+  const genBtn = h('button', { class: 'btn clay', type: 'button', 'data-sb-regenerate': sc.id, disabled: !ep.derived.scriptApproved || img && img.approved && isFrame, title: img && img.approved && isFrame ? '승인된 이미지는 먼저 승인을 취소하세요' : '비용 확인 후에만 생성됩니다', onclick: async () => {
+    // The prompt editor may contain unsaved changes. Persist those first so the
+    // server generates from the text the operator can currently see.
+    const editor = document.querySelector('[data-image-prompt="' + sc.id + '"]');
+    const saved = sc.imagePrompt && sc.imagePrompt.text || '';
+    if (editor && editor.value !== saved) {
+      try {
+        await api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/image-prompt`, { text: editor.value });
+      } catch (e) { toast('프롬프트 저장에 실패하여 이미지를 생성하지 않았습니다: ' + e.message, { error: true }); return; }
+    }
+    await makeStartImages(ep, [sc.id], { force: true, after: refresh });
+  } }, icon('play'), isFrame ? '다시 만들기' : '이미지 만들기');
   const uploadBtn = h('button', { class: 'btn ghost', type: 'button', 'data-sb-upload': sc.id, onclick: () => fileIn.click() }, icon('upload'), '올리기');
   const imageHead = h('div', { class: 'sb-image-head', 'data-sb-image': sc.id },
     h('div', { class: 'sb-image-preview' }, main),
