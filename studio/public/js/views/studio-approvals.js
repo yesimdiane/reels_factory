@@ -15,7 +15,7 @@ function status(view, ep, sc) {
   const skipped = ep.lipsyncSkipped && ep.lipsyncSkipped[sc.id];
   if (view === SCRIPT_VIEW) return { approved: !!ap.approved, ready: ap.status === 'ready' && !ap.editedAfterApproval && !ap.errorCount, url: 'script', panel: '', action: 'script' };
   if (view === 'image') return { approved: !!image.approved && !image.error, ready: !!image.url && !image.approved && !image.error, url: 'image', panel: '', action: 'image' };
-  if (view === 'animation') return { approved: !!clip.approvedVersion, ready: !!(clip.versions || []).some((v) => v.status === 'pending_review'), url: 'animation', panel: 'clips', action: null };
+  if (view === 'animation') return { approved: !!clip.approvedVersion, ready: !!(clip.versions || []).some((v) => v.status === 'pending_review'), url: 'animation', panel: 'clips', action: 'clip' };
   if (view === 'voice') return { approved: !!f && ['approved', 'silent'].includes(f.audio.state), ready: !!f && f.audio.state === 'unapproved', url: 'voice', panel: 'audio', action: 'audio' };
   if (view === 'lipsync') return { approved: !ls || !ls.dialogue || !!skipped || ls.state === 'approved', ready: false, url: 'lipsync', panel: 'lipsync', action: null };
   return { approved: !!f && f.final.state === 'approved', ready: !!f && f.final.state === 'built' && !!f.final.composite, url: 'render', panel: 'compose', action: 'final' };
@@ -56,6 +56,11 @@ export function studioApprovals(view, ep) {
       audio: base + '/audio/approve',
       final: base + '/final/approve',
     };
+    if (x.action === 'clip') {
+      const candidate = (x.sc.clips.versions || []).filter((v) => v.status === 'pending_review').slice(-1)[0];
+      if (!candidate) return openScene(view, ep, x.sc);
+      return act(() => api.post('/api/episodes/' + ep.id + '/clips/' + x.sc.id + '/' + candidate.v + '/review', { decision: 'approve' }), { ok: x.sc.id + ' 애니메이션 승인 완료' });
+    }
     await act(() => api.post(paths[x.action], x.action === 'image' ? { approved: true } : {}), { ok: x.sc.id + ' 승인 완료' });
   };
   return h('section', { class: 'card stack', 'data-studio-approval-overview': view, style: 'gap:10px;margin-bottom:12px' },
