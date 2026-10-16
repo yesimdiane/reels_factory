@@ -114,6 +114,8 @@ function createStartImages({ store, products, router, lib, charRefs, log = () =>
       const cur = ep.scenes.find((x) => x.id === scene.id);
       if (!cur || (hasFrame(cur) && cur.startImage.approved)) { skipped.push({ sceneId: scene.id, reason: '진행 중에 승인된 프레임이 생겨 건너뜁니다.' }); continue; }
       const q = inputs(ep, cur, exclude);
+      const requestFingerprint = sha256(JSON.stringify({ prompt: q.prompt, refs: q.images.map((img) => sha256(Buffer.from(img.data, 'base64'))), route: router.routeFor('imageGeneration') })).slice(0, 16);
+      const previousImageHash = cur.startImage && cur.startImage.sha256 || null;
       let out;
       try {
         out = await router.runImage('imageGeneration', { prompt: q.prompt, images: q.images, confirm });
@@ -127,14 +129,15 @@ function createStartImages({ store, products, router, lib, charRefs, log = () =>
         const sn = sniffImage(buf);
         if (!sn) throw new StudioError('BAD_IMAGE', '이미지 모델이 올바른 이미지를 돌려주지 않았습니다.', { status: 502 });
         const hash = sha256(buf);
+        const sameAsPrevious = !!previousImageHash && hash === previousImageHash;
         const file = hash.slice(0, 12) + sn.ext;
         store.episodes.saveFile(epId, path.join('startframes', file), buf);
         await store.episodes.update(epId, (e) => {
           const s = e.scenes.find((x) => x.id === scene.id);
-          s.startImage = { type: 'upload', file, sha256: hash, approved: false, generated: true, name: `AI 시작 프레임 ${scene.id}`, provider: out.provider, model: out.model, prompt: q.prompt, characterRefs: q.used, characterRefAssetIds: q.used.map((u) => u.assetId), productImageIds: q.productIds, createdAt: nowIso(), createdBy: by };
+          s.startImage = { type: 'upload', file, sha256: hash, approved: false, generated: true, name: `AI 시작 프레임 ${scene.id}`, provider: out.provider, model: out.model, prompt: q.prompt, characterRefs: q.used, characterRefAssetIds: q.used.map((u) => u.assetId), productImageIds: q.productIds, createdAt: nowIso(), createdBy: by, generationDiagnostics: { requestFingerprint, forced: !!force, submittedToProvider: true, sameAsPrevious } };
         });
-        store.episodes.audit(epId, 'startimage.generated', { sceneId: scene.id, provider: out.provider, model: out.model, file });
-        generated.push({ sceneId: scene.id, file });
+        store.episodes.audit(epId, 'startimage.generated', { sceneId: scene.id, provider: out.provider, model: out.model, file, requestFingerprint, forced: !!force, submittedToProvider: true, sameAsPrevious });
+        generated.push({ sceneId: scene.id, file, requestFingerprint, sameAsPrevious, provider: out.provider, model: out.model });
       } catch (e) {
         failed = { sceneId: scene.id, code: e.code || 'ERROR', message: e.message, recovery: e.recovery || '' };
         break;
