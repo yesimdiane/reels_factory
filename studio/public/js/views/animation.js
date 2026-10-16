@@ -159,7 +159,8 @@ export function clipCard(ep, sc, g, opts = {}) {
           toast('원본 제품 유지 지시를 프롬프트에 추가했습니다. 저장한 뒤 재생성하세요.');
         } }, '제품 디자인 고정 지시 추가'),
         h('button', { class: 'btn sm sage', type: 'button', 'data-clip-anim-save': sc.id, disabled: !sc.prompt, onclick: () => saveFix(false) }, '애니메이션만 저장'),
-        h('button', { class: 'btn sm clay', type: 'button', 'data-clip-anim-save-generate': sc.id, disabled: !sc.prompt || !!running || !ep.derived.storyboardApproved, onclick: () => saveFix(true) }, '저장 · 이 장면만 재생성'))),
+        h('button', { class: 'btn sm clay', type: 'button', 'data-clip-anim-save-generate': sc.id, disabled: !sc.prompt || !!running || !ep.derived.storyboardApproved, onclick: () => saveFix(true) }, '저장 · 이 장면만 재생성')),
+
       h('div', { class: 'small muted' }, '재생성 전 무료 예상 비용 확인과 유료 승인 절차가 유지됩니다. 기존 클립은 삭제되지 않습니다.')));
   const fileIn = h('input', { type: 'file', accept: 'video/mp4,video/quicktime', style: 'display:none', onchange: async (e) => { const f = e.target.files[0]; if (f) await act(() => api.upload(`/api/episodes/${ep.id}/clips/${sc.id}/upload`, f), { ok: '클립을 올렸습니다 — 검토 후 승인하세요' }); } });
   return h('div', { class: 'clip-card' + (cur && cur.status === 'approved' ? ' approved' : ''), 'data-clip-card': sc.id, 'data-clip-status': cur ? cur.status : 'none' },
