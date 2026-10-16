@@ -12,7 +12,7 @@ import { charRefsPanelBody, charRefsBadge } from './scene-charrefs.js';
 import { openBrollAi, previewBroll } from './broll-ai.js';
 import { openAnimGenerate } from './anim-plan.js';
 import { motionPanel } from './beat-timeline.js';
-import { block, shotChips, dialoguePanelBody, animationHandoff, imagePromptBody } from './storyboard-sections.js';
+import { block, shotChips, dialoguePanelBody, animationHandoff, imagePromptBody, frameProvenance } from './storyboard-sections.js';
 import { lookFields, characterRoles, poseFields, elementsBlock, seedElements } from './script-sections.js';
 import { stepper, audioPanelBody, audioBadge, composePanelBody, composeBadge } from './scene-flow.js';
 import { sceneGallery } from './scene-gallery.js';
@@ -225,7 +225,7 @@ function sceneCard(ep, sc, i, chars, go) {
     h('button', { class: 'btn sm ghost', type: 'button', 'data-sb-reopen': sc.id, onclick: () => { ui0.sbEdit[editKey] = true; rerender(); } }, '이미지 편집 열기'));
   if (summaryRow.querySelector('[data-sb-revoke-image]')) summaryRow.querySelector('[data-sb-revoke-image]').addEventListener('click', () => revokeImgBtn.click());
   const imageSection = block('image', '①', '이미지 제작', '환경 · 캐릭터 · 참조 · 프롬프트 → 시작 이미지 만들기 · 올리기 · 승인',
-    collapsed ? summaryRow : h('div', { class: 'stack', style: 'gap:10px' }, imageHead, ...imageEditors, approvedImg ? h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', type: 'button', 'data-sb-collapse': sc.id, onclick: () => { ui0.sbEdit[editKey] = false; rerender(); } }, '편집 접기')) : null));
+    collapsed ? summaryRow : h('div', { class: 'stack', style: 'gap:10px' }, imageHead, frameProvenance(sc), ...imageEditors, approvedImg ? h('div', { class: 'row' }, h('button', { class: 'btn sm ghost', type: 'button', 'data-sb-collapse': sc.id, onclick: () => { ui0.sbEdit[editKey] = false; rerender(); } }, '편집 접기')) : null));
 
   // ---- ② 애니메이션 · 오디오 준비 (video generation itself is Animation Studio) ----
   const prepSection = block('prep', '②', '애니메이션 · 오디오 준비', '애니메이션 프롬프트 · 0.5초 비트 · 대사 · 목소리 · 오디오 — 영상 생성은 애니메이션 스튜디오에서',

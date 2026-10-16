@@ -5,6 +5,7 @@ import { api } from '../api.js';
 import { pageHead, asyncBlock, confirmPaid } from './common.js';
 import { imageIntake, savedControls } from './image-intake.js';
 import { catalog } from './catalog.js';
+import { analysisPanel, analysisOpen } from './product-analysis.js';
 
 const KIND_CHIP = { retrieved: ['원본 · 쇼핑몰 수집', 'mock'], uploaded: ['직접 업로드', ''], ai_generated: ['AI 생성 · 제조사 사진 아님', 'attention'] };
 const STATUS_CHIP = { pending: ['검토 대기', ''], approved: ['승인', 'done'], rejected: ['거절', 'err'], replaced: ['교체됨', 'mock'] };
@@ -213,6 +214,7 @@ function draw(p) {
   wrap.replaceChildren(head, summary,
     fold('제품 정보 · 사양 · 금지 표현', '확인된 사실만 스토리에 쓰입니다', false, A),
     fold('참조 이미지', `${p.counts.uploaded}/${p.limits.uploads}장 업로드`, p.reference.state !== 'approved', B),
+    fold('제품 구조 설명 (AI 시각 분석)', (p.analysisApprovedV ? `승인됨 v${p.analysisApprovedV}` : '승인 전') + (p.analysisImagesChanged ? ' · 이미지가 바뀜 — 재분석 필요' : ' · 스토리보드 이미지에 자동 포함'), analysisOpen(p) || p.analysisImagesChanged || (!p.analysisApprovedV && (p.images || []).length > 0), analysisPanel(p)),
     fold('AI 참조 이미지 생성 이력', '번호가 붙은 버전 · 추가 참조 최대 5장', false, B2),
     C);
   return wrap;

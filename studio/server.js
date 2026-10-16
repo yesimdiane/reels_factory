@@ -148,6 +148,11 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/products/:id/images/:iid/primary', async ({ p }) => S.products.setPrimary(p.id, p.iid));
   route('POST', '/api/products/:id/images/:iid/remove', async ({ p, body }) => S.products.removeImage(p.id, p.iid, { confirm: body.confirm === true }));
   route('POST', '/api/products/:id/images/:iid/status', async ({ p, body }) => S.products.setStatus(p.id, p.iid, body.status));
+  route('GET', '/api/products/:id/analysis', async ({ p }) => S.productAnalysis.view(p.id));
+  route('POST', '/api/products/:id/analysis/estimate', async ({ p, body }) => S.productAnalysis.estimate(p.id, { imageIds: body.imageIds }));
+  route('POST', '/api/products/:id/analysis/generate', async ({ p, body }) => S.productAnalysis.generate(p.id, { imageIds: body.imageIds, confirm: body.confirm }));
+  route('PUT', '/api/products/:id/analysis/:v', async ({ p, body }) => S.productAnalysis.edit(p.id, Number(p.v), body.text));
+  route('POST', '/api/products/:id/analysis/:v/approve', async ({ p }) => S.productAnalysis.approve(p.id, Number(p.v)));
   route('POST', '/api/products/:id/references/approve', async ({ p, body }) => S.products.approveReferenceSet(p.id, { imageIds: body.imageIds }));
   route('POST', '/api/products/:id/references/waive', async ({ p, body }) => S.products.waiveReferences(p.id, body.reason));
 
@@ -518,6 +523,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('GET', '/media/render/:a/:b', async ({ p, query }) => { const file = S.mediaFile('render', p.a, p.b); return { file, download: query.download === '1', filename: S.exportName(p.a, file) }; });
   route('GET', '/media/audio/:a/:b', async ({ p }) => ({ file: S.mediaFile('audio', p.a, p.b) }));
   route('GET', '/media/broll/:a/:b', async ({ p }) => ({ file: S.mediaFile('broll', p.a, p.b) }));
+  route('GET', '/media/startframev/:a/:b/:c', async ({ p }) => ({ file: S.mediaFile('startframev', p.a, p.b, p.c) }));
   route('GET', '/media/startframe/:a/:b', async ({ p }) => ({ file: S.mediaFile('startframe', p.a, p.b) }));
 
   const loopback = ['127.0.0.1', 'localhost', '::1'].includes(host);
