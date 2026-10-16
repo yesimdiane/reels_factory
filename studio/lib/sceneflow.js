@@ -233,6 +233,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
   function renderProblems(ep) {
     const out = [];
     (ep.scenes || []).forEach((s) => {
+      if (Number(s.durationSec) > 5) out.push({ code: 'SCENE_OVER_5_SECONDS', sceneId: s.id, message: `${s.id}: 씬 길이는 최대 5초입니다. 대본에서 씬을 나누거나 줄여주세요.` });
       const st = sceneState(ep, s.id);
       if (st.state === 'approved') return;
       const why = st.state === 'stale' ? `승인 후 ${st.changed.join('·') || '내용'}이(가) 바뀌었습니다` : st.state === 'incomplete' ? `${st.missing.join('·')} 승인 대기` : st.state === 'built' ? '합본 확인·승인 대기' : '씬 합치기 대기';
