@@ -558,6 +558,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     const settings = store.settings.get();
     const model = modelById(store.models(), modelId || settings.brollModelId || settings.defaultModelId);
     const { out } = brollBlockers(ep, b);
+    if (provider.mode === 'live' && !['verified', 'user-entered'].includes(model.verification)) out.push({ code: 'MODEL_UNVERIFIED', message: 'B-roll 모델 엔드포인트가 확인되지 않았습니다.', recovery: '설정에서 MuAPI 모델의 입력 형식과 엔드포인트를 먼저 확인하세요.' });
     const est = estimateRun({ ep, scenes: [{ id: 'broll:' + bid, durationSec: b.durationSec }], model, settings, cfg, cached: () => false });
     if (provider.mode === 'mock') { est.totalUsd = 0; est.unknown = false; est.withinLimit = true; } // the mock provider never bills
     if (provider.mode === 'live' && est.unknown) out.push({ code: 'ESTIMATE_UNKNOWN', message: '이 모델의 클립당 가격 추정치가 없습니다.', recovery: 'Settings → 비용에 가격을 입력하세요.' });
