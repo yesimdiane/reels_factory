@@ -213,7 +213,7 @@ function rightColumn(ep, sc) {
 
 /** Short animated clips from APPROVED B-roll stills. Same provider, same cost confirmation; shown apart from the scene clip. */
 async function startBrollClip(ep, b) {
-  const modelId = state.summary.settings.defaultModelId;
+  const modelId = state.summary.settings.brollModelId || state.summary.settings.defaultModelId;
   let est;
   try { est = await api.post(`/api/episodes/${ep.id}/broll/${b.id}/clip/estimate`, { modelId }); } catch (e) { return toast(e.message, { error: true, recovery: e.recovery }); }
   if (!est.canGenerate) return toast(est.blockers[0] ? est.blockers[0].message : '지금은 만들 수 없습니다', { error: true, recovery: est.blockers[0] && est.blockers[0].recovery });
