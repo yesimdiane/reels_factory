@@ -9,7 +9,7 @@
    "story_en": "Diane realises the situation gives her a reason to shop on Coupang. She is genuinely thrilled — she is almost happier about having a shopping excuse than about solving the problem.",
    "visual": "Diane with her phone, Coupang app glowing on the screen, eyes sparkling, a huge delighted grin; the original problem is clearly visible behind her but she barely cares.",
    "action": "Diane gasps, grabs her phone and starts scrolling with obvious joy.",
-   "durationSec": 6,
+   "durationSec": 5,
    "characters": [
     "diane"
    ],
@@ -17,7 +17,7 @@
    "lines": [
     {
      "speaker": "diane",
-     "en": "BABYYYY!!! This is the perfect excuse to order {{PRODUCT_NAME}} on Coupang!",
+     "en": "BABYYYY!!! Perfect excuse to order {{PRODUCT_NAME}} on Coupang!",
      "ko": "자기야!!! {{PRODUCT_NAME_KO}} 쿠팡에서 살 완벽한 핑계가 생겼어!"
     }
    ]
@@ -64,7 +64,7 @@
     },
     {
      "speaker": "diane",
-     "en": "So you'll use {{USE_PHRASE}} now?",
+     "en": "You'll use {{USE_PHRASE}} now?",
      "ko": "이제 {{USE_PHRASE_KO}} 쓸 거지?"
     },
     {

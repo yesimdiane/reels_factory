@@ -23,6 +23,9 @@ async function episode(a = ai()) {
 }
 const A = (ep) => ep.scenes.filter((s) => s.part === 'A');
 const B = (ep) => ep.scenes.filter((s) => s.part === 'B');
+// New episodes cap scenes at 5 s, so the 10 s closing reaction is two consecutive scenes (E3 + E4) of the same beat.
+const Bkeys = (ep) => [...new Set(B(ep).map((x) => x.beatKey))];
+const reactionIds = ['E3', 'E4'];
 const snapB = (ep) => JSON.stringify({ scenes: B(ep), lines: ep.lines.filter((l) => B(ep).some((s) => s.id === l.sceneId)), beats: ep.product_ending });
 
 test('a new episode gets the default ending template automatically (exactly three Part B shots) and an empty six-beat Part A', async () => {
@@ -32,16 +35,16 @@ test('a new episode gets the default ending template automatically (exactly thre
   assert.deepEqual(F.BEAT_KEYS, Object.keys(ep.comedy_story));
   assert.deepEqual(F.ENDING_KEYS, Object.keys(ep.product_ending));
   assert.equal(A(ep).length, 0);
-  assert.deepEqual(B(ep).map((x) => [x.id, x.beatKey]), [['E1', 'shopping_excuse'], ['E2', 'product_demonstration'], ['E3', 'jack_reaction']]);
+  assert.deepEqual(B(ep).map((x) => [x.id, x.beatKey]), [['E1', 'shopping_excuse'], ['E2', 'product_demonstration'], ['E3', 'jack_reaction'], ['E4', 'jack_reaction']]);
   assert.equal(ep.ending.templateId, 'jack-diane-coupang-ending-v1');
   assert.equal(ep.ending.templateName, 'Jack & Diane — Coupang Ending v1');
   assert.equal(ep.ending.structureLocked, true);
-  assert.deepEqual(B(ep).map((x) => x.title_ko), ['쇼핑 본능 발동', '신문물 자랑', '영국인의 마지막 고집']);
+  assert.deepEqual(B(ep).map((x) => x.title_ko), ['쇼핑 본능 발동', '신문물 자랑', '영국인의 마지막 고집', '영국인의 마지막 고집']);
   const v = s.episodeView(id);
   assert.equal(v.formula.structured, true);
   assert.equal(v.formula.partA.length, 6);
   assert.equal(v.formula.partB.length, 3);
-  assert.deepEqual(v.formula.partB.map((x) => x.sceneIds), [['E1'], ['E2'], ['E3']]);
+  assert.deepEqual(v.formula.partB.map((x) => x.sceneIds), [['E1'], ['E2'], ['E3', 'E4']]);
   // a brand-new episode is not approvable: the six beats are missing
   assert.equal(v.derived.validation.ok, false);
   assert.equal(v.derived.validation.errors.filter((e) => e.code === 'BEAT_MISSING').length, 6);
@@ -70,14 +73,14 @@ test('umbrella episode: the generated script keeps every one of the six narrativ
   assert.match(ep.comedy_story.product_bridge.story_en, /walking puddle.*towel/);
   // Part A never shows the product; Part B is exactly three shots
   assert.ok(A(ep).every((x) => x.showsProduct === false));
-  assert.deepEqual(B(ep).map((x) => x.beatKey), F.ENDING_KEYS);
-  assert.equal(B(ep).length, 3);
-  assert.ok(ep.scenes.map((x) => x.part).join('').match(/^A+B{3}$/), 'all of Part A comes before Part B');
+  assert.deepEqual(Bkeys(ep), F.ENDING_KEYS);
+  assert.equal(B(ep).length, 4);
+  assert.ok(ep.scenes.map((x) => x.part).join('').match(/^A+B{4}$/), 'all of Part A comes before Part B');
   // the three ending shots follow the series template with this product's variables
   const lines = (sid) => ep.lines.filter((l) => l.sceneId === sid).map((l) => `${l.speaker}: ${l.en}`);
-  assert.match(lines('E1')[0], /^diane: BABYYYY!!! This is the perfect excuse to order magnetic umbrella holder on Coupang!/);
+  assert.match(lines('E1')[0], /^diane: BABYYYY!!! Perfect excuse to order magnetic umbrella holder on Coupang!/);
   assert.match(lines('E2')[0], /It just sticks to the door!/);
-  assert.deepEqual(lines('E3'), ['diane: BABYYYY!!! LOOK WHAT I GOT!', 'jack: Good job, baby!', 'diane: So you\'ll use an umbrella now?', 'jack: Absolutely not.', 'diane: JACK!!!']);
+  assert.deepEqual(lines('E3').concat(lines('E4')), ['diane: BABYYYY!!! LOOK WHAT I GOT!', 'jack: Good job, baby!', 'diane: You\'ll use an umbrella now?', 'jack: Absolutely not.', 'diane: JACK!!!']);
   assert.equal(B(ep)[1].showsProduct, true);
   assert.match(B(ep)[1].visual, /magnetic umbrella holder/);
   // validation passes (6 beats, 3 shots, Korean titles) and a prompt asked for comedy intensity 3 by default
@@ -101,12 +104,12 @@ test('the AI cannot break the formula: a missing beat, a generic beat title or a
     await assert.rejects(s.scriptgen.generate(id, { confirm: CONFIRM }), (e) => e.code === 'SCRIPT_REJECTED');
     const ep = s.store.episodes.get(id);
     assert.equal(A(ep).length, 0);
-    assert.equal(B(ep).length, 3);
+    assert.equal(B(ep).length, 4);
   }
   // a model that "writes" the ending itself is ignored: unknown keys never become shots
   const { s, id } = await episode(ai({ story: () => { const g = umbrellaStory(); g.product_ending = { extra: { x: 1 } }; g.comedy_story.extra_beat = g.comedy_story.setup; return g; } }));
   await s.scriptgen.generate(id, { confirm: CONFIRM });
-  assert.equal(B(s.store.episodes.get(id)).length, 3);
+  assert.equal(B(s.store.episodes.get(id)).length, 4);
   assert.deepEqual([...new Set(A(s.store.episodes.get(id)).map((x) => x.beatKey))], F.BEAT_KEYS);
 });
 
@@ -118,11 +121,18 @@ test('validation: exactly three ending shots in the fixed order; Part A before P
   s.endings.save('jack-diane-coupang-ending-v1', { structureLocked: false });
   await s.scriptgen.selectEnding(id, { templateId: 'jack-diane-coupang-ending-v1' });
   assert.equal(s.store.episodes.get(id).ending.structureLocked, false);
-  // a fourth ending shot is an error
-  await s.saveScript(id, { scenes: all().concat([{ id: 'E4', part: 'B', beatKey: 'jack_reaction', title_ko: '네 번째 컷', durationSec: 3, characters: ['jack'], visual: 'x' }]).map((x) => ({ ...x })) });
+  // a 5-second episode may split one ending shot into consecutive scenes (E3 + E4 already do), but never repeat or reorder the three steps
+  assert.ok(!s.episodeView(id).derived.validation.errors.some((e) => e.code === 'ENDING_COUNT' || e.code === 'ENDING_ORDER'));
+  const order = all().map((x) => ({ ...x })); const i2 = order.findIndex((x) => x.id === 'E2'); const i3 = order.findIndex((x) => x.id === 'E3'); [order[i2], order[i3]] = [order[i3], order[i2]];
+  await s.saveScript(id, { scenes: order });
+  assert.ok(s.episodeView(id).derived.validation.errors.some((e) => e.code === 'ENDING_ORDER'));
+  // legacy episodes (no 5-second policy) keep the exact three-shot rule
+  await s.store.episodes.update(id, (e) => { delete e.durationPolicy; });
+  await s.saveScript(id, { scenes: all().map((x) => ({ ...x })) });
   assert.ok(s.episodeView(id).derived.validation.errors.some((e) => e.code === 'ENDING_COUNT'));
+  await s.store.episodes.update(id, (e) => { e.durationPolicy = { maxSceneSec: 5 }; });
   // removing the scenes of a beat is an error naming that beat
-  const keep = all().filter((x) => x.id !== 'E4' && x.beatKey !== 'unexpected_twist');
+  const keep = all().filter((x) => x.beatKey !== 'unexpected_twist');
   await s.saveScript(id, { scenes: keep.map((x) => ({ ...x })) });
   const errs = s.episodeView(id).derived.validation.errors;
   assert.ok(errs.some((e) => e.code === 'BEAT_MISSING' && e.beatKey === 'unexpected_twist'));
@@ -140,7 +150,7 @@ test('structure lock: while locked, Part B cannot gain, lose or reorder shots bu
   // a client cannot re-assign a Part B scene to another slot or part either
   const re = sc().map((x) => (x.id === 'E2' ? { ...x, beatKey: 'setup', part: 'A' } : x));
   await s.saveScript(id, { scenes: re });
-  assert.deepEqual(B(s.store.episodes.get(id)).map((x) => x.beatKey), F.ENDING_KEYS);
+  assert.deepEqual(Bkeys(s.store.episodes.get(id)), F.ENDING_KEYS);
   // product-specific content is editable
   await s.saveScript(id, { scenes: sc().map((x) => (x.id === 'E2' ? { ...x, visual: 'My own demo framing of the holder.' } : x)) });
   assert.equal(s.store.episodes.get(id).scenes.find((x) => x.id === 'E2').visual, 'My own demo framing of the holder.');
@@ -218,7 +228,7 @@ test('changing the product updates the product-specific ending content but never
   const e1 = ep2.lines.filter((l) => l.sceneId === 'E1')[0];
   assert.match(e1.en, /order folding laundry rack on Coupang/);
   assert.match(e1.ko, /접이식 빨래건조대/);
-  assert.match(ep2.lines.filter((l) => l.sceneId === 'E3')[2].en, /use a dryer now\?/);
+  assert.match(ep2.lines.filter((l) => reactionIds.includes(l.sceneId))[2].en, /use a dryer now\?/);
   assert.match(B(ep2)[1].visual, /unfolds the laundry rack/);
   // Part A untouched
   assert.equal(JSON.stringify(A(ep2)), JSON.stringify(A(ep1)));
@@ -235,12 +245,12 @@ test('Part B hand edits survive refills; ending template selection per episode; 
   await s.scriptgen.generate(id, { confirm: CONFIRM });
   const sc = s.store.episodes.get(id).scenes.map((x) => ({ ...x }));
   const lines = s.store.episodes.get(id).lines.map((l) => ({ ...l }));
-  lines.find((l) => l.sceneId === 'E3' && l.speaker === 'jack' && /Absolutely/.test(l.en)).en = 'Not a chance, baby.';
+  lines.find((l) => reactionIds.includes(l.sceneId) && l.speaker === 'jack' && /Absolutely/.test(l.en)).en = 'Not a chance, baby.';
   await s.saveScript(id, { scenes: sc, lines });
-  assert.equal(s.store.episodes.get(id).scenes.find((x) => x.id === 'E3').manualEdit, true);
+  assert.equal(s.store.episodes.get(id).scenes.find((x) => x.id === lines.find((l) => l.en === 'Not a chance, baby.').sceneId).manualEdit, true);
   await s.saveScript(id, { ending: { vars: { USE_PHRASE: 'a raincoat', USE_PHRASE_KO: '우비를' } } });
   const ep = s.store.episodes.get(id);
-  assert.ok(ep.lines.some((l) => l.sceneId === 'E3' && l.en === 'Not a chance, baby.'), 'the hand-edited shot is kept');
+  assert.ok(ep.lines.some((l) => reactionIds.includes(l.sceneId) && l.en === 'Not a chance, baby.'), 'the hand-edited shot is kept');
   assert.match(ep.lines.filter((l) => l.sceneId === 'E1')[0].en, /BABYYYY/);
   // another template (a duplicate with a different Jack line) can be selected for just this episode
   const dup = s.endings.duplicate('jack-diane-coupang-ending-v1', { name: '내 엔딩' });
@@ -250,10 +260,10 @@ test('Part B hand edits survive refills; ending template selection per episode; 
   const ep2 = s.store.episodes.get(id);
   assert.equal(ep2.ending.templateId, dup.id);
   assert.match(ep2.lines.find((l) => l.sceneId === 'E1').en, /ALT-TEMPLATE-LINE/);
-  assert.ok(ep2.lines.some((l) => l.sceneId === 'E3' && l.en === 'Not a chance, baby.'), 'still protected without resetEdits');
+  assert.ok(ep2.lines.some((l) => reactionIds.includes(l.sceneId) && l.en === 'Not a chance, baby.'), 'still protected without resetEdits');
   await s.scriptgen.selectEnding(id, { templateId: dup.id, resetEdits: true });
   assert.ok(!s.store.episodes.get(id).lines.some((l) => l.en === 'Not a chance, baby.'), 'resetEdits rebuilds from the template');
-  assert.equal(B(s.store.episodes.get(id)).length, 3);
+  assert.equal(B(s.store.episodes.get(id)).length, 4);
   await assert.rejects(s.scriptgen.selectEnding(id, { templateId: 'nope' }), (e) => e.code === 'NOT_FOUND');
 });
 
@@ -355,13 +365,13 @@ test('storyboard / video / render stay compatible: flat scenes with titles, time
   await s.scriptgen.generate(id, { confirm: CONFIRM });
   await approveWithScenes(s, id);
   const v = s.episodeView(id);
-  assert.equal(v.scenes.length, 9);
+  assert.equal(v.scenes.length, 10);
   assert.ok(v.scenes.every((x) => x.title_ko && x.part && x.beatKey));
-  assert.equal(v.timeline.scenes.length, 9);
-  assert.equal(v.timeline.scenes[8].title, '영국인의 마지막 고집');
+  assert.equal(v.timeline.scenes.length, 10);
+  assert.equal(v.timeline.scenes[9].title, '영국인의 마지막 고집');
   // template storyboard prompts exist for every scene (free, deterministic) and mention the Korean-titled scene
   const ep = s.store.episodes.get(id);
-  assert.equal(Object.keys(ep.prompts).length, 9);
+  assert.equal(Object.keys(ep.prompts).length, 10);
   assert.match(ep.prompts.E3.video, /SCENE E3|영국인의 마지막 고집/);
   // reusing approved ending start frames from another episode copies them without changing the source
   const other = await episode();
