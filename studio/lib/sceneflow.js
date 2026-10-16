@@ -88,7 +88,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
     const ls = approvedLipsync(ep, sid);
     if (ls && anim) return Object.assign({ kind: 'lipsync' }, ls);
     const rec = ((ep.sceneFinal || {})[sid]) || {};
-    if (!ls && anim && rec.approved && rec.approved.parts && rec.approved.parts.lipsync === undefined) return Object.assign({ kind: 'animation', legacy: true }, anim);
+    if (!ls && anim && ((ep.lipsyncSkipped || {})[sid] === true || (rec.approved && rec.approved.parts && rec.approved.parts.lipsync === undefined))) return Object.assign({ kind: 'animation', legacy: true }, anim);
     return null;
   }
   function cutsOf(ep, sid) {
@@ -112,7 +112,10 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
       sfx: h(sfxOf(ep, sid).map((x) => [x.id, x.sha256, x.offsetSec, x.gainDb].concat(x.fadeInSec || x.fadeOutSec ? [x.fadeInSec || 0, x.fadeOutSec || 0] : []))),
     };
     // only present when a lip-synced video is in use, so scenes approved before the lip-sync stage keep their hash
-    if (ls && linesOf(ep, sid).length) parts.lipsync = h([ls.v, ls.sha256]);
+    if (linesOf(ep, sid).length) {
+      if ((ep.lipsyncSkipped || {})[sid] === true) parts.lipsyncMode = 'skipped';
+      else if (ls) parts.lipsync = h([ls.v, ls.sha256]);
+    }
     return parts;
   }
   const sceneHash = (parts) => h(parts);
@@ -133,7 +136,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
     if (!parts.clip) missing.push('clip');
     if (parts.clip && !sourceOf(ep, sid)) missing.push('lipsync');
     if (!audioOk(ep, sid)) missing.push('audio');
-    const changed = (old) => old ? Object.keys(PART_LABEL).filter((k) => (old[k] || '') !== (parts[k] || '')) : [];
+    const changed = (old) => old ? Object.keys(Object.assign({}, parts, old)).filter((k) => (old[k] || '') !== (parts[k] || '')) : [];
     const comp = rec.composite && rec.composite.hash === hash && rec.composite.file && fs.existsSync(store.episodes.file(ep.id, rec.composite.file)) ? rec.composite : null;
     let state;
     if (missing.length) state = rec.approved ? 'stale' : 'incomplete';
