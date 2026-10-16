@@ -53,11 +53,6 @@ export function storyboard() {
     disabled: !ep.derived.scriptApproved || selected.size === 0,
     onclick: async () => {
       if (!selected.size) return;
-      // Avoid generating from stale edits in the currently open cut.
-      if (Object.values(uiState().sbDraft || {}).some((v) => v && v.dirty)) {
-        toast('수정 중인 컷을 먼저 저장한 뒤 이미지 생성을 요청하세요.', { error: true });
-        return;
-      }
       await makeStartImages(ep, [...selected], { after: refresh });
     } }, '선택한 컷 이미지 요청 (' + selected.size + ')');
   const selectionList = h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap', 'data-sb-image-selection': ep.id },
