@@ -410,6 +410,9 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
     }
     return { modelId, endpoint, imageField, imageType, connected, mode: S.video.mode, paidRequestSent: false, remoteEndpointVerified: false, checkedAt: new Date().toISOString(), blockers: [...new Set(problems)], canGenerate: connected && problems.length === 0 && !!estimate.canAuthorize };
   });
+  route('POST', '/api/episodes/:id/broll/:bid/clip/estimate', async ({ p, body }) => S.gen.estimateBroll(p.id, p.bid, body || {}));
+  route('POST', '/api/episodes/:id/broll/:bid/clip/generate', async ({ p, body }) => { S.assertNotHeld(p.id); const { accepted, done } = await S.gen.generateBroll(p.id, p.bid, body || {}); bg(done, 'broll-generation'); return { status: 202, data: { accepted } }; });
+  route('POST', '/api/episodes/:id/broll/:bid/clip/:v/review', async ({ p, body }) => { S.assertNotHeld(p.id); await S.gen.reviewBroll(p.id, p.bid, Number(p.v), body && body.decision); return ep(p.id); });
   route('POST', '/api/episodes/:id/generation/estimate', async ({ p, body }) => S.gen.estimate(p.id, body));
   route('POST', '/api/episodes/:id/generation/authorize', async ({ p, body }) => { S.assertNotHeld(p.id); return S.gen.authorize(p.id, body); });
   route('POST', '/api/episodes/:id/generation/run', async ({ p, body }) => {
@@ -456,7 +459,21 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
     if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0 || raw > 30 || Math.abs(raw / 0.3 - Math.round(raw / 0.3)) > 0.00001) throw new StudioError('BAD_OFFSET', '음성 위치는 0–30초 범위에서 0.3초 단위로 지정하세요.', { status: 422 });
     const ep0 = S.store.episodes.get(p.id);
     if (!(ep0.lines || []).some((l) => l.id === p.lid)) throw new StudioError('NOT_FOUND', '대사를 찾을 수 없습니다.', { status: 404 });
-    await S.store.episodes.update(p.id, (e) => { e.audioTiming = Object.assign({}, e.audioTiming || {}, { [p.lid]: Math.round(raw * 10) / 10 }); });
+    const nextOffset = Math.round(raw * 10) / 10;
+    if (ep0.durationPolicy && ep0.durationPolicy.maxSceneSec === 5) {
+      const preview = Object.assign({}, ep0, { audioTiming: Object.assign({}, ep0.audioTiming || {}, { [p.lid]: nextOffset }) });
+      const { buildTimeline } = require('./lib/timeline');
+      const timeline = buildTimeline(preview, (lid) => {
+        const line = (preview.lines || []).find((l) => l.id === lid);
+        if (!line) return null;
+        const audio = S.voice.lineAudio(preview, line);
+        return audio && audio.valid ? audio.durationSec : null;
+      });
+      const scene = (ep0.lines || []).find((l) => l.id === p.lid).sceneId;
+      const resulting = timeline.scenes.find((s) => s.id === scene);
+      if (resulting && resulting.duration > 5.001) throw new StudioError('SCENE_OVER_5_SECONDS', '이 위치로 이동하면 씬이 5초를 초과합니다. 음성을 줄이거나 동일한 스토리 단계에서 씬을 나눠 주세요.', { status: 409 });
+    }
+    await S.store.episodes.update(p.id, (e) => { e.audioTiming = Object.assign({}, e.audioTiming || {}, { [p.lid]: nextOffset }); });
     return ep(p.id);
   });
   route('PUT', '/api/episodes/:id/video-edit/transition', async ({ p, body }) => { await S.videoEdit.saveTransition(p.id, body || {}); return ep(p.id); });

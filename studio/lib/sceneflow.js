@@ -169,6 +169,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
       const tl = buildTimeline(ep, (id) => (audio[id] && audio[id].valid ? audio[id].durationSec : null));
       const ts = tl.scenes.find((x) => x.id === sid);
       const dur = Math.max(0.5, ts ? ts.duration : Number(sc.durationSec));
+      if (ep.durationPolicy && ep.durationPolicy.maxSceneSec === 5 && dur > 5.001) throw new StudioError('SCENE_OVER_5_SECONDS', `${sid}: 승인된 음성 길이까지 합치면 ${dur.toFixed(2)}초입니다. 최대 5초에 맞게 대사를 짧게 하거나 씬을 나누세요.`, { status: 409 });
       const cuts = cutsOf(ep, sid);
       const overlays = cuts.broll.filter((b) => b.file && fs.existsSync(b.file)).map((b) => ({ id: b.id, at: b.at, dur: b.dur, file: b.file }));
       const items = tl.lines.filter((l) => l.sceneId === sid && audio[l.id]).map((l) => ({ file: audio[l.id].file, start: Math.max(0, l.start - ts.start), gainDb: 0 }));
@@ -232,7 +233,16 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
   /** problems for the final render: every scene must have an approved, current scene final */
   function renderProblems(ep) {
     const out = [];
+    const realTimeline = buildTimeline(ep, (id) => {
+      const line = (ep.lines || []).find((l) => l.id === id);
+      if (!line) return null;
+      const item = voice.lineAudio(ep, line);
+      return item && item.valid ? item.durationSec : null;
+    });
     (ep.scenes || []).forEach((s) => {
+      const actual = realTimeline.scenes.find((x) => x.id === s.id);
+      if (ep.durationPolicy && ep.durationPolicy.maxSceneSec === 5 && actual && actual.duration > 5.001) out.push({ code: 'SCENE_AUDIO_OVER_5_SECONDS', sceneId: s.id, message: `${s.id}: 오디오 포함 길이 ${actual.duration.toFixed(2)}초가 최대 5초를 초과합니다. 대사를 줄이거나 씬을 나누세요.` });
+      if (ep.durationPolicy && ep.durationPolicy.maxSceneSec === 5 && Number(s.durationSec) > 5) out.push({ code: 'SCENE_OVER_5_SECONDS', sceneId: s.id, message: `${s.id}: 씬 길이는 최대 5초입니다. 대본에서 씬을 나누거나 줄여주세요.` });
       const st = sceneState(ep, s.id);
       if (st.state === 'approved') return;
       const why = st.state === 'stale' ? `승인 후 ${st.changed.join('·') || '내용'}이(가) 바뀌었습니다` : st.state === 'incomplete' ? `${st.missing.join('·')} 승인 대기` : st.state === 'built' ? '합본 확인·승인 대기' : '씬 합치기 대기';

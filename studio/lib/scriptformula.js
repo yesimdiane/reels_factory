@@ -86,7 +86,7 @@ function seedFormula(ep, endings, templateId) {
 // ---------- AI output ----------
 const bad = (message, details = []) => new StudioError('SCRIPT_REJECTED', message, { details, recovery: '다시 생성하거나 프롬프트를 확인하세요. 저장하지 않았습니다.', status: 422 });
 
-function normalizeBeat(raw, key, charIds) {
+function normalizeBeat(raw, key, charIds, maxSceneSec = 15) {
   const meta = F.beatMeta(key);
   if (!raw || typeof raw !== 'object') throw bad(`"${meta.ko}" 단계가 없습니다.`);
   const t = checkTitleKo(raw.title_ko);
@@ -101,6 +101,7 @@ function normalizeBeat(raw, key, charIds) {
   if (!scenes.length) throw bad(`"${meta.ko}" 단계에 장면이 없습니다 (단계마다 최소 한 장면이 필요합니다).`);
   const problems = [];
   scenes.forEach((s, i) => {
+    if (!(s.durationSec >= 1 && s.durationSec <= maxSceneSec)) problems.push(`${meta.ko} 장면 ${i + 1}: 길이는 1~${maxSceneSec}초여야 합니다. 동일한 스토리 단계에서 여러 씬으로 나눠 주세요.`);
     checkTitleKo(s.title_ko).errors.forEach((m) => problems.push(`${meta.ko} 장면 ${i + 1}: ${m}`));
     if (!s.characters.length) problems.push(`${meta.ko} 장면 ${i + 1}: 등장 캐릭터가 없습니다.`);
     s.lines.forEach((l) => { if (!charIds.has(l.speaker)) problems.push(`${meta.ko} 장면 ${i + 1}: 알 수 없는 화자 (${l.speaker}).`); });
@@ -114,10 +115,10 @@ function normalizeVars(raw) {
   VAR_KEYS.forEach((k) => { const v = String(raw[k] == null ? '' : raw[k]).trim().slice(0, 300); if (v) out[k] = v; });
   return out;
 }
-function normalizeStory(raw, charIds) {
+function normalizeStory(raw, charIds, maxSceneSec = 15) {
   if (!raw || typeof raw !== 'object' || !raw.comedy_story || typeof raw.comedy_story !== 'object') throw bad('AI 응답에 comedy_story가 없습니다.');
   const beats = {};
-  F.BEAT_KEYS.forEach((k) => { beats[k] = normalizeBeat(raw.comedy_story[k], k, charIds); });
+  F.BEAT_KEYS.forEach((k) => { beats[k] = normalizeBeat(raw.comedy_story[k], k, charIds, maxSceneSec); });
   const cta = raw.cta && typeof raw.cta === 'object' ? { lines: (raw.cta.lines || []).map(String), keyword: String(raw.cta.keyword || '').trim(), durationSec: Number(raw.cta.durationSec) || 3.5 } : null;
   return { title: String(raw.title || ''), beats, vars: normalizeVars(raw.ending_vars), cta };
 }

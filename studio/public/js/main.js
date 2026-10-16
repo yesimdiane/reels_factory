@@ -20,6 +20,7 @@ import { guardLeave } from './views/leave-guard.js';
 import { startBilingual } from './bilingual.js';
 import { episodeHeader } from './views/episode-actions.js';
 import { episodeFlow } from './views/episode-flow.js';
+import { studioApprovals } from './views/studio-approvals.js';
 
 // [key, ko, en, view, inRail]. Every route keeps working (deep links); only six of them are rail items.
 // Production sequence: Product Studio → Story Lab → Episodes (episode workspace: Script → Image → Video → Review → Publishing) → Image Studio → Video Production → Settings.
@@ -120,6 +121,7 @@ export function rerender() {
   try {
     if (state.episode && EP_HEADER_VIEWS.includes(state.view)) { const eh = episodeHeader(state.episode); if (eh) stage.append(eh); }
     if (state.episode && EPISODE_VIEWS.includes(state.view)) stage.append(episodeFlow(state.view, state.episode));
+    if (state.episode && EPISODE_VIEWS.includes(state.view)) { const approvals = studioApprovals(state.view, state.episode); if (approvals) stage.append(approvals); }
     stage.append(nav[3](state));
   } catch (e) {
     console.error(e);

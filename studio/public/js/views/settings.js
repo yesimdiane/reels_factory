@@ -40,17 +40,26 @@ function parts() {
       kv('Gemini (프롬프트 AI)', p.gemini.configured ? chip('키 설정됨 · ' + p.gemini.model, 'done') : chip('키 없음 — 템플릿만', 'attention')),
       h('p', { class: 'small muted', style: 'margin:10px 0 0' }, p.lipSync.note))));
 
-  // Default video model is shared by Animation Studio and B-roll generation.
+  // Animation and B-roll video models can be configured independently.
   // Changing it never triggers a paid generation or overwrites per-scene choices.
   const defaultVideoModel = { id: st.defaultModelId || '' };
+  const defaultBrollModel = { id: st.brollModelId || st.defaultModelId || '' };
   sec.connections.append(h('div', { class: 'card stack', style: 'gap:12px', 'data-default-video-model': '' },
     h('div', { class: 'card-head' }, h('h2', null, '영상 생성 기본 AI 모델'),
       h('button', { class: 'btn sm', type: 'button', 'data-default-model-save': '', onclick: () => act(() => api.put('/api/settings', { defaultModelId: defaultVideoModel.id }), { ok: '영상 기본 모델을 저장했습니다. 기존 장면별 모델 설정은 유지됩니다.' }) }, '기본 모델 저장')),
-    h('label', { class: 'field' }, h('span', { class: 'small' }, 'Animation Studio · B-roll 기본 모델'),
+    h('label', { class: 'field' }, h('span', { class: 'small' }, 'Animation Studio 기본 모델'),
       h('select', { 'data-default-model-select': '', value: defaultVideoModel.id, onchange: (e) => (defaultVideoModel.id = e.target.value) },
         (s.models || []).map((m) => h('option', { value: m.id, selected: m.id === defaultVideoModel.id }, (m.label || m.id) + ' · ' + m.id + (m.verification === 'unverified' ? ' (미검증)' : ''))))),
     h('div', { class: 'small muted' }, '여기서 선택한 모델은 새 영상 생성의 기본값입니다. 장면별로 지정한 모델은 그대로 유지됩니다. 모델을 변경해도 생성이나 과금은 시작되지 않습니다.'),
     h('div', { class: 'small muted' }, '원하는 모델이 없으면 아래 Muapi 영상 모델의 "모델 직접 추가"에서 플레이그라운드에 표시된 모델 ID와 엔드포인트를 등록하고, 비용 설정도 입력하세요.')));
+
+  sec.connections.append(h('div', { class: 'card stack', style: 'gap:12px', 'data-broll-video-model': '' },
+    h('div', { class: 'card-head' }, h('h2', null, 'B-roll 클립 전용 AI 모델'),
+      h('button', { class: 'btn sm', type: 'button', 'data-broll-model-save': '', onclick: () => act(() => api.put('/api/settings', { brollModelId: defaultBrollModel.id }), { ok: 'B-roll 전용 모델을 저장했습니다. 일반 씬 모델은 유지됩니다.' }) }, 'B-roll 모델 저장')),
+    h('label', { class: 'field' }, h('span', { class: 'small' }, '승인된 B-roll 이미지 → 영상 클립'),
+      h('select', { 'data-broll-model-select': '', onchange: (e) => (defaultBrollModel.id = e.target.value) },
+        (s.models || []).map((m) => h('option', { value: m.id, selected: m.id === defaultBrollModel.id }, (m.label || m.id) + ' · ' + m.id + (m.verification === 'unverified' ? ' (미검증)' : ''))))),
+    h('div', { class: 'small muted' }, 'B-roll 전용 모델 선택은 일반 씬 애니메이션에 영향을 주지 않습니다. 저장해도 유료 영상은 생성되지 않습니다. 실제 생성 전 비용 확인과 별도 승인이 필요합니다.')));
 
   // Muapi connection check + models (explicit buttons only: nothing here runs on page load)
   const chk = h('div', { class: 'small', 'data-muapi-result': '' }, h('span', { class: 'muted' }, '"연결 확인"은 무료 조회(잔액·모델 목록)만 합니다. 영상 생성은 시작되지 않습니다.'));
