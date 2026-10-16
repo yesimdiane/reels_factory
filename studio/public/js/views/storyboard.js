@@ -49,11 +49,13 @@ export function storyboard() {
   const existing = selection.sbImageBatch[ep.id];
   const eligible = ep.scenes.filter((s) => !(s.startImageInfo && s.startImageInfo.approved));
   const selected = new Set(Array.isArray(existing) ? existing.filter((id) => eligible.some((s) => s.id === id)) : eligible.map((s) => s.id));
+  selection.sbImageForce = selection.sbImageForce || {};
+  let regenerateExisting = !!selection.sbImageForce[ep.id];
   const batchButton = h('button', { class: 'btn clay', type: 'button', 'data-sb-generate-selected': ep.id,
     disabled: !ep.derived.scriptApproved || selected.size === 0,
     onclick: async () => {
       if (!selected.size) return;
-      await makeStartImages(ep, [...selected], { after: refresh });
+      await makeStartImages(ep, [...selected], { force: regenerateExisting, after: refresh });
     } }, '선택한 컷 이미지 요청 (' + selected.size + ')');
   const selectionList = h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap', 'data-sb-image-selection': ep.id },
     ep.scenes.map((s) => {
@@ -70,9 +72,13 @@ export function storyboard() {
   wrap.append(h('section', { class: 'card stack', style: 'gap:10px', 'data-sb-image-batch': ep.id },
     h('div', { class: 'row between', style: 'gap:10px;flex-wrap:wrap' },
       h('div', null, h('b', null, '컷별 이미지 일괄 요청'),
-        h('div', { class: 'small muted' }, '컷 구성을 저장한 후 요청하세요. 승인된 이미지는 제외하고, 기존 생성 이미지는 중복 과금 없이 건너뜁니다.')),
+        h('div', { class: 'small muted' }, '컷 구성을 저장한 후 요청하세요. 승인된 이미지는 보호됩니다. 기존 미승인 이미지도 재생성 옵션으로 새 버전을 만들 수 있습니다.')),
       batchButton),
     selectionList,
+    h('label', { class: 'small row', style: 'gap:8px;align-items:center;cursor:pointer' },
+      h('input', { type: 'checkbox', 'data-sb-force-existing': ep.id, checked: regenerateExisting, onchange: (e) => { regenerateExisting = e.target.checked; selection.sbImageForce[ep.id] = regenerateExisting; } }),
+      '기존 미승인 이미지도 다시 생성 (추가 비용 발생 가능)'),
+    h('div', { class: 'small muted' }, '기존 이미지를 건너뛰지 않고 새 이미지를 요청합니다. 실제 생성은 예상 비용 및 명시적 결제 승인 후 시작하며, 승인된 이미지는 덮어쓰지 않습니다.'),
     h('div', { class: 'row', style: 'gap:8px' },
       h('button', { class: 'btn sm ghost', type: 'button', onclick: () => {
         selected.clear(); eligible.forEach((s) => selected.add(s.id));
