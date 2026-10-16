@@ -229,8 +229,8 @@ async function startBrollClip(ep, b) {
 function brollSection(ep, sc) {
   const list = (sc.broll || []).filter((b) => b.status === 'approved');
   const planned = (sc.broll || []).filter((b) => b.status !== 'removed').length;
-  return h('section', { class: 'card stack', style: 'gap:8px', 'data-anim-broll': sc.id },
-    h('div', { class: 'row between' }, h('b', null, 'B-roll 애니메이션'), h('span', { class: 'small muted' }, `승인된 B-roll ${list.length} / 전체 ${planned}`)),
+  return h('details', { class: 'card stack', style: 'gap:8px', 'data-anim-broll': sc.id },
+    h('summary', { class: 'row between', style: 'cursor:pointer;flex-wrap:wrap;gap:8px' }, h('b', null, 'B-roll 애니메이션'), h('span', { class: 'small muted' }, `승인된 B-roll ${list.length} / 전체 ${planned}`)),
     h('div', { class: 'small muted' }, '승인된 B-roll 정지 이미지를 짧은 클립으로 움직입니다. 장면 클립과 별개로 보관되며 장면 갤러리에는 섞이지 않습니다.'),
     list.length ? list.map((b) => {
       const c = b.clip || { versions: [], approvedVersion: null };
@@ -256,8 +256,8 @@ export function animationStudio(ep) {
   const sc = ep.scenes.find((s) => s.id === cur);
   return h('div', { class: 'stack', style: 'gap:14px', 'data-animation-studio': '' },
     nav(ep, cur),
-    h('section', { class: 'card stack', style: 'gap:10px', 'data-anim-workspace': sc.id },
-      h('div', { class: 'row between', style: 'flex-wrap:wrap;gap:8px' }, h('div', null, h('div', { class: 'eyebrow' }, `${sc.id} · 계획 ${sc.durationSec}초`), h('h2', { style: 'margin:2px 0 0' }, sc.title_ko || sc.title)), h('span', { class: 'small muted' }, '스토리보드의 승인된 이미지 → 이 장면의 클립 → 비디오 스튜디오에서 조립')),
+    h('details', { class: 'card stack', style: 'gap:10px', 'data-anim-workspace': sc.id, open: !sc.clips.approvedVersion },
+      h('summary', { class: 'row between', style: 'flex-wrap:wrap;gap:8px;cursor:pointer' }, h('div', null, h('div', { class: 'eyebrow' }, `${sc.id} · 계획 ${sc.durationSec}초`), h('h2', { style: 'margin:2px 0 0' }, sc.title_ko || sc.title)), h('span', { class: 'small muted' }, sc.clips.approvedVersion ? '✓ 승인 완료 · 펼치기' : '생성 설정 · 펼치기/접기')),
       gatesPanel(ep, sc),
       h('div', { class: 'anim-cols' }, leftColumn(ep, sc), rightColumn(ep, sc))),
     brollSection(ep, sc));
