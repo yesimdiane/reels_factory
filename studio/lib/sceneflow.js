@@ -86,6 +86,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
     const anim = approvedClip(ep, sid);
     if (!linesOf(ep, sid).length) return anim ? Object.assign({ kind: 'animation' }, anim) : null;
     const ls = approvedLipsync(ep, sid);
+    if ((ep.lipsyncSkipped || {})[sid] === true && anim) return Object.assign({ kind: 'animation', skippedLipsync: true }, anim);
     if (ls && anim) return Object.assign({ kind: 'lipsync' }, ls);
     const rec = ((ep.sceneFinal || {})[sid]) || {};
     if (!ls && anim && ((ep.lipsyncSkipped || {})[sid] === true || (rec.approved && rec.approved.parts && rec.approved.parts.lipsync === undefined))) return Object.assign({ kind: 'animation', legacy: true }, anim);
@@ -113,7 +114,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
     };
     // only present when a lip-synced video is in use, so scenes approved before the lip-sync stage keep their hash
     if (linesOf(ep, sid).length) {
-      if ((ep.lipsyncSkipped || {})[sid] === true) parts.lipsyncMode = 'skipped';
+      if ((ep.lipsyncSkipped || {})[sid] === true) parts.lipsync = 'skipped';
       else if (ls) parts.lipsync = h([ls.v, ls.sha256]);
     }
     return parts;
@@ -136,7 +137,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
     if (!parts.clip) missing.push('clip');
     if (parts.clip && !sourceOf(ep, sid)) missing.push('lipsync');
     if (!audioOk(ep, sid)) missing.push('audio');
-    const changed = (old) => old ? Object.keys(Object.assign({}, parts, old)).filter((k) => (old[k] || '') !== (parts[k] || '')) : [];
+    const changed = (old) => old ? Object.keys(PART_LABEL).filter((k) => (old[k] || '') !== (parts[k] || '')) : [];
     const comp = rec.composite && rec.composite.hash === hash && rec.composite.file && fs.existsSync(store.episodes.file(ep.id, rec.composite.file)) ? rec.composite : null;
     let state;
     if (missing.length) state = rec.approved ? 'stale' : 'incomplete';
