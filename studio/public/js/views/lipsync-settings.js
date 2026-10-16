@@ -13,7 +13,10 @@ export function lipsyncModelsCard(summary) {
   const rows = L.models.map((m) => {
     const [vl, vk] = VER[m.verification] || [m.verification, ''];
     return h('tr', { 'data-lipsync-model-row': m.id }, h('td', null, h('b', null, m.label), m.custom ? chip('직접 추가', 'mock') : null, h('div', { class: 'small muted mono' }, m.endpoint)),
-      h('td', null, chip(vl, vk)), h('td', null, SPK[m.speakers] || SPK.unknown), h('td', null, m.costEstimateUsd != null ? fmtUsd(m.costEstimateUsd) : '미입력'),
+      h('td', null, chip(vl, vk)), h('td', null, SPK[m.speakers] || SPK.unknown), h('td', null, h('label', { class: 'field', style: 'min-width:120px' },
+        h('span', { class: 'small muted' }, '장면당 예상 USD'),
+        h('input', { type: 'number', min: '0', step: '0.001', 'aria-label': m.label + ' 장면당 가격 USD', 'data-lipsync-price': m.id, value: m.costEstimateUsd == null ? '' : String(m.costEstimateUsd),
+          onchange: (e) => { const v = e.target.value; act(() => api.put('/api/lipsync/models/' + encodeURIComponent(m.id) + '/price', { costEstimateUsd: v === '' ? null : Number(v) }), { ok: '립싱크 모델별 예상 가격을 저장했습니다' }); } }))),
       h('td', null, h('div', { class: 'row', style: 'gap:4px;flex-wrap:wrap' },
         m.verification === 'unverified' ? h('button', { class: 'btn sm ghost', type: 'button', 'data-lipsync-confirm': m.id, onclick: async () => { if (await confirmDialog({ title: '플레이그라운드에서 확인했나요?', body: `${m.endpoint} 엔드포인트와 요청 필드(${m.videoField}, ${m.audioField})를 MuAPI 플레이그라운드에서 직접 확인했다는 표시입니다. 이 앱은 요청을 보내지 않으며, 실제 립싱크는 별도의 정확한 금액 승인이 필요합니다.` })) act(() => api.post('/api/lipsync/models/' + encodeURIComponent(m.id) + '/confirm'), { ok: '확인됨으로 표시했습니다' }); } }, '플레이그라운드에서 확인함') : null,
         m.custom ? h('button', { class: 'btn sm danger', type: 'button', onclick: () => act(() => api.del('/api/lipsync/models/' + encodeURIComponent(m.id)), { ok: '모델을 지웠습니다' }) }, '삭제') : null)));
