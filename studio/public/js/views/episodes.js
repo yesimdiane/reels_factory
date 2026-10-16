@@ -8,12 +8,60 @@ export function episodes() {
   const s = state.summary;
   const wrap = h('div', { class: 'stack', style: 'gap:22px' });
   wrap.append(pageHead('Episodes', '에피소드', '제품과 연결된 에피소드 라이브러리 — 초안, 제작 중, 게시 완료를 한곳에서 관리합니다.', h('button', { class: 'btn', onclick: newEpisode }, '+ 새 에피소드 (승인된 컨셉에서)')));
-  const active = s.episodes.filter((e) => !e.archived);
-  const archived = s.episodes.filter((e) => e.archived);
-  wrap.append(h('div', { class: 'grid three' }, active.map((e) => episodeCard(e))));
-  if (!active.length) wrap.append(h('div', { class: 'empty' }, h('p', null, archived.length ? '진행 중인 에피소드가 없습니다. 보관된 에피소드는 아래에서 볼 수 있습니다.' : '에피소드가 없습니다.')));
-  if (archived.length) wrap.append(h('details', { class: 'card', 'data-archived': '1' }, h('summary', { style: 'cursor:pointer;min-height:36px;display:flex;align-items:center;gap:8px' }, h('b', null, `보관됨 (${archived.length})`), h('span', { class: 'small muted' }, '삭제가 아닙니다 — 언제든 보관 해제할 수 있습니다')),
-    h('div', { class: 'grid three', style: 'margin-top:12px' }, archived.map((e) => episodeCard(e, { archivedView: true })))));
+  const active = (s.episodes || []).filter((e) => !e.archived);
+  const archived = (s.episodes || []).filter((e) => e.archived);
+  const products = state.summary.products || [];
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const viewState = { mode: 'product' };
+  const listing = h('div', { class: 'stack', style: 'gap:18px', 'data-episode-listing': '' });
+  const groupEpisodes = (episodes) => {
+    const groups = new Map();
+    episodes.forEach((e) => {
+      // The summary provides productId; use the name as a fallback for older episodes.
+      const key = e.productId || 'name:' + (e.productName || '미지정 제품');
+      if (!groups.has(key)) groups.set(key, { key, product: productMap.get(e.productId), name: e.productName || '미지정 제품', episodes: [] });
+      groups.get(key).episodes.push(e);
+    });
+    return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  };
+  const groupCard = (group, archivedView = false) => {
+    const p = group.product;
+    const title = p && p.name || group.name;
+    const thumb = p && p.mainImage && p.mainImage.url;
+    return h('section', { class: 'card stack', style: 'gap:12px;min-width:0', 'data-episode-product': group.key },
+      h('div', { class: 'row between', style: 'gap:10px;flex-wrap:wrap' },
+        h('div', { class: 'row', style: 'gap:10px;min-width:0' },
+          thumb ? h('img', { src: thumb, alt: title, loading: 'lazy', style: 'width:54px;height:54px;object-fit:cover;border-radius:10px' }) : null,
+          h('div', { class: 'stack', style: 'gap:3px;min-width:0' },
+            h('h3', { style: 'margin:0;overflow-wrap:anywhere' }, title),
+            h('span', { class: 'small muted' }, group.episodes.length + '개 에피소드'))),
+        p ? h('a', { class: 'btn sm ghost', href: '#/products/' + p.id }, '제품 보기') : null),
+      h('div', { class: 'grid three' }, group.episodes.map((e) => episodeCard(e, { archivedView }))));
+  };
+  const renderListing = () => {
+    listing.replaceChildren();
+    listing.append(h('div', { class: 'row between', style: 'gap:10px;flex-wrap:wrap' },
+      h('div', { class: 'small muted' }, active.length + '개 에피소드 · ' + groupEpisodes(active).length + '개 제품'),
+      h('div', { class: 'row', style: 'gap:6px' },
+        ...[['product', '제품별 보기'], ['all', '전체 보기']].map(([key, label]) =>
+          h('button', { type: 'button', class: 'btn sm ' + (viewState.mode === key ? 'sage' : 'ghost'),
+            'aria-pressed': viewState.mode === key ? 'true' : 'false',
+            'data-episode-view': key, onclick: () => { viewState.mode = key; renderListing(); } }, label)))));
+    if (active.length) {
+      if (viewState.mode === 'product') listing.append(...groupEpisodes(active).map((g) => groupCard(g)));
+      else listing.append(h('div', { class: 'grid three' }, active.map((e) => episodeCard(e))));
+    } else listing.append(h('div', { class: 'empty' }, h('p', null, archived.length ? '진행 중인 에피소드가 없습니다. 보관된 에피소드는 아래에서 볼 수 있습니다.' : '에피소드가 없습니다.')));
+    if (archived.length) listing.append(h('details', { class: 'card', 'data-archived': '1' },
+      h('summary', { style: 'cursor:pointer;min-height:36px;display:flex;align-items:center;gap:8px' },
+        h('b', null, '보관됨 (' + archived.length + ')'),
+        h('span', { class: 'small muted' }, '삭제가 아닙니다 — 언제든 보관 해제할 수 있습니다')),
+      h('div', { class: 'stack', style: 'margin-top:12px;gap:12px' },
+        ...(viewState.mode === 'product'
+          ? groupEpisodes(archived).map((g) => groupCard(g, true))
+          : [h('div', { class: 'grid three' }, archived.map((e) => episodeCard(e, { archivedView: true })))]))));
+  };
+  renderListing();
+  wrap.append(listing);
   wrap.append(trashBox());
   return wrap;
 }
