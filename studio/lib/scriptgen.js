@@ -72,6 +72,8 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
       productRefs: { referenceSetId: b.reference.waived ? 'waived' : (p.referenceSet || {}).id || '', imageIds: b.reference.imageIds || [], waived: b.reference.waived || '' },
       characterRules: rc.universe.id === 'jackdiane' ? ['Diane never calls Jack "오빠".', 'Spoken dialogue in English; subtitles in Korean.', 'Diane may shout "BABYYYY!!!!!!" when excited (not in every scene).', 'Keep the approved 2D character references; exactly one Jack and one Diane.'] : neutralRules(rc),
       scriptSource: null,
+      // Persisted at creation: old episodes without this flag retain legacy durations.
+      durationPolicy: { maxSceneSec: 5 },
       formula: 1,
     };
     // The fixed Jack & Diane drama format (six-beat Part A + reusable shopping ending) is for DRAMA only; Viral / Informational stories get a free structure.
@@ -152,6 +154,12 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
       '',
       U().castPrompt(rc, { stage: 'script' }),
       ...(structured ? formulaData(ep, act) : []),
+      ...(ep.durationPolicy && ep.durationPolicy.maxSceneSec === 5 ? [
+        'MANDATORY SCENE TIMING: every scene must last 1 to 5 seconds (inclusive). NEVER make a scene longer than 5 seconds.',
+        'PART A MUST retain all six story beats in their required order. If a beat needs more than five seconds, split that beat into multiple consecutive scenes with the SAME beatKey; do not merge or delete beats.',
+        'Split dialogue across those scenes at natural sentence boundaries, preserve speaking order and matching Korean subtitles. Keep each scene short enough for all spoken lines plus breathing room. Never cut audio or speed up narration.',
+        'PART B remains exactly three ending shots; write brief product-specific lines that fit the existing ending timings.',
+      ] : []),
     ].join('\n');
     const extraText = [structured && act.instruction ? 'ACTION: ' + act.instruction : '', extra ? 'ADDITIONAL INSTRUCTION FOR THIS RUN (operator):\n' + String(extra).slice(0, 2000) : ''].filter(Boolean).join('\n\n');
     const full = [pc.editable, extraText, data, pc.locked].filter(Boolean).join('\n\n');
