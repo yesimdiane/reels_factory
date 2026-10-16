@@ -87,7 +87,29 @@ export function lipsyncStudio() {
   wrap.append(pageHead('Lip Sync Studio', '립싱크 스튜디오', '승인된 무음 애니메이션과 승인된 음성을 합쳐 말하는 영상을 만듭니다. 결과는 원본 애니메이션과 따로 저장되어, 립싱크만 다시 만들어도 애니메이션·음성은 다시 생성되지 않습니다.', episodePicker()));
   wrap.append(videoTabs('lipsync'));
   wrap.append(pipelineBar(ep));
-  wrap.append(modelCard(ep));
+  const dialogueScenes = ep.scenes.filter((sc) => ep.lipsync.scenes[sc.id].dialogue);
+  const notSkipped = dialogueScenes.filter((sc) => !(ep.lipsyncSkipped && ep.lipsyncSkipped[sc.id]));
+  const skipAll = h('button', { class: 'btn clay', type: 'button', 'data-lipsync-skip-all': ep.id, disabled: !notSkipped.length,
+    onclick: async () => {
+      skipAll.disabled = true;
+      const failed = [];
+      for (const sc of notSkipped) {
+        try { await api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/lipsync/skip`, { skip: true }); }
+        catch (e) { failed.push(sc.id + ': ' + e.message); }
+      }
+      if (failed.length) toast('건너뛰기 실패: ' + failed.join(' / '), { error: true });
+      else toast('립싱크를 생략했습니다. 승인된 영상과 음성으로 합본할 수 있습니다.');
+      await act(async () => null);
+    } }, '모든 대사 장면 립싱크 건너뛰기 (' + notSkipped.length + ')');
+  wrap.append(h('section', { class: 'card stack', style: 'gap:10px', 'data-lipsync-skip-all-panel': ep.id },
+    h('b', null, '립싱크 없이 진행하기'),
+    h('div', { class: 'small muted' }, '입 모양을 맞추지 않고 승인된 애니메이션 + 승인된 음성을 씬 합본에 사용합니다. 모델 선택이나 가격 입력, 유료 립싱크 호출이 필요 없습니다.'),
+    h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, skipAll,
+      h('button', { class: 'btn sage', type: 'button', 'data-lipsync-to-editing': '', onclick: () => { location.hash = '#/render/' + ep.id; } }, '영상 편집으로 이동 →')),
+    h('div', { class: 'small muted' }, '합본 자체는 비디오 스튜디오의 장면 검토에서 일괄 실행하세요. 영상·음성 승인이 안 된 장면은 준비 후 합본할 수 있습니다.')));
+  wrap.append(h('details', { class: 'scene-section', 'data-lipsync-model-advanced': '' },
+    h('summary', null, '립싱크 모델 설정 · 유료 생성 (선택사항)'),
+    modelCard(ep)));
   const talk = ep.scenes.filter((s) => ep.lipsync.scenes[s.id].dialogue);
   const done = talk.filter((s) => ep.lipsync.scenes[s.id].state === 'approved').length;
   wrap.append(h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap', 'data-lipsync-summary': '' }, chip(`대사 장면 ${talk.length}개 중 ${done}개 승인`, done === talk.length ? 'done' : 'attention'), chip(`대사 없는 장면 ${ep.scenes.length - talk.length}개는 건너뜀`, '')));
