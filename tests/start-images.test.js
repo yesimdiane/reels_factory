@@ -79,14 +79,14 @@ test('start images: one call per scene, unapproved AI frames, cast + product rul
   imageRoute(s);
   await approveWithScenes(s, id);
   const ids = s.store.episodes.get(id).scenes.map((x) => x.id);
-  assert.deepEqual(ids, ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'E1', 'E2', 'E3']);
+  assert.deepEqual(ids, ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'E1', 'E2', 'E3', 'E4']);
   const est = s.startImages.estimate(id, []);
-  assert.equal(est.count, 9);
+  assert.equal(est.count, 10);
   const r = await s.startImages.generate(id, [], { confirm: CONFIRM });
   assert.deepEqual(r.generated.map((g) => g.sceneId), ids);
   assert.equal(r.failed, null);
   const calls = a.imageCalls();
-  assert.equal(calls.length, 9);
+  assert.equal(calls.length, 10);
   assert.match(calls[0].prompt, /9:16/);
   assert.match(calls[0].prompt, /anime \/ Korean webtoon/);
   assert.match(calls[0].prompt, /Exactly TWO people/);
@@ -103,12 +103,12 @@ test('start images: one call per scene, unapproved AI frames, cast + product rul
   // repeat press: nothing is billed again; the approved frame is never overwritten, even when forced
   const again = await s.startImages.generate(id, [], { confirm: CONFIRM });
   assert.equal(again.generated.length, 0);
-  assert.equal(a.imageCalls().length, 9);
+  assert.equal(a.imageCalls().length, 10);
   const forced = await s.startImages.generate(id, [], { confirm: CONFIRM, force: true });
   assert.deepEqual(forced.generated.map((g) => g.sceneId), ids.slice(1));
   assert.ok(forced.skipped.some((x) => x.sceneId === 'S1'));
   assert.equal(s.store.episodes.get(id).scenes[0].startImage.approved, true);
-  assert.equal(a.imageCalls().length, 9 + 8);
+  assert.equal(a.imageCalls().length, 10 + 9);
 });
 
 test('start images: a failure part-way keeps the frames already made and reports the scene that stopped', async () => {
@@ -124,6 +124,6 @@ test('start images: a failure part-way keeps the frames already made and reports
   // retry only pays for the scenes that are still missing
   const before = a.imageCalls().length;
   const r2 = await s.startImages.generate(id, [], { confirm: CONFIRM });
-  assert.deepEqual(r2.generated.map((g) => g.sceneId), ['S2', 'S3', 'S4', 'S5', 'S6', 'E1', 'E2', 'E3']);
-  assert.equal(a.imageCalls().length, before + 8);
+  assert.deepEqual(r2.generated.map((g) => g.sceneId), ['S2', 'S3', 'S4', 'S5', 'S6', 'E1', 'E2', 'E3', 'E4']);
+  assert.equal(a.imageCalls().length, before + 9);
 });

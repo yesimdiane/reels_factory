@@ -94,8 +94,8 @@ test('a missing subtitle blocks ONLY its own scene; the other scenes stay approv
   await s.projects.approveScene(id, 'S1');
   const r = await s.projects.approveReady(id);
   assert.deepEqual(r.skipped.map((x) => x.sceneId), ['S2']);
-  assert.equal(r.approved.length, 7);
-  assert.equal(view(s, id).derived.sceneApproval.progress, '8/9 씬 승인');
+  assert.equal(r.approved.length, 8);
+  assert.equal(view(s, id).derived.sceneApproval.progress, '9/10 씬 승인');
 });
 
 test('editing an approved scene keeps the approved version and requires a new approval; other scenes are untouched', async () => {
@@ -145,7 +145,7 @@ test('a scene with an unverified product claim in its direction text cannot be a
 // ---------- 3. project approval ----------
 test('the script can only be approved when every scene is approved; nothing is approved silently', async () => {
   const { s, id } = await episode();
-  await assert.rejects(s.approveScript(id), (e) => e.code === 'SCENES_NOT_APPROVED' && /9개/.test(e.message));
+  await assert.rejects(s.approveScript(id), (e) => e.code === 'SCENES_NOT_APPROVED' && /10개/.test(e.message));
   assert.equal(view(s, id).derived.scriptApproved, false);
   assert.equal(view(s, id).scenes.some((x) => x.approval.approved), false, 'approving the script attempt did not approve any scene');
   await s.projects.approveReady(id);
@@ -154,7 +154,7 @@ test('the script can only be approved when every scene is approved; nothing is a
   await s.projects.approveScene(id, 'E2');
   const v = await s.approveScript(id);
   assert.equal(v.derived.scriptApproved, true);
-  assert.equal(v.derived.sceneApproval.progress, '9/9 씬 승인');
+  assert.equal(v.derived.sceneApproval.progress, '10/10 씬 승인');
 });
 
 test('project approval also needs the six beats, the three-shot ending and a valid ending template', async () => {
@@ -182,7 +182,7 @@ test('editing a scene after the script was approved withdraws the script approva
   const v = view(s, id);
   assert.equal(v.derived.scriptApproved, false);
   assert.equal(v.scenes.filter((x) => !x.approval.approved).map((x) => x.id).join(), 'S3');
-  assert.equal(v.derived.sceneApproval.progress, '8/9 씬 승인');
+  assert.equal(v.derived.sceneApproval.progress, '9/10 씬 승인');
 });
 
 // ---------- 4. Image Development hand-off ----------
@@ -272,14 +272,14 @@ test('duplicating an episode makes an independent copy: no approvals/assets copi
   assert.deepEqual(copy.prompts, {});
   assert.equal(view(s, newId).derived.sceneApproval.approvedCount, 0, 'all scenes need approval again');
   assert.deepEqual(copy.scenes.map((x) => x.id), src.scenes.map((x) => x.id));
-  assert.equal(copy.scenes.filter((x) => x.part === 'B').length, 3, 'the fixed three-shot ending is reused');
+  assert.equal(copy.scenes.filter((x) => x.part === 'B').length, 4, 'the fixed ending (three steps, the last split into two 5 s scenes) is reused');
   assert.equal(copy.ending.templateId, src.ending.templateId);
   assert.equal(copy.scenes[0].origin.episodeId, id);
   assert.equal(copy.scenes[0].origin.linked, false);
   await edit(s, newId, (p) => { p.lines[0].en = 'Edited only in the copy!'; });
   assert.notEqual(s.store.episodes.get(id).lines[0].en, 'Edited only in the copy!');
   assert.equal(view(s, id).derived.scriptApproved, true, 'the original stays approved');
-  assert.equal(view(s, id).derived.sceneApproval.approvedCount, 9);
+  assert.equal(view(s, id).derived.sceneApproval.approvedCount, 10);
 });
 
 test('copying a scene into another episode creates an independent copy that needs approval; the fixed ending cannot be copied scene by scene', async () => {
@@ -341,7 +341,7 @@ test('scene approvals, history, templates and the Image Development workspace su
   const s2 = createStudio({ cfg, provider: createMockVideoProvider({ ffmpeg: cfg.ffmpeg.ffmpeg }) });
   const v = s2.episodeView(id);
   assert.equal(v.derived.scriptApproved, true);
-  assert.equal(v.derived.sceneApproval.progress, '9/9 씬 승인');
+  assert.equal(v.derived.sceneApproval.progress, '10/10 씬 승인');
   assert.equal(v.derived.handoff.current, true);
   assert.equal(s2.projects.sceneHistory(id, 'S1').versions.length, 1);
   assert.equal(s2.projects.templates.list().length, 1);
@@ -362,7 +362,7 @@ test('migration: an episode whose script was approved before scene approvals exi
   const s2 = createStudio({ cfg, provider: createMockVideoProvider({ ffmpeg: cfg.ffmpeg.ffmpeg }) });
   const after = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(after.approvals.script.hash, raw.approvals.script.hash, 'the script approval is untouched');
-  assert.equal(Object.keys(after.sceneApprovals).length, 9);
+  assert.equal(Object.keys(after.sceneApprovals).length, 10);
   assert.equal(after.sceneApprovals.S1.current.by, 'migration');
   assert.ok(after.projectId);
   const v = s2.episodeView(id);
@@ -404,7 +404,7 @@ test('HTTP routes: approve scene → approve ready → approve script → hand-o
     assert.equal(one.status, 200);
     assert.equal(one.json.scenes.find((x) => x.id === 'S1').approval.approved, true);
     const bulk = await call('POST', `/api/episodes/${id}/scenes/approve-ready`);
-    assert.equal(bulk.json.approveResult.approved.length, 8);
+    assert.equal(bulk.json.approveResult.approved.length, 9);
     assert.equal((await call('POST', `/api/episodes/${id}/script/approve`)).status, 200);
     const ho = await call('POST', `/api/episodes/${id}/script/handoff`);
     assert.equal(ho.status, 200);

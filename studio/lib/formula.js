@@ -62,8 +62,11 @@ function validateFormula(ep) {
     t.errors.forEach((m) => E('BEAT_TITLE', `PART A "${b.ko}" 제목: ${m}`, { beatKey: b.key, field: 'beat.title_ko', part: 'A' }));
   });
   const ending = scenes.filter((s) => s.part === 'B');
-  if (ending.length !== 3) E('ENDING_COUNT', `PART B 제품 엔딩은 정확히 3컷이어야 합니다 (현재 ${ending.length}컷).`);
-  else if (ending.some((s, i) => s.beatKey !== ENDING_KEYS[i])) E('ENDING_ORDER', 'PART B는 쇼핑 핑계 → 제품 시연 → 잭의 반응 순서여야 합니다.');
+  const splitOk = !!(ep.durationPolicy && ep.durationPolicy.maxSceneSec === 5); // 5 s episodes may split one ending shot into consecutive scenes
+  const endKeys = ending.map((s) => s.beatKey).filter((k, i, a) => !i || k !== a[i - 1]);
+  if (!splitOk && ending.length !== 3) E('ENDING_COUNT', `PART B 제품 엔딩은 정확히 3컷이어야 합니다 (현재 ${ending.length}컷).`);
+  else if (splitOk && ending.length < 3) E('ENDING_COUNT', `PART B 제품 엔딩은 세 단계(쇼핑 핑계 → 제품 시연 → 잭의 반응)가 모두 필요합니다 (현재 ${ending.length}컷).`);
+  else if (endKeys.length !== 3 || endKeys.some((k, i) => k !== ENDING_KEYS[i])) E('ENDING_ORDER', 'PART B는 쇼핑 핑계 → 제품 시연 → 잭의 반응 순서여야 합니다.');
   const aOrder = scenes.filter((s) => s.part === 'A').map((s) => BEAT_KEYS.indexOf(s.beatKey));
   if (aOrder.some((v, i) => i && v < aOrder[i - 1])) E('BEAT_ORDER', 'PART A 장면은 도입 → 위기 1 → 위기 2 → 절정 → 결말 → 제품 연결 순서여야 합니다.');
   const firstB = scenes.findIndex((s) => s.part === 'B');
