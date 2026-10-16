@@ -244,9 +244,9 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
     const res = await router.run('scriptWriting', { prompt: q0.prompt, json: true, maxTokens: action === 'story' ? 8000 : 3000, confirm, override: override || q0.composed.providerOverride || undefined, dedupeKey: epId + ':' + action });
     // validate EVERYTHING before touching the episode (a bad answer changes nothing; the call is in the usage log)
     let story = null; let beat = null; let vars = {};
-    if (action === 'story') { story = SF.normalizeStory(res.json, charIds(ep0)); vars = story.vars; }
+    if (action === 'story') { story = SF.normalizeStory(res.json, charIds(ep0), ep0.durationPolicy && ep0.durationPolicy.maxSceneSec === 5 ? 5 : 15); vars = story.vars; }
     else if (action === 'ending') { vars = SF.normalizeVars(res.json && res.json.ending_vars); if (!Object.keys(vars).length) throw new StudioError('SCRIPT_REJECTED', 'AI 응답에 ending_vars가 없습니다. 저장하지 않았습니다.', { status: 422 }); }
-    else beat = SF.normalizeBeat(res.json && res.json.beat, keys[0], charIds(ep0));
+    else beat = SF.normalizeBeat(res.json && res.json.beat, keys[0], charIds(ep0), ep0.durationPolicy && ep0.durationPolicy.maxSceneSec === 5 ? 5 : 15);
     const meta = q0.meta;
     const source = { conceptId: concept.id, conceptRevision: concept.revision, productId: concept.productId, provider: res.provider, model: res.model, mock: !!res.mock, promptKey: 'script-preset', promptVersion: meta.presetVersion, promptVersions: { script: meta.presetVersion }, presetId: meta.presetId, presetName: meta.presetName, presetVersion: meta.presetVersion, comedyLevel: meta.comedyLevel, promptHash: meta.promptHash, titleKo: true, formula: 1, action, generatedAt: nowIso(), by };
     await store.episodes.update(epId, (ep) => {
