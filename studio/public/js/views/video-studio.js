@@ -78,15 +78,30 @@ export function reviewTab(ep) {
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'clips') }, '애니메이션'),
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'audio') }, '보이스'),
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'lipsync') }, '립싱크'),
+        fin.state === 'built' && fin.composite ? h('button', { class: 'btn sm sage', type: 'button', 'data-vs-final-approve': sc.id,
+          onclick: async () => { if (await confirmDialog({ title: sc.id + ' 씬을 최종 승인할까요?', body: '합본을 재생해서 영상과 음성을 확인한 뒤 승인하세요.', confirm: '최종 승인' })) await act(() => api.post(`/api/episodes/${ep.id}/scenes/${sc.id}/final/approve`, {}), { ok: sc.id + ' 씬 최종 승인 완료' }); } }, '✓ 씬 최종 승인') : null,
+        fin.state === 'ready' || fin.state === 'stale' ? h('button', { class: 'btn sm clay', type: 'button', 'data-vs-compose-one': sc.id,
+          onclick: () => act(() => api.post(`/api/episodes/${ep.id}/scenes/${sc.id}/compose`, {}), { ok: sc.id + ' 합본 완료 · 확인 후 승인하세요' }) }, '씬 합본 만들기') : null,
         h('button', { class: 'btn sm ghost', type: 'button', onclick: () => goToScenePanel(ep, sc.id, 'compose') }, '합본·승인 열기')));
   })));
 }
 
 // ------------------------------------------------------------ 2. timeline
-function track(name, total, items, onPick, sel) {
-  const lane = h('div', { class: 'vs-lane', style: `position:relative;height:30px;width:${Math.ceil(total * PX)}px;background:var(--paper);border:1px solid var(--line);border-radius:6px` },
-    items.map((it) => h('button', { type: 'button', class: 'vs-item' + (sel === it.key ? ' sel' : ''), 'data-vs-item': it.key, title: it.title || it.label, onclick: () => onPick(it),
-      style: `position:absolute;left:${it.start * PX}px;width:${Math.max(6, (it.end - it.start) * PX)}px;top:2px;height:24px;overflow:hidden;font-size:10px;padding:0 3px;border-radius:5px;border:1px solid #bfae8f;background:${it.color || '#e7ddc9'};white-space:nowrap` }, it.label)));
+function track(name, total, items, onPick, sel, onDrop = null) {
+  const lane = h('div', { class: 'vs-lane', 'data-vs-lane': name, style: `position:relative;height:30px;width:${Math.ceil(total * PX)}px;background:var(--paper);border:1px solid var(--line);border-radius:6px`,
+    ondragover: (e) => { if (onDrop) e.preventDefault(); },
+    ondrop: (e) => {
+      if (!onDrop) return;
+      e.preventDefault();
+      const key = e.dataTransfer.getData('text/plain');
+      const bounds = lane.getBoundingClientRect();
+      const seconds = snap(Math.max(0, (e.clientX - bounds.left) / PX));
+      onDrop(key, seconds);
+    } },
+    items.map((it) => h('button', { type: 'button', draggable: !!onDrop, class: 'vs-item' + (sel === it.key ? ' sel' : ''), 'data-vs-item': it.key, title: it.title || it.label,
+      ondragstart: (e) => { if (onDrop) { e.dataTransfer.setData('text/plain', it.key); e.dataTransfer.effectAllowed = 'move'; } },
+      onclick: () => onPick(it),
+      style: `position:absolute;left:${it.start * PX}px;width:${Math.max(6, (it.end - it.start) * PX)}px;top:2px;height:24px;overflow:hidden;font-size:10px;padding:0 3px;border-radius:5px;border:1px solid #bfae8f;background:${it.color || '#e7ddc9'};white-space:nowrap;${onDrop ? 'cursor:grab;' : ''}` }, it.label)));
   return h('div', { class: 'row', style: 'gap:8px;align-items:center;flex-wrap:nowrap' }, h('div', { class: 'small', style: 'width:64px;flex:none', 'data-vs-track': name }, name), lane);
 }
 
@@ -105,7 +120,40 @@ export function timelineTab(ep, rerender) {
   const subs = (plan.cues || []).map((c) => ({ key: 'cue:' + c.lineId, start: c.start, end: c.end, label: c.hidden ? '(숨김)' : String(c.ko || '').slice(0, 14), color: c.hidden ? '#eee' : '#f3e7c4', title: c.ko }));
   const ruler = h('div', { class: 'row', style: 'gap:8px;align-items:center' }, h('div', { style: 'width:64px;flex:none' }), h('div', { style: `position:relative;height:16px;width:${Math.ceil(total * PX)}px;font-size:10px;color:var(--muted)` }, Array.from({ length: Math.floor(total / 3) + 1 }, (_, i) => h('span', { style: `position:absolute;left:${i * 3 * PX}px` }, fmtSec(i * 3)))));
   const lanes = h('div', { class: 'stack', style: 'gap:6px;min-width:max-content', 'data-vs-timeline': '' }, ruler,
-    track('장면', total, scenes, pick, sel), track('음성', total, voice, pick, sel), track('효과음', total, sfx, pick, sel), track('B-roll', total, broll, pick, sel), track('자막', total, subs, pick, sel),
+    track('장면', total, scenes, pick, sel, async (key, targetSec) => {
+      if (!key.startsWith('scene:')) return;
+      const source = key.slice(6);
+      const current = ep.scenes.slice();
+      const moved = current.find((x) => x.id === source);
+      const at = tl.scenes.find((x) => targetSec >= x.start && targetSec < x.end) || tl.scenes[tl.scenes.length - 1];
+      const dest = current.find((x) => x.id === at.id);
+      if (!moved || !dest || moved.id === dest.id) return;
+      const structured = current.some((x) => x.beatKey);
+      if (structured && (moved.part === 'B' || dest.part === 'B' || moved.beatKey !== dest.beatKey)) {
+        return toast('고정 스토리 구조에서는 같은 비트 안의 씬만 이동할 수 있습니다.', { error: true });
+      }
+      const ids = current.map((x) => x.id).filter((id) => id !== source);
+      const destIdx = ids.indexOf(dest.id);
+      ids.splice(destIdx + (targetSec > (at.start + at.end) / 2 ? 1 : 0), 0, source);
+      const payload = structured ? { beats: Object.fromEntries([...new Set(current.filter((x) => x.part !== 'B').map((x) => x.beatKey))].map((k) => [k, ids.filter((id) => (current.find((x) => x.id === id) || {}).beatKey === k)])) } : { order: ids };
+      await act(() => api.post(`/api/episodes/${ep.id}/scenes/reorder`, payload), { ok: '씬 순서를 저장했습니다 · 변경된 씬 합본을 다시 검토하세요' });
+    }),
+    track('음성', total, voice, pick, sel, (key, targetSec) => {
+      if (!key.startsWith('line:')) return;
+      const id = key.slice(5);
+      const line = tl.lines.find((x) => x.id === id);
+      if (!line) return;
+      const offset = Math.max(0, Math.min(30, snap(targetSec - sceneStart(line.sceneId))));
+      act(() => api.put(`/api/episodes/${ep.id}/audio-timing/${id}`, { offsetSec: offset }), { ok: '음성 시작 위치 저장 · 씬 합본을 다시 만드세요' });
+    }),
+    track('효과음', total, sfx, pick, sel, (key, targetSec) => {
+      if (!key.startsWith('sfx:')) return;
+      const id = key.slice(4);
+      const x = (ep.sfx || []).find((z) => z.id === id);
+      if (!x) return;
+      act(() => api.post(`/api/episodes/${ep.id}/sfx/${id}/update`, { offsetSec: Math.max(0, snap(targetSec - sceneStart(x.sceneId))) }), { ok: '효과음 위치를 저장했습니다' });
+    }),
+    track('B-roll', total, broll, pick, sel), track('자막', total, subs, pick, sel),
     h('div', { class: 'row', style: 'gap:8px;align-items:center' }, h('div', { class: 'small', style: 'width:64px;flex:none' }, '음악'), h('div', { class: 'small muted', 'data-vs-music': '' }, '배경음악 트랙 없음 — 이 버전은 음악 파일을 만들거나 가져오지 않습니다.')));
   const tr = ep.videoEdit.transition;
   const putTr = (patch) => act(() => api.put(`/api/episodes/${ep.id}/video-edit/transition`, patch), { ok: '전환을 저장했습니다' });
@@ -115,7 +163,7 @@ export function timelineTab(ep, rerender) {
     h('span', { class: 'small muted' }, '화면만 어두워졌다 밝아지며 전체 길이와 음성 타이밍은 바뀌지 않습니다.'));
   return h('div', { class: 'stack', style: 'gap:12px' },
     transition,
-    h('div', { class: 'small muted' }, `총 ${fmtSec(total)} · 편집 단위 ${STEP}초. 승인된 대사 오디오의 타이밍은 여기서 바꾸지 않습니다 (대사를 고치려면 대본·음성 단계로).`),
+    h('div', { class: 'small muted' }, `총 ${fmtSec(total)} · 편집 단위 ${STEP}초. 장면·음성·효과음 블록을 드래그해 이동하세요. 음성은 자기 장면 안에서 0.3초 단위로 이동하며 겹침은 자동 방지합니다. 씬 합본은 다시 만들고 승인해야 합니다.`),
     h('div', { style: 'overflow-x:auto;padding-bottom:6px' }, lanes),
     selectedEditor(ep, tl, sel, rerender));
 }
@@ -146,7 +194,7 @@ function selectedEditor(ep, tl, sel, rerender) {
     const l = tl.lines.find((s) => s.id === id);
     if (!l) return null;
     return body(h('b', null, `대사 오디오 · ${l.speaker} (${l.id})`), h('div', null, l.en), h('div', { class: 'small muted' }, l.ko),
-      h('div', { class: 'small' }, `${l.start}–${l.end}초 (${r2(l.duration)}초) · 승인된 오디오 — 이 화면에서 타이밍이 바뀌지 않습니다.`),
+      h('div', { class: 'small' }, `${l.start}–${l.end}초 (${r2(l.duration)}초) · 음성 파일은 그대로 유지 · 블록을 드래그해 시작 시점 변경`),
       h('audio', { controls: true, preload: 'none', src: `/media/audio/${ep.id}/${l.id}`, style: 'height:32px' }));
   }
   if (kind === 'cue') return subtitleRow(ep, (ep.derived.render.plan.cues || []).find((c) => c.lineId === id), rerender, true);
