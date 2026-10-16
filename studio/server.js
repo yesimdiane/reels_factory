@@ -450,6 +450,15 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/scenes/:sid/sfx/builtin', async ({ p, body }) => { await S.sfx.addBuiltin(p.id, { name: body.name, sceneId: p.sid, offsetSec: body.offsetSec }); return ep(p.id); });
   route('POST', '/api/episodes/:id/scenes/:sid/sfx/upload', async ({ p, raw, headers, query }) => { await S.sfx.addUpload(p.id, { buffer: raw, filename: decodeURIComponent(headers['x-filename'] || 'sfx.wav'), label: query.label, sceneId: p.sid, offsetSec: query.offsetSec }); return ep(p.id); }, { upload: true });
   route('PUT', '/api/episodes/:id/video-edit/style', async ({ p, body }) => { await S.videoEdit.saveStyle(p.id, body || {}); return ep(p.id); });
+  route('PUT', '/api/episodes/:id/audio-timing/:lid', async ({ p, body }) => {
+    S.assertNotHeld(p.id);
+    const raw = body && body.offsetSec;
+    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0 || raw > 30 || Math.abs(raw / 0.3 - Math.round(raw / 0.3)) > 0.00001) throw new StudioError('BAD_OFFSET', '음성 위치는 0–30초 범위에서 0.3초 단위로 지정하세요.', { status: 422 });
+    const ep0 = S.store.episodes.get(p.id);
+    if (!(ep0.lines || []).some((l) => l.id === p.lid)) throw new StudioError('NOT_FOUND', '대사를 찾을 수 없습니다.', { status: 404 });
+    await S.store.episodes.update(p.id, (e) => { e.audioTiming = Object.assign({}, e.audioTiming || {}, { [p.lid]: Math.round(raw * 10) / 10 }); });
+    return ep(p.id);
+  });
   route('PUT', '/api/episodes/:id/video-edit/transition', async ({ p, body }) => { await S.videoEdit.saveTransition(p.id, body || {}); return ep(p.id); });
   route('PUT', '/api/episodes/:id/video-edit/music', async ({ p, body }) => { await S.videoEdit.saveMusic(p.id, body || {}); return ep(p.id); });
   route('DELETE', '/api/episodes/:id/video-edit/music', async ({ p }) => { await S.videoEdit.saveMusic(p.id, { remove: true }); return ep(p.id); });
