@@ -135,7 +135,7 @@ export function clipCard(ep, sc, g, opts = {}) {
     const changed = draft.video !== sc.prompt.video || draft.negative !== (sc.prompt.negative || '');
     if (changed) {
       const saved = await act(() => api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/prompt`, { video: draft.video, negative: draft.negative }), { ok: '이 장면의 애니메이션 프롬프트만 저장했습니다' });
-      if (saved === undefined && generate) return; // A refresh may replace the active episode; avoid generating from a stale revision.
+      if (!saved) return; // Failed saves must never trigger a paid generation.
     }
     if (generate) {
       if (changed) return toast('새 프롬프트를 저장했습니다. 갱신된 장면에서 비용 확인 후 다시 생성을 눌러주세요.');
@@ -152,7 +152,7 @@ export function clipCard(ep, sc, g, opts = {}) {
         h('textarea', { rows: 2, 'data-clip-anim-negative': sc.id, oninput: (e) => { draft.negative = e.target.value; } }, draft.negative)),
       h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
         h('button', { class: 'btn sm ghost', type: 'button', 'data-clip-product-lock': sc.id, onclick: () => {
-          if (!draft.video.includes('PRODUCT IDENTITY LOCK:')) draft.video = (draft.video.trim() + '\\n\\n' + productGuard).trim();
+          if (!draft.video.includes('PRODUCT IDENTITY LOCK:')) draft.video = (draft.video.trim() + '\n\n' + productGuard).trim();
           state.draft[editKey] = draft;
           const ta = document.querySelector('[data-clip-anim-prompt="' + sc.id + '"]');
           if (ta) ta.value = draft.video;
