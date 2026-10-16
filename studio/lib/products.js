@@ -109,11 +109,20 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     return vis.map((im, n) => ({ im, n })).sort((a, b) => rank(a.im) - rank(b.im) || a.n - b.n).map((x) => x.im);
   }
 
+  /** Did the images behind the APPROVED structure description change since it was analyzed? (cheap flag for the product page; the full check is in productanalysis.js) */
+  function analysisImagesChanged(p) {
+    const a = (p.analyses || []).find((x) => x.v === p.analysisApprovedV && x.status === 'approved');
+    if (!a) return false;
+    const L = (p.images || []).filter((i) => !i.removed && !['rejected', 'replaced'].includes(i.status));
+    return !(a.imageHashes || []).every((h) => { const im = L.find((i) => i.id === h.id); return im && im.sha256 === h.sha256; });
+  }
+
   function view(p) {
     const refs = referenceState(p);
     return Object.assign({}, p, {
       images: orderedImages(p).map((im) => Object.assign({}, im, { kindLabel: KIND_LABEL[im.kind], url: `/media/product/${p.id}/${im.id}`, primary: p.primaryImageId === im.id })),
       primaryImageId: p.primaryImageId || '',
+      analysisImagesChanged: analysisImagesChanged(p),
       reference: refs,
       verifiedFacts: verifiedFacts(p),
       limits: { uploads: MAX_UPLOADS, retrieved: MAX_RETRIEVED, generated: MAX_GENERATED, extraRefs: 5 },
@@ -427,7 +436,7 @@ function createProductService({ store, router, extractFn = extractProduct, downl
     return path.join(dirOf(id), im.file);
   }
 
-  return { list, get: (id) => view(get(id)), raw: get, create, edit, extract, upload, replace, removeImage, reorderImages, setPrimary, setStatus, generateImage, chooseVersion, imageCount, approveReferenceSet, waiveReferences, bindingFor, imageFiles, mediaFile, lockCodeSync, suggestCode, referenceState, verifiedFacts, readiness, MAX_UPLOADS, MIN_SIDE, MAX_SIDE };
+  return { list, get: (id) => view(get(id)), raw: get, mutate: update, create, edit, extract, upload, replace, removeImage, reorderImages, setPrimary, setStatus, generateImage, chooseVersion, imageCount, approveReferenceSet, waiveReferences, bindingFor, imageFiles, mediaFile, lockCodeSync, suggestCode, referenceState, verifiedFacts, readiness, MAX_UPLOADS, MIN_SIDE, MAX_SIDE };
 }
 
 module.exports = { createProductService, KIND_LABEL, MAX_UPLOADS, MIN_SIDE, MAX_SIDE };

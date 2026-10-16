@@ -36,7 +36,7 @@ test('sidebar shows exactly six items in workflow order (no Script/Animation/Voi
     const ko = await page.locator('#rail a.nav-item .ko').allTextContents();
     assert.deepEqual(ko, ['제품 스튜디오', '스토리 랩', '에피소드', '이미지 스튜디오', '영상 제작', '설정']);
     const en = await page.locator('#rail a.nav-item .en').allTextContents();
-    assert.deepEqual(en, ['Product Studio', 'Story Lab', 'Episodes', 'Image Studio', 'Video Production', 'Settings']);
+    assert.deepEqual(en, ['Product Studio', 'Story Lab', 'Episodes', 'Image Studio', 'Animation · Voice · Lip Sync · Editing', 'Settings']);
   });
 });
 

@@ -89,3 +89,33 @@ export function imagePromptBody(ep, sc) {
     h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, save,
       h('button', { class: 'btn sm ghost', type: 'button', 'data-image-prompt-reset': sc.id, disabled: !ip.edited, onclick: async () => { if (await confirmDialog({ title: '자동 합성으로 되돌릴까요?', body: '직접 수정한 글은 기록에 남고 이후 생성에는 자동 합성 문장이 쓰입니다.', confirm: '되돌리기', tone: 'clay' })) act(() => api.del(`/api/episodes/${ep.id}/scenes/${sc.id}/image-prompt`), { ok: '자동 합성으로 되돌렸습니다' }); } }, '자동으로 되돌리기')));
 }
+
+/**
+ * Which product reference image set and which product structure description a frame was made with, plus every earlier frame (V1, V2, V3 …).
+ * Read-only: nothing is regenerated when a newer description is approved — the operator decides whether to press "다시 만들기".
+ */
+export function frameProvenance(sc) {
+  const info = sc.startImageInfo || {};
+  const pc = info.productContext || null;
+  const vers = sc.startImageVersions || [];
+  if (!pc && !vers.length) return null;
+  const items = [];
+  if (info.generated || pc) {
+    const v = info.version ? `이 이미지 V${info.version}` : '이 이미지';
+    items.push(h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center', 'data-frame-provenance': sc.id },
+      chip(v, 'mono'),
+      pc ? chip('제품 참조 이미지 세트 ' + (pc.referenceImageSetVersion ? 'V' + pc.referenceImageSetVersion : '기록 없음'), '') : chip('제품이 없는 장면', 'mock'),
+      pc ? chip(pc.structureVersion ? `제품 구조 설명 v${pc.structureVersion}` : '구조 설명 없이 생성', pc.structureVersion ? 'done' : 'attention') : null,
+      pc && pc.structureVersion && sc.structureApprovedV && sc.structureApprovedV !== pc.structureVersion ? chip(`현재 승인 v${sc.structureApprovedV}`, 'attention') : null));
+    if (pc && pc.structureStale) items.push(h('div', { class: 'small', style: 'color:var(--clay)' }, '이 이미지를 만들 때 구조 설명은 현재 첨부된 제품 이미지와 다른 이미지 세트로 만들어진 것이었습니다.'));
+    if (pc && pc.structureVersion && sc.structureApprovedV && sc.structureApprovedV !== pc.structureVersion) items.push(h('div', { class: 'small muted' }, '이후 새 구조 설명이 승인되었습니다. 이 이미지는 자동으로 다시 만들어지지 않습니다 — 필요하면 직접 "다시 만들기"를 누르세요(비용 확인 후).'));
+  }
+  if (vers.length) {
+    items.push(h('details', { class: 'small', 'data-frame-versions': sc.id }, h('summary', { style: 'cursor:pointer;min-height:32px;display:flex;align-items:center' }, `이전 이미지 버전 (${vers.length}) — 모두 보존됩니다`),
+      h('div', { class: 'row', style: 'gap:10px;flex-wrap:wrap;align-items:flex-start;margin-top:6px' }, vers.slice().reverse().map((v) => h('figure', { class: 'ref' + (v.current ? ' ok' : ''), style: 'width:116px;margin:0', 'data-frame-version': v.v },
+        h('img', { src: v.url, alt: `${sc.id} V${v.v}`, loading: 'lazy', style: 'width:100%;aspect-ratio:9/16;object-fit:cover;border-radius:8px' }),
+        h('figcaption', { class: 'small' }, h('b', null, `V${v.v}`), v.current ? ' · 현재' : '', h('div', { class: 'muted' }, v.generated ? `${v.provider || 'AI'}` : (v.earlier ? '이전 이미지' : '올린 이미지')),
+          v.productContext ? h('div', { class: 'muted' }, `세트 V${v.productContext.referenceImageSetVersion || '–'} · 설명 ${v.productContext.structureVersion ? 'v' + v.productContext.structureVersion : '없음'}`) : null))))));
+  }
+  return h('div', { class: 'stack', style: 'gap:6px' }, items);
+}

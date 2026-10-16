@@ -76,7 +76,7 @@ test('sidebar has exactly six items; episode stages, Video Production tabs and S
     await page.goto(`${base}/#/products`);
     await page.waitForSelector('#rail a.nav-item');
     assert.deepEqual(await page.locator('#rail a.nav-item').evaluateAll((e) => e.map((x) => x.getAttribute('data-nav'))), ['products', 'storylab', 'episodes', 'image', 'video', 'settings']);
-    assert.deepEqual(await page.locator('#rail a.nav-item .en').allTextContents(), ['Product Studio', 'Story Lab', 'Episodes', 'Image Studio', 'Video Production', 'Settings']);
+    assert.deepEqual(await page.locator('#rail a.nav-item .en').allTextContents(), ['Product Studio', 'Story Lab', 'Episodes', 'Image Studio', 'Animation · Voice · Lip Sync · Editing', 'Settings']);
     // product / story rail links open the catalogs, never an editor
     assert.equal(await page.locator('#rail a[data-nav=products]').getAttribute('href'), '#/products');
     assert.equal(await page.locator('#rail a[data-nav=storylab]').getAttribute('href'), '#/storylab');

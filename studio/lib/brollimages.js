@@ -18,7 +18,7 @@ const { sniffImage } = require('./extract');
 const CHARACTER_KINDS = new Set(['close_up', 'reaction']);
 const MAX_PRODUCT_REFS = 3;
 
-function createBrollImages({ store, products, router, charRefs, sba, lib }) {
+function createBrollImages({ store, products, router, charRefs, sba, lib, productAnalysis = null }) {
   const find = (ep, bid) => {
     const b = (ep.broll || []).find((x) => x.id === bid && x.status !== 'removed');
     if (!b) throw new StudioError('NOT_FOUND', 'B-roll을 찾을 수 없습니다: ' + bid, { status: 404 });
@@ -83,7 +83,7 @@ function createBrollImages({ store, products, router, charRefs, sba, lib }) {
     const bad = refs.find((r) => r.status !== 'approved');
     if (bad) throw new StudioError(bad.type === 'product' ? 'NO_PRODUCT_REF' : 'NO_CHARACTER_REF', `${b.id}: ${bad.message}`, { status: 409, recovery: bad.type === 'product' ? 'Product Studio에서 참조 이미지를 올리고 승인하세요.' : '캐릭터 라이브러리에서 실제 참조 이미지를 올리고 승인하세요.', details: refs.filter((r) => r.status !== 'approved') });
     if (refs.length) charRefs.assertProvider();
-    const images = []; const used = []; let productIds = []; const lines = []; const charParts = []; const productParts = [];
+    const images = []; const used = []; let productIds = []; let productContext = null; const lines = []; const charParts = []; const productParts = [];
     if (rp.chars.length) {
       const ci = charRefs.inputsFor(ep, Object.assign({}, rp.sc, { characters: rp.chars }), { exclude });
       ci.images.forEach((i) => images.push(i)); ci.used.forEach((u) => used.push(u)); ci.lines.forEach((l) => lines.push(l)); ci.chars.forEach((c) => charParts.push(c));
@@ -95,10 +95,13 @@ function createBrollImages({ store, products, router, charRefs, sba, lib }) {
       files.forEach((f) => { const buf = fs.readFileSync(f.path); images.push({ label: 'APPROVED product reference (the product must match this exactly: shape, logo, colour, function):', mimeType: f.mimeType, data: buf.toString('base64') }); productParts.push({ assetId: `${ep.productId}:${f.id}`, filename: f.id, url: `/media/product/${ep.productId}/${f.id}`, bytes: buf.length, mime: f.mimeType, name: (ep.product || {}).name }); });
       productIds = files.map((f) => f.id);
       lines.push('Draw the product EXACTLY like the approved product reference image(s). Never add features. Verified facts only: ' + (((ep.product || {}).verifiedFeatures) || []).join('; '));
+      // the approved structure description travels ONLY together with the real product images attached above
+      const pctx = productAnalysis ? productAnalysis.contextFor(ep.productId, productIds) : null;
+      if (pctx) { productContext = pctx.record; if (pctx.block) lines.push(pctx.block); }
     } else lines.push('Do NOT show the product.');
     if (images.length) charRefs.enforce({ chars: charParts, product: productParts }); // model input limits, before any paid call
     const prompt = ['Create ONE vertical 9:16 STILL image: a B-roll insert layered over a short animated comedy video.', currentPrompt(ep, b), ...lines, 'No text, captions, subtitles, speech bubbles, logos or watermarks anywhere in the image.'].join('\n');
-    return { images, prompt, refs: used, productIds };
+    return { images, prompt, refs: used, productIds, productContext };
   }
 
   /** Free: everything the UI needs before the button is pressed (draft prompt, reference status, provider support, estimate when sendable). */
@@ -157,6 +160,10 @@ function createBrollImages({ store, products, router, charRefs, sba, lib }) {
     const b0 = find(ep0, bid);
     check(b0, { force, overwriteApproved });
     const q = inputs(ep0, b0, exclude); // every pre-flight problem surfaces BEFORE the paid call
+    let productContext = q.productContext;
+    if (productContext && productContext.referenceImageIds.length && productAnalysis) { // free bookkeeping: number the exact product image set being attached
+      try { const reg = await productAnalysis.registerImageSet(ep0.productId, productContext.referenceImageIds); productContext = Object.assign({}, productContext, { referenceImageSetVersion: reg.v, referenceImageSetHash: reg.hash }); } catch (_) { /* provenance is best effort */ }
+    }
     let out;
     try {
       out = await router.runImage('imageGeneration', { prompt: q.prompt, images: q.images, confirm });
@@ -184,7 +191,7 @@ function createBrollImages({ store, products, router, charRefs, sba, lib }) {
     await store.episodes.update(epId, (e) => {
       const x = e.broll.find((y) => y.id === bid);
       x.imageGen = Object.assign({}, x.imageGen, { lastError: undefined });
-      x.generated = { provider: out.provider, model: out.model, prompt: q.prompt, characterRefs: q.refs, characterRefAssetIds: q.refs.map((r) => r.assetId), productImageIds: q.productIds, at: nowIso(), by, replacedApproved: b0.status === 'approved' };
+      x.generated = { provider: out.provider, model: out.model, prompt: q.prompt, characterRefs: q.refs, characterRefAssetIds: q.refs.map((r) => r.assetId), productImageIds: q.productIds, productContext, at: nowIso(), by, replacedApproved: b0.status === 'approved' };
     });
     store.episodes.audit(epId, 'broll.image.generated', { id: bid, provider: out.provider, model: out.model, file, replacedApproved: b0.status === 'approved' });
     return saved;
