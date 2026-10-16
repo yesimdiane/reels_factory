@@ -101,6 +101,7 @@ function normalizeBeat(raw, key, charIds) {
   if (!scenes.length) throw bad(`"${meta.ko}" 단계에 장면이 없습니다 (단계마다 최소 한 장면이 필요합니다).`);
   const problems = [];
   scenes.forEach((s, i) => {
+    if (!(s.durationSec >= 1 && s.durationSec <= 5)) problems.push(`${meta.ko} 장면 ${i + 1}: 길이는 1~5초여야 합니다. 동일한 스토리 단계에서 여러 씬으로 나눠 주세요.`);
     checkTitleKo(s.title_ko).errors.forEach((m) => problems.push(`${meta.ko} 장면 ${i + 1}: ${m}`));
     if (!s.characters.length) problems.push(`${meta.ko} 장면 ${i + 1}: 등장 캐릭터가 없습니다.`);
     s.lines.forEach((l) => { if (!charIds.has(l.speaker)) problems.push(`${meta.ko} 장면 ${i + 1}: 알 수 없는 화자 (${l.speaker}).`); });
