@@ -556,7 +556,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     const ep = store.episodes.get(epId);
     const b = brollOf(ep, bid);
     const settings = store.settings.get();
-    const model = modelById(store.models(), modelId || settings.defaultModelId);
+    const model = modelById(store.models(), modelId || settings.brollModelId || settings.defaultModelId);
     const { out } = brollBlockers(ep, b);
     const est = estimateRun({ ep, scenes: [{ id: 'broll:' + bid, durationSec: b.durationSec }], model, settings, cfg, cached: () => false });
     if (provider.mode === 'mock') { est.totalUsd = 0; est.unknown = false; est.withinLimit = true; } // the mock provider never bills
@@ -588,7 +588,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       else if (Math.abs(Number(confirmUsd) - est.totalUsd) > 1e-9) throw new StudioError('CONFIRM_MISMATCH', `확인한 금액(${confirmUsd})이 현재 예상(${est.totalUsd})과 다릅니다. 다시 확인하세요.`, { status: 409 });
       const ep0 = store.episodes.get(epId);
       const b = brollOf(ep0, bid);
-      const model = modelById(store.models(), modelId || store.settings.get().defaultModelId);
+      const model = modelById(store.models(), modelId || store.settings.get().brollModelId || store.settings.get().defaultModelId);
       const src = brollBlockers(ep0, b).src;
       const text = brollPrompt(b, prompt);
       const imageSha = require('./util').sha256File(src.file);
