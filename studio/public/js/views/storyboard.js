@@ -42,6 +42,51 @@ export function storyboard() {
   const i = curIndex(ep);
   const sc = ep.scenes[i];
   const go = (k) => { setIndex(ep, k); import('../state.js').then(({ hooks }) => hooks.rerender()); };
+  // One explicit batch request for the cuts the operator has finished choosing.
+  // Selection is UI-only; the existing server estimate, approval and paid-call gates remain authoritative.
+  const selection = uiState();
+  selection.sbImageBatch = selection.sbImageBatch || {};
+  const existing = selection.sbImageBatch[ep.id];
+  const eligible = ep.scenes.filter((s) => !(s.startImageInfo && s.startImageInfo.approved));
+  const selected = new Set(Array.isArray(existing) ? existing.filter((id) => eligible.some((s) => s.id === id)) : eligible.map((s) => s.id));
+  const batchButton = h('button', { class: 'btn clay', type: 'button', 'data-sb-generate-selected': ep.id,
+    disabled: !ep.derived.scriptApproved || selected.size === 0,
+    onclick: async () => {
+      if (!selected.size) return;
+      // Avoid generating from stale edits in the currently open cut.
+      if (Object.values(uiState().sbDraft || {}).some((v) => v && v.dirty)) {
+        toast('수정 중인 컷을 먼저 저장한 뒤 이미지 생성을 요청하세요.', { error: true });
+        return;
+      }
+      await makeStartImages(ep, [...selected], { after: refresh });
+    } }, '선택한 컷 이미지 요청 (' + selected.size + ')');
+  const selectionList = h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap', 'data-sb-image-selection': ep.id },
+    ep.scenes.map((s) => {
+      const approved = !!(s.startImageInfo && s.startImageInfo.approved);
+      return h('label', { class: 'small row', style: 'gap:4px;cursor:pointer' },
+        h('input', { type: 'checkbox', checked: selected.has(s.id), disabled: approved,
+          'data-sb-select-cut': s.id, onchange: (e) => {
+            if (e.target.checked) selected.add(s.id); else selected.delete(s.id);
+            selection.sbImageBatch[ep.id] = [...selected];
+            batchButton.textContent = '선택한 컷 이미지 요청 (' + selected.size + ')';
+            batchButton.disabled = !ep.derived.scriptApproved || selected.size === 0;
+          } }), s.id + (approved ? ' · 승인됨' : ''));
+    }));
+  wrap.append(h('section', { class: 'card stack', style: 'gap:10px', 'data-sb-image-batch': ep.id },
+    h('div', { class: 'row between', style: 'gap:10px;flex-wrap:wrap' },
+      h('div', null, h('b', null, '컷별 이미지 일괄 요청'),
+        h('div', { class: 'small muted' }, '컷 구성을 저장한 후 요청하세요. 승인된 이미지는 제외하고, 기존 생성 이미지는 중복 과금 없이 건너뜁니다.')),
+      batchButton),
+    selectionList,
+    h('div', { class: 'row', style: 'gap:8px' },
+      h('button', { class: 'btn sm ghost', type: 'button', onclick: () => {
+        selected.clear(); eligible.forEach((s) => selected.add(s.id));
+        selection.sbImageBatch[ep.id] = [...selected]; import('../state.js').then(({ hooks }) => hooks.rerender());
+      } }, '미승인 컷 전체 선택'),
+      h('button', { class: 'btn sm ghost', type: 'button', onclick: () => {
+        selected.clear(); selection.sbImageBatch[ep.id] = []; import('../state.js').then(({ hooks }) => hooks.rerender());
+      } }, '선택 해제')),
+    h('div', { class: 'small muted' }, '클릭하면 먼저 예상 비용을 확인합니다. 비용 승인 전에는 AI 이미지 생성 요청을 보내지 않습니다.')));
   wrap.append(sceneGallery(ep, (sid) => { setIndex(ep, ep.scenes.findIndex((x) => x.id === sid)); import('../state.js').then(({ hooks }) => hooks.rerender()); window.scrollTo({ top: 0, behavior: 'smooth' }); }));
   wrap.append(h('div', { class: 'scene-tabs', role: 'tablist', 'aria-label': '장면 목록' }, ep.scenes.map((s, k) => {
     const img = s.startImageInfo;
