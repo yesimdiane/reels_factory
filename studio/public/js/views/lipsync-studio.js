@@ -56,9 +56,14 @@ function sceneCard(ep, sc) {
   };
   const review = (ver, action, msg) => act(() => api.post(`${base}/scenes/${sc.id}/lipsync/${ver.v}/review`, { action }), { ok: msg });
   const approved = v.versions.find((x) => x.v === v.approvedVersion);
+  const skip = !!(ep.lipsyncSkipped && ep.lipsyncSkipped[sc.id]);
   return h('article', { class: 'card stack', style: 'gap:10px', 'data-lipsync-scene': sc.id, 'data-lipsync-state': v.state },
     h('div', { class: 'row between', style: 'flex-wrap:wrap;gap:6px' }, h('b', null, `${sc.id} · ${sc.title_ko || sc.title || ''}`), chip(lab, kind)),
     !v.dialogue ? h('div', { class: 'small muted' }, '이 장면에는 대사가 없습니다. 승인된 무음 애니메이션이 비디오 스튜디오에 그대로 들어갑니다 (명시적 무대사 장면).') : h('div', { class: 'stack', style: 'gap:10px' },
+      h('label', { class: 'row small', style: 'gap:8px;cursor:pointer;flex-wrap:wrap', 'data-lipsync-skip': sc.id },
+        h('input', { type: 'checkbox', checked: skip, onchange: (e) => act(() => api.put(`${base}/scenes/${sc.id}/lipsync/skip`, { skip: e.target.checked }), { ok: e.target.checked ? '립싱크 생략: 원본 영상과 승인된 음성으로 합본할 수 있습니다' : '립싱크 사용으로 변경했습니다' }) }),
+        '립싱크 건너뛰기 (원본 영상 + 음성으로 합본)'),
+      skip ? h('div', { class: 'small muted' }, '입 모양은 맞추지 않습니다. 합본 제작·영상 편집·최종 승인은 계속 진행할 수 있습니다.') : null,
       checklist,
       v.problems.length ? h('div', { class: 'stack', style: 'gap:4px' }, v.problems.map((p) => h('div', { class: 'issue err', 'data-lipsync-problem': p.code }, p.message, p.recovery ? h('div', { class: 'small' }, p.recovery) : null))) : null,
       v.stale ? h('div', { class: 'issue err' }, '승인 후 애니메이션 또는 음성이 바뀌었습니다. 다시 만들려면 "승인 취소" 후 새로 승인하세요.') : null,
@@ -70,7 +75,7 @@ function sceneCard(ep, sc) {
             ver.status !== 'approved' ? h('button', { class: 'btn sm sage', type: 'button', 'data-lipsync-approve': sc.id, onclick: () => review(ver, 'approve', `${sc.id} 립싱크 v${ver.v}를 승인했습니다`) }, '승인') : h('button', { class: 'btn sm ghost', type: 'button', 'data-lipsync-unapprove': sc.id, onclick: () => review(ver, 'unapprove', '승인을 취소했습니다 (파일은 보관됩니다)') }, '승인 취소'),
             ver.status === 'pending_review' ? h('button', { class: 'btn sm danger', type: 'button', onclick: () => review(ver, 'reject', '거절했습니다') }, '거절') : null)))),
       h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
-        h('button', { class: 'btn clay', type: 'button', 'data-lipsync-start': sc.id, disabled: !!approved || v.problems.length > 0, title: approved ? '승인된 립싱크가 있습니다. 먼저 승인을 취소하세요 (자동으로 덮어쓰지 않습니다)' : v.problems.length ? v.problems[0].message : '', onclick: start }, v.versions.length ? '립싱크 다시 만들기 (비용 확인)' : '립싱크 만들기 (비용 확인)'),
+        h('button', { class: 'btn clay', type: 'button', 'data-lipsync-start': sc.id, disabled: skip || !!approved || v.problems.length > 0, title: approved ? '승인된 립싱크가 있습니다. 먼저 승인을 취소하세요 (자동으로 덮어쓰지 않습니다)' : v.problems.length ? v.problems[0].message : '', onclick: start }, v.versions.length ? '립싱크 다시 만들기 (비용 확인)' : '립싱크 만들기 (비용 확인)'),
         h('button', { class: 'btn ghost', type: 'button', onclick: () => { location.hash = '#/animation/' + ep.id; } }, '애니메이션'),
         h('button', { class: 'btn ghost', type: 'button', onclick: () => { location.hash = '#/voice/' + ep.id; } }, '보이스'))));
 }

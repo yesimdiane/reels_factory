@@ -30,11 +30,20 @@ function createLipSync({ store, cfg, provider, voice, sceneFlow, now = () => Dat
     const seed = JSON.parse(fs.readFileSync(seedFile, 'utf8')).models;
     return seed.concat((st.customLipsyncModels || []).map((m) => Object.assign({}, m, { custom: true }))).map((m) => {
       const v = ver[m.id];
+      const price = st.lipsyncPrices && Object.prototype.hasOwnProperty.call(st.lipsyncPrices, m.id) ? st.lipsyncPrices[m.id] : m.costEstimateUsd;
+      m = Object.assign({}, m, { costEstimateUsd: price == null ? null : Number(price) });
       return v && ['user-entered', 'verified'].includes(v.level) && m.verification !== 'verified' ? Object.assign({}, m, { verification: v.level, verifiedAt: v.at }) : m;
     });
   }
   const modelById = (id) => { const m = models().find((x) => x.id === id); if (!m) throw new StudioError('MODEL', '알 수 없는 립싱크 모델입니다: ' + id, { recovery: 'Settings에서 립싱크 모델을 선택하세요.' }); return m; };
   const defaultModelId = () => store.settings.get().lipsyncModelId || models()[0].id;
+  function setPrice(id, raw) {
+    modelById(id);
+    if (raw !== null && raw !== '' && (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0)) throw new StudioError('BAD_PRICE', '가격은 0 이상의 USD 숫자이거나 미입력이어야 합니다.', { status: 422 });
+    const st = store.settings.get();
+    store.settings.save({ lipsyncPrices: Object.assign({}, st.lipsyncPrices || {}, { [id]: raw === '' ? null : raw }) });
+    return { modelId: id, costEstimateUsd: raw === '' ? null : raw };
+  }
 
   function addModel(spec) {
     const id = String(spec.id || '').trim();
@@ -273,7 +282,7 @@ function createLipSync({ store, cfg, provider, voice, sceneFlow, now = () => Dat
       versions: s.versions.map((x) => Object.assign({}, x, { url: `/media/lipsync/${ep.id}/${sid}/${x.v}` })) };
   }
 
-  return { models, modelById, defaultModelId, addModel, confirmModel, removeModel, inputs, estimate, authorize, runScene, review, sceneView, approvedVersion, state };
+  return { models, modelById, defaultModelId, setPrice, addModel, confirmModel, removeModel, inputs, estimate, authorize, runScene, review, sceneView, approvedVersion, state };
 }
 
 module.exports = { createLipSync };

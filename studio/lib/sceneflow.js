@@ -86,9 +86,10 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
     const anim = approvedClip(ep, sid);
     if (!linesOf(ep, sid).length) return anim ? Object.assign({ kind: 'animation' }, anim) : null;
     const ls = approvedLipsync(ep, sid);
+    if ((ep.lipsyncSkipped || {})[sid] === true && anim) return Object.assign({ kind: 'animation', skippedLipsync: true }, anim);
     if (ls && anim) return Object.assign({ kind: 'lipsync' }, ls);
     const rec = ((ep.sceneFinal || {})[sid]) || {};
-    if (!ls && anim && rec.approved && rec.approved.parts && rec.approved.parts.lipsync === undefined) return Object.assign({ kind: 'animation', legacy: true }, anim);
+    if (!ls && anim && ((ep.lipsyncSkipped || {})[sid] === true || (rec.approved && rec.approved.parts && rec.approved.parts.lipsync === undefined))) return Object.assign({ kind: 'animation', legacy: true }, anim);
     return null;
   }
   function cutsOf(ep, sid) {
@@ -112,7 +113,10 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
       sfx: h(sfxOf(ep, sid).map((x) => [x.id, x.sha256, x.offsetSec, x.gainDb].concat(x.fadeInSec || x.fadeOutSec ? [x.fadeInSec || 0, x.fadeOutSec || 0] : []))),
     };
     // only present when a lip-synced video is in use, so scenes approved before the lip-sync stage keep their hash
-    if (ls && linesOf(ep, sid).length) parts.lipsync = h([ls.v, ls.sha256]);
+    if (linesOf(ep, sid).length) {
+      if ((ep.lipsyncSkipped || {})[sid] === true) parts.lipsync = 'skipped';
+      else if (ls) parts.lipsync = h([ls.v, ls.sha256]);
+    }
     return parts;
   }
   const sceneHash = (parts) => h(parts);
