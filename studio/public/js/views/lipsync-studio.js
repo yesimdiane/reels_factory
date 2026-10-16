@@ -105,7 +105,7 @@ export function lipsyncStudio() {
     h('b', null, '립싱크 없이 진행하기'),
     h('div', { class: 'small muted' }, '입 모양을 맞추지 않고 승인된 애니메이션 + 승인된 음성을 씬 합본에 사용합니다. 모델 선택이나 가격 입력, 유료 립싱크 호출이 필요 없습니다.'),
     h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, skipAll,
-      h('button', { class: 'btn sage', type: 'button', 'data-lipsync-to-editing': '', onclick: () => { location.hash = '#/video/' + ep.id; } }, '영상 편집으로 이동 →')),
+      h('button', { class: 'btn sage', type: 'button', 'data-lipsync-to-editing': '', onclick: () => { location.hash = '#/render/' + ep.id; } }, '영상 편집으로 이동 →')),
     h('div', { class: 'small muted' }, '합본 자체는 비디오 스튜디오의 장면 검토에서 일괄 실행하세요. 영상·음성 승인이 안 된 장면은 준비 후 합본할 수 있습니다.')));
   wrap.append(h('details', { class: 'scene-section', 'data-lipsync-model-advanced': '' },
     h('summary', null, '립싱크 모델 설정 · 유료 생성 (선택사항)'),
