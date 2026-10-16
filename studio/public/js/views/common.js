@@ -164,7 +164,7 @@ export async function makeStartImages(ep, sceneIds = [], { force = false, after 
     const v = await api.post(`/api/episodes/${ep.id}/start-images/generate`, { sceneIds, force, confirm: c, exclude });
     const r = v.startImageResult || { generated: [], skipped: [], failed: null };
     if (r.failed) toast(`${r.generated.length}개 만들었고 ${r.failed.sceneId}에서 멈췄습니다: ${r.failed.message}`, { error: true, recovery: r.failed.recovery });
-    else toast(`시작 이미지 ${r.generated.length}개를 만들었습니다. 스토리보드에서 확인 후 승인하세요.`);
+    else { const repeats = r.generated.filter((x) => x.sameAsPrevious); toast(`시작 이미지 ${r.generated.length}개를 만들었습니다.${repeats.length ? ' ⚠ 이전 이미지와 완전히 동일한 결과: ' + repeats.map((x) => x.sceneId).join(', ') + '. 새 API 요청은 실행되었습니다.' : ' 새 API 요청 완료.'} 스토리보드에서 확인 후 승인하세요.`); }
   } catch (e) { toast(e.message, { error: true, recovery: e.recovery }); }
   if (after) await after();
 }

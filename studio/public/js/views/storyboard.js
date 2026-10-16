@@ -42,6 +42,52 @@ export function storyboard() {
   const i = curIndex(ep);
   const sc = ep.scenes[i];
   const go = (k) => { setIndex(ep, k); import('../state.js').then(({ hooks }) => hooks.rerender()); };
+  // One explicit batch request for the cuts the operator has finished choosing.
+  // Selection is UI-only; the existing server estimate, approval and paid-call gates remain authoritative.
+  const selection = uiState();
+  selection.sbImageBatch = selection.sbImageBatch || {};
+  const existing = selection.sbImageBatch[ep.id];
+  const eligible = ep.scenes.filter((s) => !(s.startImageInfo && s.startImageInfo.approved));
+  const selected = new Set(Array.isArray(existing) ? existing.filter((id) => eligible.some((s) => s.id === id)) : eligible.map((s) => s.id));
+  selection.sbImageForce = selection.sbImageForce || {};
+  let regenerateExisting = !!selection.sbImageForce[ep.id];
+  const batchButton = h('button', { class: 'btn clay', type: 'button', 'data-sb-generate-selected': ep.id,
+    disabled: !ep.derived.scriptApproved || selected.size === 0,
+    onclick: async () => {
+      if (!selected.size) return;
+      await makeStartImages(ep, [...selected], { force: regenerateExisting, after: refresh });
+    } }, '선택한 컷 이미지 요청 (' + selected.size + ')');
+  const selectionList = h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap', 'data-sb-image-selection': ep.id },
+    ep.scenes.map((s) => {
+      const approved = !!(s.startImageInfo && s.startImageInfo.approved);
+      return h('label', { class: 'small row', style: 'gap:4px;cursor:pointer' },
+        h('input', { type: 'checkbox', checked: selected.has(s.id), disabled: approved,
+          'data-sb-select-cut': s.id, onchange: (e) => {
+            if (e.target.checked) selected.add(s.id); else selected.delete(s.id);
+            selection.sbImageBatch[ep.id] = [...selected];
+            batchButton.textContent = '선택한 컷 이미지 요청 (' + selected.size + ')';
+            batchButton.disabled = !ep.derived.scriptApproved || selected.size === 0;
+          } }), s.id + (approved ? ' · 승인됨' : ''));
+    }));
+  wrap.append(h('section', { class: 'card stack', style: 'gap:10px', 'data-sb-image-batch': ep.id },
+    h('div', { class: 'row between', style: 'gap:10px;flex-wrap:wrap' },
+      h('div', null, h('b', null, '컷별 이미지 일괄 요청'),
+        h('div', { class: 'small muted' }, '컷 구성을 저장한 후 요청하세요. 승인된 이미지는 보호됩니다. 기존 미승인 이미지도 재생성 옵션으로 새 버전을 만들 수 있습니다.')),
+      batchButton),
+    selectionList,
+    h('label', { class: 'small row', style: 'gap:8px;align-items:center;cursor:pointer' },
+      h('input', { type: 'checkbox', 'data-sb-force-existing': ep.id, checked: regenerateExisting, onchange: (e) => { regenerateExisting = e.target.checked; selection.sbImageForce[ep.id] = regenerateExisting; } }),
+      '기존 미승인 이미지도 다시 생성 (추가 비용 발생 가능)'),
+    h('div', { class: 'small muted' }, '기존 이미지를 건너뛰지 않고 새 이미지를 요청합니다. 실제 생성은 예상 비용 및 명시적 결제 승인 후 시작하며, 승인된 이미지는 덮어쓰지 않습니다.'),
+    h('div', { class: 'row', style: 'gap:8px' },
+      h('button', { class: 'btn sm ghost', type: 'button', onclick: () => {
+        selected.clear(); eligible.forEach((s) => selected.add(s.id));
+        selection.sbImageBatch[ep.id] = [...selected]; import('../state.js').then(({ hooks }) => hooks.rerender());
+      } }, '미승인 컷 전체 선택'),
+      h('button', { class: 'btn sm ghost', type: 'button', onclick: () => {
+        selected.clear(); selection.sbImageBatch[ep.id] = []; import('../state.js').then(({ hooks }) => hooks.rerender());
+      } }, '선택 해제')),
+    h('div', { class: 'small muted' }, '클릭하면 먼저 예상 비용을 확인합니다. 비용 승인 전에는 AI 이미지 생성 요청을 보내지 않습니다.')));
   wrap.append(sceneGallery(ep, (sid) => { setIndex(ep, ep.scenes.findIndex((x) => x.id === sid)); import('../state.js').then(({ hooks }) => hooks.rerender()); window.scrollTo({ top: 0, behavior: 'smooth' }); }));
   wrap.append(h('div', { class: 'scene-tabs', role: 'tablist', 'aria-label': '장면 목록' }, ep.scenes.map((s, k) => {
     const img = s.startImageInfo;
@@ -132,7 +178,18 @@ function sceneCard(ep, sc, i, chars, go) {
   const rerender = () => import('../state.js').then(({ hooks }) => hooks.rerender());
   const zoom = () => { if (!img || !img.url) return; modal((close) => h('div', { class: 'stack', style: 'align-items:center;gap:8px' }, h('img', { src: img.url, alt: sc.id, 'data-sb-full': sc.id, style: 'max-height:75vh;max-width:100%;border-radius:10px' }), h('div', { class: 'small muted' }, img.fileName || img.label || ''), h('button', { class: 'btn ghost', type: 'button', onclick: close }, '닫기')), { wide: true }); };
   const delBtn = isFrame ? h('button', { class: 'btn ghost danger', type: 'button', 'data-sb-delete-image': sc.id, disabled: img.approved, title: img.approved ? '승인된 이미지는 먼저 승인을 취소하세요' : '이 이미지 파일만 지웁니다. 캐릭터·제품 참조 이미지는 지워지지 않습니다', onclick: async () => { if (await confirmDialog({ title: '이 시작 이미지를 삭제할까요?', body: '이 장면에 연결된 이미지만 목록에서 빼고 파일은 복구 가능한 보관 폴더로 옮깁니다. 캐릭터 라이브러리와 제품 사진은 그대로입니다.', confirm: '삭제', tone: 'clay' })) act(() => api.del(`/api/episodes/${ep.id}/scenes/${sc.id}/start-frame`), { ok: '시작 이미지를 삭제했습니다 (참조 이미지는 그대로)' }); } }, icon('trash'), '삭제') : null;
-  const genBtn = h('button', { class: 'btn clay', type: 'button', 'data-sb-regenerate': sc.id, disabled: !ep.derived.scriptApproved || img && img.approved && isFrame, title: img && img.approved && isFrame ? '승인된 이미지는 먼저 승인을 취소하세요' : '비용 확인 후에만 생성됩니다', onclick: () => makeStartImages(ep, [sc.id], { force: true, after: refresh }) }, icon('play'), isFrame ? '다시 만들기' : '이미지 만들기');
+  const genBtn = h('button', { class: 'btn clay', type: 'button', 'data-sb-regenerate': sc.id, disabled: !ep.derived.scriptApproved || img && img.approved && isFrame, title: img && img.approved && isFrame ? '승인된 이미지는 먼저 승인을 취소하세요' : '비용 확인 후에만 생성됩니다', onclick: async () => {
+    // The prompt editor may contain unsaved changes. Persist those first so the
+    // server generates from the text the operator can currently see.
+    const editor = document.querySelector('[data-image-prompt="' + sc.id + '"]');
+    const saved = sc.imagePrompt && sc.imagePrompt.text || '';
+    if (editor && editor.value !== saved) {
+      try {
+        await api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/image-prompt`, { text: editor.value });
+      } catch (e) { toast('프롬프트 저장에 실패하여 이미지를 생성하지 않았습니다: ' + e.message, { error: true }); return; }
+    }
+    await makeStartImages(ep, [sc.id], { force: true, after: refresh });
+  } }, icon('play'), isFrame ? '다시 만들기' : '이미지 만들기');
   const uploadBtn = h('button', { class: 'btn ghost', type: 'button', 'data-sb-upload': sc.id, onclick: () => fileIn.click() }, icon('upload'), '올리기');
   const imageHead = h('div', { class: 'sb-image-head', 'data-sb-image': sc.id },
     h('div', { class: 'sb-image-preview' }, main),

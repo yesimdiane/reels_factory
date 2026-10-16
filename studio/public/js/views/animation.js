@@ -115,12 +115,60 @@ export function clipCard(ep, sc, g, opts = {}) {
   const sel = state.draft[key] != null && vs.some((v) => v.v === state.draft[key]) ? state.draft[key] : (sc.clips.approvedVersion || (vs.length ? vs[vs.length - 1].v : null));
   const cur = vs.find((v) => v.v === sel);
   const running = (ep.generation.jobs || []).find((j) => j.sceneId === sc.id && !j.brollId && ['preparing', 'submitting', 'processing'].includes(j.status));
+  // Clip-local animation fixes: no navigation back to Script or Image Studio.
+  const editKey = 'clip-animation-fix:' + ep.id + ':' + sc.id;
+  const draft = (state.draft[editKey] = state.draft[editKey] || {
+    video: (sc.prompt && sc.prompt.video) || '',
+    negative: (sc.prompt && sc.prompt.negative) || '',
+    revision: sc.prompt && sc.prompt.rev || 0,
+    open: false,
+  });
+  if (draft.revision !== (sc.prompt && sc.prompt.rev || 0) && !draft.open) {
+    draft.video = (sc.prompt && sc.prompt.video) || '';
+    draft.negative = (sc.prompt && sc.prompt.negative) || '';
+    draft.revision = sc.prompt && sc.prompt.rev || 0;
+  }
+  const productGuard = 'PRODUCT IDENTITY LOCK: Keep the exact same physical product shown in the approved start image. Preserve its shape, color, material, proportions, display, buttons, and all distinctive details. Do not redesign, morph, substitute, or add product features. Animate only the requested action. Maintain unchanged room lighting unless the requested action explicitly changes it.';
+  const saveFix = async (generate = false) => {
+    if (!sc.prompt) return toast('애니메이션 프롬프트를 먼저 생성하세요.', { error: true });
+    if (!draft.video.trim()) return toast('애니메이션 프롬프트를 입력하세요.', { error: true });
+    const changed = draft.video !== sc.prompt.video || draft.negative !== (sc.prompt.negative || '');
+    if (changed) {
+      const saved = await act(() => api.put(`/api/episodes/${ep.id}/scenes/${sc.id}/prompt`, { video: draft.video, negative: draft.negative }), { ok: '이 장면의 애니메이션 프롬프트만 저장했습니다' });
+      if (!saved) return; // Failed saves must never trigger a paid generation.
+    }
+    if (generate) {
+      if (changed) return toast('새 프롬프트를 저장했습니다. 갱신된 장면에서 비용 확인 후 다시 생성을 눌러주세요.');
+      return startGeneration(ep, [sc.id]);
+    }
+  };
+  const editor = h('details', { class: 'scene-section', open: draft.open || undefined, 'data-clip-anim-editor': sc.id },
+    h('summary', { style: 'cursor:pointer', onclick: () => { draft.open = !draft.open; } }, '✎ 이 클립의 애니메이션만 수정'),
+    h('div', { class: 'stack', style: 'gap:8px;padding:10px 0' },
+      h('div', { class: 'small muted' }, '대본·이미지는 건드리지 않습니다. 이 장면의 영상 동작만 수정하고 새 버전을 만들 수 있어요.'),
+      h('label', { class: 'field' }, h('span', { class: 'small' }, '애니메이션 프롬프트'),
+        h('textarea', { rows: 6, 'data-clip-anim-prompt': sc.id, oninput: (e) => { draft.video = e.target.value; } }, draft.video)),
+      h('label', { class: 'field' }, h('span', { class: 'small' }, '네거티브 프롬프트'),
+        h('textarea', { rows: 2, 'data-clip-anim-negative': sc.id, oninput: (e) => { draft.negative = e.target.value; } }, draft.negative)),
+      h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
+        h('button', { class: 'btn sm ghost', type: 'button', 'data-clip-product-lock': sc.id, onclick: () => {
+          if (!draft.video.includes('PRODUCT IDENTITY LOCK:')) draft.video = (draft.video.trim() + '\n\n' + productGuard).trim();
+          state.draft[editKey] = draft;
+          const ta = document.querySelector('[data-clip-anim-prompt="' + sc.id + '"]');
+          if (ta) ta.value = draft.video;
+          toast('원본 제품 유지 지시를 프롬프트에 추가했습니다. 저장한 뒤 재생성하세요.');
+        } }, '제품 디자인 고정 지시 추가'),
+        h('button', { class: 'btn sm sage', type: 'button', 'data-clip-anim-save': sc.id, disabled: !sc.prompt, onclick: () => saveFix(false) }, '애니메이션만 저장'),
+        h('button', { class: 'btn sm clay', type: 'button', 'data-clip-anim-save-generate': sc.id, disabled: !sc.prompt || !!running || !ep.derived.storyboardApproved, onclick: () => saveFix(true) }, '저장 · 이 장면만 재생성')),
+
+      h('div', { class: 'small muted' }, '재생성 전 무료 예상 비용 확인과 유료 승인 절차가 유지됩니다. 기존 클립은 삭제되지 않습니다.')));
   const fileIn = h('input', { type: 'file', accept: 'video/mp4,video/quicktime', style: 'display:none', onchange: async (e) => { const f = e.target.files[0]; if (f) await act(() => api.upload(`/api/episodes/${ep.id}/clips/${sc.id}/upload`, f), { ok: '클립을 올렸습니다 — 검토 후 승인하세요' }); } });
   return h('div', { class: 'clip-card' + (cur && cur.status === 'approved' ? ' approved' : ''), 'data-clip-card': sc.id, 'data-clip-status': cur ? cur.status : 'none' },
     h('div', { class: 'row between' }, h('b', null, sc.id + ' · ' + (sc.title_ko || sc.title || '').slice(0, 22)), cur ? chip(({ approved: '승인됨', pending_review: '검토 대기', rejected: '거절됨', superseded: '교체됨' })[cur.status] || cur.status, ({ approved: 'done', pending_review: 'attention', rejected: 'err' })[cur.status] || '') : chip(running ? '생성 중' : '클립 없음', running ? 'processing' : '')),
     h('div', { class: 'phone sm' }, cur ? h('video', { src: cur.url, controls: true, playsinline: true, preload: 'metadata', muted: true }) : h('div', { class: 'ph' }, running ? '생성 중… (자동으로 새로고침됩니다)' : '아직 클립이 없습니다')),
     cur ? h('div', { class: 'small muted' }, `v${cur.v} · ${cur.durationSec}초 · ${cur.width}×${cur.height}` + (cur.mock ? ' · 목업' : cur.manual ? ' · 직접 업로드' : '') + (cur.reused ? ' · 캐시 재사용' : '')) : null,
     cur && cur.warnings && cur.warnings.length ? h('div', { class: 'small', style: 'color:var(--clay)' }, cur.warnings.join(' ')) : null,
+    editor,
     vs.length > 1 ? h('div', { class: 'versions' }, vs.map((v) => h('button', { 'aria-pressed': v.v === sel ? 'true' : 'false', onclick: () => { state.draft[key] = v.v; import('../state.js').then(({ hooks }) => hooks.rerender()); } }, 'v' + v.v + (v.status === 'approved' ? ' ✓' : '')))) : null,
     h('div', { class: 'row', style: 'gap:6px' },
       cur && cur.status !== 'approved' ? h('button', { class: 'btn sm sage', onclick: () => act(() => api.post(`/api/episodes/${ep.id}/clips/${sc.id}/${cur.v}/review`, { decision: 'approve' }), { ok: sc.id + ' 클립을 승인했습니다' }) }, icon('check'), '승인') : null,
