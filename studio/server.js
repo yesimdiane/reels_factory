@@ -361,6 +361,8 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('POST', '/api/episodes/:id/scenes/:sid/lipsync/:v/review', async ({ p, body }) => { await S.lipsync.review(p.id, p.sid, p.v, body && body.action); return ep(p.id); });
   route('PUT', '/api/lipsync/default', async ({ body }) => { S.lipsync.modelById(body && body.modelId); S.store.settings.save({ lipsyncModelId: body.modelId }); return { ok: true }; });
   route('POST', '/api/lipsync/models', async ({ body }) => S.lipsync.addModel(body || {}));
+  route('PUT', '/api/lipsync/models/:id/price', async ({ p, body }) => S.lipsync.setPrice(p.id, body && body.costEstimateUsd));
+  route('PUT', '/api/episodes/:id/scenes/:sid/lipsync/skip', async ({ p, body }) => { S.assertNotHeld(p.id); const ep0 = S.store.episodes.get(p.id); if (!(ep0.scenes || []).some((x) => x.id === p.sid)) throw new StudioError('NOT_FOUND', '장면을 찾을 수 없습니다.', { status: 404 }); await S.store.episodes.update(p.id, (e) => { e.lipsyncSkipped = Object.assign({}, e.lipsyncSkipped || {}, { [p.sid]: body.skip === true }); }); return ep(p.id); });
   route('POST', '/api/lipsync/models/:id/confirm', async ({ p }) => { S.lipsync.confirmModel(p.id); return { ok: true }; });
   route('DELETE', '/api/lipsync/models/:id', async ({ p }) => { S.lipsync.removeModel(p.id); return { ok: true }; });
   route('POST', '/api/muapi/check', async () => S.muapiCheck());
