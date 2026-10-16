@@ -19,7 +19,8 @@ export function voice() {
   wrap.append(h('div', { class: 'banner ' + (live ? 'live' : 'mock') }, chip(live ? 'LIVE' : 'MOCK', live ? 'live' : 'mock'), h('div', null, h('b', null, live ? '실제 HeyGen 음성 (유료)' : '목업 음성 — 요금 없음'), live ? '음성 확인이 끝난 캐릭터만 생성할 수 있고, 생성 전 글자 수를 확인해야 합니다.' : '확인용 톤 오디오가 만들어집니다. 실제 음성은 서버 환경변수 RF_STUDIO_VOICE_MODE=live 와 HEYGEN_API_KEY가 필요합니다.')));
   if (!ep.derived.scriptApproved) wrap.append(lockedNotice('대본이 승인되어야 음성을 만들 수 있습니다.', 'script', '대본으로 이동'));
 
-  wrap.append(h('div', { class: 'card stack', style: 'gap:10px' }, h('div', { class: 'card-head' }, h('h2', null, '장면별 음성'), h('span', { class: 'small muted' }, '무음 애니메이션 승인 후 대사 음성을 만들고 승인합니다 · 대사가 없는 장면은 이 단계를 건너뜁니다')), voiceScenes(ep)));
+  const scenesCard = h('div', { class: 'card stack', style: 'gap:10px' }, h('div', { class: 'card-head' }, h('h2', null, '장면별 음성'), h('span', { class: 'small muted' }, '무음 애니메이션 승인 후 대사 음성을 만들고 승인합니다 · 대사가 없는 장면은 이 단계를 건너뜁니다')), voiceScenes(ep));
+  wrap.append(scenesCard);
   const cards = h('div', { class: 'grid two' }, chars.map((c) => charVoiceCard(c)));
   wrap.append(cards);
 
@@ -28,7 +29,8 @@ export function voice() {
     if (ok) await act(() => api.post(`/api/episodes/${ep.id}/voice/run`, { confirmChars: est.billableChars }), { ok: '음성을 생성했습니다' });
   } }, icon('play'), est.cachedLines === est.lines.length ? '모든 음성이 준비됨' : '음성 생성');
 
-  wrap.append(h('div', { class: 'card' },
+  // the all-lines overview + bulk generate button comes first, above the per-scene cards
+  wrap.insertBefore(h('div', { class: 'card' },
     h('div', { class: 'card-head' }, h('h2', null, '대사별 음성'), h('div', { class: 'row' }, chip(`${est.cachedLines}/${est.lines.length} 준비됨`, est.cachedLines === est.lines.length ? 'done' : 'attention'), run)),
     issueList(est.blockers, 'err'),
     h('table', { class: 'tbl', style: 'margin-top:8px' }, h('thead', null, h('tr', null, ['화자', 'English', '한국어 자막', '길이', '음성'].map((x) => h('th', null, x)))),
@@ -36,7 +38,7 @@ export function voice() {
         h('td', null, h('div', { class: 'row', style: 'gap:8px;flex-wrap:nowrap' }, charAvatar(c), c.name)),
         h('td', { style: 'max-width:260px' }, l.en), h('td', { style: 'max-width:240px', class: 'muted' }, l.ko),
         h('td', null, e && e.durationSec ? fmtSec(e.durationSec) : '—'),
-        h('td', null, e && e.cached ? h('audio', { controls: true, src: e.url, preload: 'none', style: 'height:34px;max-width:230px' }) : chip('없음', 'attention'))); })))));
+        h('td', null, e && e.cached ? h('audio', { controls: true, src: e.url, preload: 'none', style: 'height:34px;max-width:230px' }) : chip('없음', 'attention'))); })))), scenesCard);
 
   { const tt = timingTable(ep); if (tt) wrap.append(tt); }
   const tl = ep.derived.render.plan.timeline;

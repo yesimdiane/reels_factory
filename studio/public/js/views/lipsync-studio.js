@@ -101,6 +101,9 @@ export function lipsyncStudio() {
       else toast('립싱크를 생략했습니다. 승인된 영상과 음성으로 합본할 수 있습니다.');
       await act(async () => null);
     } }, '모든 대사 장면 립싱크 건너뛰기 (' + notSkipped.length + ')');
+  const talk = ep.scenes.filter((s) => ep.lipsync.scenes[s.id].dialogue);
+  const done = talk.filter((s) => ep.lipsync.scenes[s.id].state === 'approved').length;
+  wrap.append(h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap', 'data-lipsync-summary': '' }, chip(`대사 장면 ${talk.length}개 중 ${done}개 승인`, done === talk.length ? 'done' : 'attention'), chip(`대사 없는 장면 ${ep.scenes.length - talk.length}개는 건너뜀`, '')));
   wrap.append(h('section', { class: 'card stack', style: 'gap:10px', 'data-lipsync-skip-all-panel': ep.id },
     h('b', null, '립싱크 없이 진행하기'),
     h('div', { class: 'small muted' }, '입 모양을 맞추지 않고 승인된 애니메이션 + 승인된 음성을 씬 합본에 사용합니다. 모델 선택이나 가격 입력, 유료 립싱크 호출이 필요 없습니다.'),
@@ -110,9 +113,6 @@ export function lipsyncStudio() {
   wrap.append(h('details', { class: 'scene-section', 'data-lipsync-model-advanced': '' },
     h('summary', null, '립싱크 모델 설정 · 유료 생성 (선택사항)'),
     modelCard(ep)));
-  const talk = ep.scenes.filter((s) => ep.lipsync.scenes[s.id].dialogue);
-  const done = talk.filter((s) => ep.lipsync.scenes[s.id].state === 'approved').length;
-  wrap.append(h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap', 'data-lipsync-summary': '' }, chip(`대사 장면 ${talk.length}개 중 ${done}개 승인`, done === talk.length ? 'done' : 'attention'), chip(`대사 없는 장면 ${ep.scenes.length - talk.length}개는 건너뜀`, '')));
   ep.scenes.forEach((sc) => wrap.append(sceneCard(ep, sc)));
   return wrap;
 }
