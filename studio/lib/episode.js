@@ -121,6 +121,9 @@ function validateScript(ep, lib) {
   const W = (code, message, extra = {}) => warnings.push(Object.assign({ code, message }, extra));
   const chars = Object.fromEntries(((lib && lib.characters) || []).map((c) => [c.id, c]));
   const scenes = ep.scenes || [];
+  // Only episodes explicitly opted into the new policy are restricted to 5s.
+  // Existing episodes without this persisted policy keep their historical 15s allowance.
+  const maxSceneSec = ep.durationPolicy && ep.durationPolicy.maxSceneSec === 5 ? 5 : 15;
   const sceneIds = new Set();
   scenes.forEach((s) => {
     if (sceneIds.has(s.id)) E('SCENE_DUP', `장면 ID가 중복됩니다: ${s.id}`, { sceneId: s.id, field: 'id' });
@@ -128,7 +131,7 @@ function validateScript(ep, lib) {
     const tk = checkTitleKo(s.title_ko);
     if (titlesStrict(ep)) { tk.errors.forEach((m) => E('SCENE_TITLE', `${s.id}: ${m}`, { sceneId: s.id, field: 'title_ko' })); tk.warnings.forEach((m) => W('SCENE_TITLE_LEN', `${s.id}: ${m}`, { sceneId: s.id })); }
     else if (!s.title_ko) W('SCENE_TITLE_MISSING', `${s.id}: 한국어 장면 제목(title_ko)이 없습니다 (이전에 만든 에피소드). 제목을 입력해 두면 모든 화면에서 쓰입니다.`, { sceneId: s.id });
-    if (!(s.durationSec >= 1 && s.durationSec <= 5)) E('SCENE_DURATION', `${s.id}: 장면 길이는 1~5초여야 합니다.`, { sceneId: s.id, field: 'durationSec' });
+    if (!(s.durationSec >= 1 && s.durationSec <= maxSceneSec)) E('SCENE_DURATION', `${s.id}: 장면 길이는 1~${maxSceneSec}초여야 합니다.`, { sceneId: s.id, field: 'durationSec' });
   });
   if (!scenes.length) E('NO_SCENES', '장면이 없습니다.');
   if (!(ep.lines || []).length) E('NO_LINES', '대사가 없습니다.');
