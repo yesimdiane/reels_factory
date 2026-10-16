@@ -410,6 +410,9 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
     }
     return { modelId, endpoint, imageField, imageType, connected, mode: S.video.mode, paidRequestSent: false, remoteEndpointVerified: false, checkedAt: new Date().toISOString(), blockers: [...new Set(problems)], canGenerate: connected && problems.length === 0 && !!estimate.canAuthorize };
   });
+  route('POST', '/api/episodes/:id/broll/:bid/clip/estimate', async ({ p, body }) => S.gen.estimateBroll(p.id, p.bid, body || {}));
+  route('POST', '/api/episodes/:id/broll/:bid/clip/generate', async ({ p, body }) => { S.assertNotHeld(p.id); const { accepted, done } = await S.gen.generateBroll(p.id, p.bid, body || {}); bg(done, 'broll-generation'); return { status: 202, data: { accepted } }; });
+  route('POST', '/api/episodes/:id/broll/:bid/clip/:v/review', async ({ p, body }) => { S.assertNotHeld(p.id); await S.gen.reviewBroll(p.id, p.bid, Number(p.v), body && body.decision); return ep(p.id); });
   route('POST', '/api/episodes/:id/generation/estimate', async ({ p, body }) => S.gen.estimate(p.id, body));
   route('POST', '/api/episodes/:id/generation/authorize', async ({ p, body }) => { S.assertNotHeld(p.id); return S.gen.authorize(p.id, body); });
   route('POST', '/api/episodes/:id/generation/run', async ({ p, body }) => {
