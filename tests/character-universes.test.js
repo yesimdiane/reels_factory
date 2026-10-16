@@ -140,9 +140,9 @@ test('episodes: the cast and universe travel with the episode; the universe\'s o
   assert.equal(ep.series, 'Gregory Cats');
   assert.equal(ep.ending.templateId, 'gregory-cats-ending-v1', 'same three-shot closing format, designed for this cast');
   const shots = ep.scenes.filter((x) => x.part === 'B');
-  assert.equal(shots.length, 3, 'exactly three closing shots, in the fixed order');
-  assert.deepEqual(shots.map((x) => x.beatKey), ['shopping_excuse', 'product_demonstration', 'jack_reaction']);
-  assert.deepEqual(shots.map((x) => x.characters), [['lucy'], ['louie'], ['lucy', 'cloud']]);
+  assert.equal(shots.length, 4, 'three closing steps in the fixed order; the 10 s reaction is two 5 s scenes');
+  assert.deepEqual(shots.map((x) => x.beatKey), ['shopping_excuse', 'product_demonstration', 'jack_reaction', 'jack_reaction']);
+  assert.deepEqual(shots.map((x) => x.characters), [['lucy'], ['louie'], ['lucy', 'cloud'], ['lucy', 'cloud']]);
   assert.ok(shots.every((x) => !x.characters.includes('jack') && !x.characters.includes('diane')));
   assert.equal(ep.lines.filter((l) => /BABY/.test(l.en)).length, 0, 'no Jack & Diane lines in the cat ending');
   // the script prompt is character-neutral and lists only the cast ids

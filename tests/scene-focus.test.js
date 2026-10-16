@@ -55,7 +55,7 @@ test('씬 저장: saves only this scene as a draft, even when invalid; never app
   assert.deepEqual(ids(s, id), order0, 'scene order and IDs are preserved');
   const after = s.store.episodes.get(id);
   assert.equal(JSON.stringify({ scenes: after.scenes.filter((x) => x.id !== 'S2'), lines: after.lines.filter((l) => l.sceneId !== 'S2') }), otherHash, 'every other scene and its dialogue is untouched');
-  assert.equal(v.scenes.filter((x) => x.approval.approved).length, 8, 'other approvals stay');
+  assert.equal(v.scenes.filter((x) => x.approval.approved).length, 9, 'other approvals stay');
   assert.deepEqual(after.lines.filter((l) => l.sceneId === 'S2').map((l) => l.id), own.map((l) => l.id), 'line ids are kept');
   assert.ok(s.store.episodes.versions(id).some((x) => /씬 저장 \(S2\)/.test(x.note)));
 });
@@ -97,22 +97,22 @@ test('씬 추가: a new empty draft scene right after the current one; nothing e
   const before = s.store.episodes.get(id);
   const order0 = ids(s, id);
   const v = await s.addScene(id, { afterSceneId: 'S2' });
-  assert.equal(v.newSceneId, 'S10');
+  assert.equal(v.newSceneId, 'S11');
   const order1 = ids(s, id);
-  assert.deepEqual(order1.filter((x) => x !== 'S10'), order0, 'existing scenes keep their ids and order');
-  assert.equal(order1[order1.indexOf('S2') + 1], 'S10', 'inserted right after the current scene');
-  const sc = v.scenes.find((x) => x.id === 'S10');
+  assert.deepEqual(order1.filter((x) => x !== 'S11'), order0, 'existing scenes keep their ids and order');
+  assert.equal(order1[order1.indexOf('S2') + 1], 'S11', 'inserted right after the current scene');
+  const sc = v.scenes.find((x) => x.id === 'S11');
   assert.equal(sc.approval.status, 'draft');
   assert.equal(sc.beatKey, before.scenes.find((x) => x.id === 'S2').beatKey, 'stays inside the same story beat');
-  assert.equal(v.scenes.filter((x) => x.part === 'B').length, 3);
-  assert.equal(v.scenes.filter((x) => x.approval.approved).length, 9, 'approvals of existing scenes are untouched');
-  assert.equal(v.derived.sceneApproval.progress, '9/10 씬 승인');
+  assert.equal(v.scenes.filter((x) => x.part === 'B').length, 4);
+  assert.equal(v.scenes.filter((x) => x.approval.approved).length, 10, 'approvals of existing scenes are untouched');
+  assert.equal(v.derived.sceneApproval.progress, '10/11 씬 승인');
   // from a Part B scene the new scene goes to the end of "제품 연결" (Part A)
   const v2 = await s.addScene(id, { afterSceneId: 'E2' });
   const added = v2.scenes.find((x) => x.id === v2.newSceneId);
   assert.equal(added.part, 'A');
   assert.equal(added.beatKey, 'product_bridge');
-  assert.deepEqual(v2.scenes.slice(-3).map((x) => x.id), ['E1', 'E2', 'E3']);
+  assert.deepEqual(v2.scenes.slice(-4).map((x) => x.id), ['E1', 'E2', 'E3', 'E4']);
   await assert.rejects(s.addScene(id, { afterSceneId: 'S1', beatKey: 'shopping_excuse' }), (e) => e.code === 'BAD_BEAT');
 });
 

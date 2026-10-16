@@ -59,7 +59,7 @@ test('Video Studio: five tabs, timeline tracks, SFX/subtitle editing at 0.3 s, s
     assert.equal(s.store.episodes.get(ID).sfx[0].offsetSec, 0.9);
     await page.locator(`[data-vs-item="line:${lid}"]`).click();
     await page.waitForSelector('[data-vs-editor="line"]');
-    assert.match(await page.locator('[data-vs-editor="line"]').innerText(), /타이밍이 바뀌지 않습니다/);
+    assert.match(await page.locator('[data-vs-editor="line"]').innerText(), /음성 파일은 그대로 유지/);
     // 3 subtitles: edit text, shift, hide, style preview
     await page.locator('[data-vs-tab="subtitles"]').click();
     await page.waitForSelector(`[data-vs-cue="${lid}"]`);

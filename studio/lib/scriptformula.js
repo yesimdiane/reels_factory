@@ -2,7 +2,7 @@
 // validating AI output and tracking manual edits. Pure functions over an episode object (callers do the persistence).
 'use strict';
 const { StudioError } = require('./util');
-const { checkTitleKo } = require('./episode');
+const { checkTitleKo, speechNeed } = require('./episode');
 const F = require('./formula');
 const { defaultVars, VAR_KEYS } = require('./endingtemplates');
 
@@ -35,9 +35,34 @@ const dropScene = (ep, id) => { ep.scenes = ep.scenes.filter((s) => s.id !== id)
 /** Part A scenes first (their order is kept), then Part B in the fixed ending order. */
 function orderScenes(ep) {
   const a = ep.scenes.filter((s) => s.part !== 'B');
-  const b = F.ENDING_KEYS.map((k) => ep.scenes.find((s) => s.part === 'B' && s.beatKey === k)).filter(Boolean);
+  const b = [].concat(...F.ENDING_KEYS.map((k) => ep.scenes.filter((s) => s.part === 'B' && s.beatKey === k)));
   const rest = ep.scenes.filter((s) => s.part === 'B' && !F.ENDING_KEYS.includes(s.beatKey));
   ep.scenes = a.concat(b, rest);
+}
+
+/** A template shot longer than the episode's per-scene limit becomes consecutive scenes (same beat, equal length, lines kept in order). */
+function splitShot(shot, maxSec) {
+  const n = Math.max(1, Math.ceil(shot.durationSec / maxSec - 1e-9));
+  if (n === 1) return [shot];
+  const per = Math.round((shot.durationSec / n) * 100) / 100;
+  // Contiguous line groups that balance the estimated speaking time (dialogue never changes order or wording).
+  const L = shot.lines; const cuts = [0];
+  const cost = (from, to) => speechNeed(L.slice(from, to));
+  if (L.length >= n) {
+    let best = null;
+    const rec = (start, left, acc) => {
+      if (left === 1) { const all = acc.concat([[start, L.length]]); const worst = Math.max(...all.map(([x, y]) => cost(x, y))); if (!best || worst < best.worst) best = { worst, all }; return; }
+      for (let e = start + 1; e <= L.length - (left - 1); e++) rec(e, left - 1, acc.concat([[start, e]]));
+    };
+    rec(0, n, []);
+    best.all.forEach(([, y]) => cuts.push(y));
+  } else for (let i = 1; i <= n; i++) cuts.push(i <= L.length ? i : L.length);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const tag = i === 0 ? `Part 1 of ${n} (first ${per}s of the shot): ` : `Part ${i + 1} of ${n} (continues directly from the previous part, same setting and framing): `;
+    out.push(Object.assign({}, shot, { durationSec: per, action: tag + (shot.action || ''), lines: L.slice(cuts[i], cuts[i + 1]) }));
+  }
+  return out;
 }
 
 /**
@@ -51,17 +76,22 @@ function applyEnding(ep, endings, { respectEdits = true } = {}) {
   sel.templateName = inst.templateName;
   sel.templateVersion = inst.templateVersion;
   const kept = [];
+  const maxSec = ep.durationPolicy && ep.durationPolicy.maxSceneSec === 5 ? 5 : 0;
   inst.shots.forEach((shot) => {
-    let sc = ep.scenes.find((s) => s.part === 'B' && s.beatKey === shot.beatKey);
-    if (sc && sc.manualEdit && respectEdits) { kept.push(shot.beatKey); return; }
-    const keepFrame = sc && sc.startImage;
-    if (sc) dropScene(ep, sc.id);
-    const used = new Set(ep.scenes.map((s) => s.id));
-    const id = !used.has('E' + (F.ENDING_KEYS.indexOf(shot.beatKey) + 1)) ? 'E' + (F.ENDING_KEYS.indexOf(shot.beatKey) + 1) : freeIds(used, 1, 'E')[0];
-    sc = mkScene(id, shot.beatKey, shot);
-    if (keepFrame) sc.startImage = keepFrame; // a rebuilt shot keeps its start frame
-    ep.scenes.push(sc);
-    pushLines(ep, id, shot.lines);
+    const existing = ep.scenes.filter((s) => s.part === 'B' && s.beatKey === shot.beatKey);
+    if (existing.some((s) => s.manualEdit) && respectEdits) { kept.push(shot.beatKey); return; }
+    const keepFrame = existing[0] && existing[0].startImage;
+    existing.forEach((s) => dropScene(ep, s.id));
+    const parts = maxSec && shot.durationSec > maxSec ? splitShot(shot, maxSec) : [shot];
+    parts.forEach((part, pi) => {
+      const used = new Set(ep.scenes.map((s) => s.id));
+      const base = 'E' + (F.ENDING_KEYS.indexOf(shot.beatKey) + 1);
+      const id = pi === 0 && !used.has(base) ? base : freeIds(used, 1, 'E')[0];
+      const sc = mkScene(id, shot.beatKey, part);
+      if (pi === 0 && keepFrame) sc.startImage = keepFrame; // a rebuilt shot keeps its start frame
+      ep.scenes.push(sc);
+      pushLines(ep, id, part.lines);
+    });
     const beat = (ep.product_ending[shot.beatKey] = ep.product_ending[shot.beatKey] || F.emptyBeat());
     keepBeatMeta(beat, shot);
   });
