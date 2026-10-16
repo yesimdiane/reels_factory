@@ -18,26 +18,22 @@ function buildTimeline(ep, audioSec) {
   const lines = [];
   (ep.scenes || []).forEach((s) => {
     const own = (ep.lines || []).filter((l) => l.sceneId === s.id);
-    let need = 0;
+    const planned = Number(s.durationSec);
+    const sceneStart = t;
+    let cursor = t + LEAD;
+    const ownLines = [];
     own.forEach((l, i) => {
       const d = audioSec(l.id);
-      if (d == null) {
-        missing.push(l.id);
-        return;
-      }
-      need += (i === 0 ? LEAD : GAP) + d;
-    });
-    if (own.length) need += TAIL;
-    const planned = Number(s.durationSec);
-    const duration = Math.max(planned, Math.round(need * 100) / 100);
-    if (duration > planned + 0.01) warnings.push({ code: 'SCENE_EXTENDED', sceneId: s.id, message: `${s.id}: 대사가 길어 ${planned}초 → ${duration}초로 늘어납니다.` });
-    let cursor = t + LEAD;
-    own.forEach((l) => {
-      const d = audioSec(l.id);
-      if (d == null) return;
-      lines.push({ id: l.id, sceneId: s.id, speaker: l.speaker, start: round(cursor), end: round(cursor + d), duration: d, en: l.en, ko: l.ko });
+      if (d == null) { missing.push(l.id); return; }
+      const offset = Number((ep.audioTiming || {})[l.id]);
+      if (Number.isFinite(offset) && offset >= 0) cursor = Math.max(cursor, sceneStart + offset);
+      ownLines.push({ id: l.id, sceneId: s.id, speaker: l.speaker, start: round(cursor), end: round(cursor + d), duration: d, en: l.en, ko: l.ko });
       cursor += d + GAP;
     });
+    const need = ownLines.length ? cursor - t - GAP + TAIL : 0;
+    const duration = Math.max(planned, round(need));
+    if (duration > planned + 0.01) warnings.push({ code: 'SCENE_EXTENDED', sceneId: s.id, message: `${s.id}: 대사가 길어 ${planned}초 → ${duration}초로 늘어납니다.` });
+    lines.push(...ownLines);
     scenes.push({ id: s.id, title: s.title_ko || s.title, start: round(t), end: round(t + duration), duration: round(duration), plannedSec: planned, extended: duration > planned + 0.01 });
     t += duration;
   });
