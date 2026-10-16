@@ -108,7 +108,7 @@ function createSceneFlow({ store, cfg, voice, broll, log = () => {} }) {
     const ls = approvedLipsync(ep, sid);
     const parts = {
       clip: clip ? h([clip.v, clip.sha256]) : '',
-      audio: audioState(ep, sid).hash,
+      audio: h([audioState(ep, sid).hash, (ep.lines || []).filter((l) => l.sceneId === sid).map((l) => [l.id, (ep.audioTiming || {})[l.id] || 0])]),
       cuts: h([cuts.inserts, cuts.broll.map((b) => [b.id, b.at, b.dur, b.sha])]),
       sfx: h(sfxOf(ep, sid).map((x) => [x.id, x.sha256, x.offsetSec, x.gainDb].concat(x.fadeInSec || x.fadeOutSec ? [x.fadeInSec || 0, x.fadeOutSec || 0] : []))),
     };
