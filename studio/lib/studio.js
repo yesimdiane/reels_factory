@@ -275,6 +275,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     const voiceEst = voice.estimate(id);
     const view = Object.assign({}, ep, {
       scenes: sceneViews,
+      outfitLock: ep.outfitLock || {},
       derived: {
         renderReadiness: renderReadiness.check(ep),
         concept: conceptInfo,
@@ -1417,6 +1418,19 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
     return characterView(store.characters.get(id));
   }
 
+  async function saveOutfitLock(epId, selection, confirm) {
+    if (confirm !== true) throw new StudioError('CONFIRM_REQUIRED', '에피소드 의상 변경은 사용자 승인 후에만 저장됩니다.', { status: 409 });
+    assertNotHeld(epId);
+    const ep = store.episodes.get(epId);
+    const allowed = new Set(ep.characters || []);
+    const { validateSelection } = require('./outfitlock');
+    if (Object.keys(selection || {}).some((id) => !allowed.has(id))) throw new StudioError('OUTFIT_CAST', '에피소드에 없는 캐릭터의 의상은 설정할 수 없습니다.', { status: 422 });
+    const next = validateSelection(selection, lib().characters);
+    await store.episodes.update(epId, (e) => { e.outfitLock = next; e.outfitLockApprovedAt = nowIso(); });
+    store.episodes.audit(epId, 'outfit.lock.approved', { characters: Object.keys(next) });
+    return episodeView(epId);
+  }
+
   function saveSettings(patch) {
     const cur = store.settings.get();
     const next = {};
@@ -1576,7 +1590,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
 
   return {
     exportName, sceneFlow, animGate, lipsync, uploadMusic, videoEdit, sfx, cfg, characterView, aiDiagnostics, store, video, gen, startImages, productAnalysis, charRefs, brollImages, animplan, renderReadiness, presets, endings, voice, renderer, publishing, vault: keys, runtime, usage, prompts, router, products, storylab, universes, sceneRegen, voiceCatalog, scriptgen, integrations, createEpisodeFromConcept, migrateLegacy, projects, translator, cutPresets, saveInserts, cutFrame,
-    summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
+    saveOutfitLock, summary, episodeView, episodeIds, sba, performance, manychat, setEpisodeCategory, holdEpisode, resumeEpisode, assertNotHeld, editEpisode, providerStatus, createEpisode, saveScript, approveScript, revokeScript, restoreVersion, addSuggestion,
     rebuildPrompts, savePrompt, setSceneTitle, reorderScenes, saveScene, addScene, deleteScene, trashEpisode, restoreEpisode, trashList, archiveEpisode, unarchiveEpisode, episodeImpact, scriptVersions, deleteScriptVersion, undeleteScriptVersion, reuseEndingAssets, setStartImage, uploadStartFrame, approveStartFrame, deleteStartFrame, saveImagePrompt, resetImagePrompt, approveStoryboard, revokeStoryboard, saveAnimationSettings, addCustomModel, removeCustomModel, confirmModel, muapiCliModels, confirmMuapiTts, muapiCheck, setSpendLimit,
     updateCharacter, characterView, promptStatus: promptSvc.status, saveSettings, loadDemoReferences, uploadSfx, updateSfx, mediaFile,
   };
