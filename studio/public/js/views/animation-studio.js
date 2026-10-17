@@ -249,6 +249,21 @@ function brollSection(ep, sc) {
     }) : h('div', { class: 'small muted' }, '승인된 B-roll 이미지가 아직 없습니다. 스토리보드의 컷 · B-roll에서 이미지를 승인하세요.'));
 }
 
+function outfitLockPanel(ep) {
+  const cast = (state.summary.characters || []).filter((c) => (ep.characters || []).includes(c.id));
+  const selection = Object.fromEntries(Object.entries(ep.outfitLock || {}).map(([id,v]) => [id,{...v}]));
+  return h('section', { class: 'card stack', 'data-outfit-lock': '', style: 'gap:10px' },
+    h('h2', null, '이 에피소드 의상 고정 · Outfit Lock'),
+    h('p', { class: 'small muted' }, '선택한 승인 캐릭터 사진을 이후 시작 이미지 생성에 실제 첨부합니다. 기존 이미지와 영상은 변경되지 않습니다. 의상 변경은 확인 후에만 적용됩니다.'),
+    cast.map((c) => h('label', { class: 'field' }, h('span', null, c.name || c.id),
+      h('select', { 'data-outfit-select': c.id, onchange: (e) => { if (e.target.value) selection[c.id] = { refId: e.target.value, description: selection[c.id]?.description || '' }; else delete selection[c.id]; } },
+        [h('option', { value: '' }, '의상 잠금 없음')].concat((c.references || []).filter((r) => r.approved && !r.placeholder).map((r) => h('option', { value: r.id, selected: selection[c.id]?.refId === r.id }, r.label || r.id))))))),
+    h('button', { type: 'button', class: 'btn clay', 'data-outfit-save': '', onclick: async () => {
+      const ok = await confirmDialog({ title: '이 에피소드 의상을 승인할까요?', body: '앞으로 생성하는 시작 이미지에 선택한 승인 의상 사진을 실제 전달합니다. 이미 만든 이미지는 덮어쓰지 않으며 재생성에는 별도의 비용 승인이 필요합니다.', confirm: '의상 고정 승인' });
+      if (ok) await act(() => api.put('/api/episodes/' + ep.id + '/outfit-lock', { selection, confirm: true }), { ok: '에피소드 의상 잠금이 승인됐습니다.' });
+    } }, '의상 선택 승인 및 저장'));
+}
+
 export function animationStudio(ep) {
   const u = uiState();
   const cur = ep.scenes.some((s) => s.id === u[ep.id]) ? u[ep.id] : ((ep.scenes.find((s) => !s.clips.approvedVersion) || ep.scenes[0] || {}).id);
@@ -256,6 +271,7 @@ export function animationStudio(ep) {
   const sc = ep.scenes.find((s) => s.id === cur);
   return h('div', { class: 'stack', style: 'gap:14px', 'data-animation-studio': '' },
     nav(ep, cur),
+    outfitLockPanel(ep),
     h('section', { class: 'card stack', style: 'gap:10px', 'data-anim-workspace': sc.id },
       h('div', { class: 'row between', style: 'flex-wrap:wrap;gap:8px' }, h('div', null, h('div', { class: 'eyebrow' }, `${sc.id} · 계획 ${sc.durationSec}초`), h('h2', { style: 'margin:2px 0 0' }, sc.title_ko || sc.title)), h('span', { class: 'small muted' }, '스토리보드의 승인된 이미지 → 이 장면의 클립 → 비디오 스튜디오에서 조립')),
       gatesPanel(ep, sc),
