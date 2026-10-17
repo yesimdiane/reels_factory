@@ -88,20 +88,48 @@ export function reviewTab(ep) {
 
 // ------------------------------------------------------------ 2. timeline
 function track(name, total, items, onPick, sel, onDrop = null) {
-  const lane = h('div', { class: 'vs-lane', 'data-vs-lane': name, style: `position:relative;height:30px;width:${Math.ceil(total * PX)}px;background:var(--paper);border:1px solid var(--line);border-radius:6px`,
-    ondragover: (e) => { if (onDrop) e.preventDefault(); },
-    ondrop: (e) => {
-      if (!onDrop) return;
-      e.preventDefault();
-      const key = e.dataTransfer.getData('text/plain');
-      const bounds = lane.getBoundingClientRect();
-      const seconds = snap(Math.max(0, (e.clientX - bounds.left) / PX));
-      onDrop(key, seconds);
-    } },
-    items.map((it) => h('button', { type: 'button', draggable: !!onDrop, class: 'vs-item' + (sel === it.key ? ' sel' : ''), 'data-vs-item': it.key, title: it.title || it.label,
-      ondragstart: (e) => { if (onDrop) { e.dataTransfer.setData('text/plain', it.key); e.dataTransfer.effectAllowed = 'move'; } },
-      onclick: () => onPick(it),
-      style: `position:absolute;left:${it.start * PX}px;width:${Math.max(6, (it.end - it.start) * PX)}px;top:2px;height:24px;overflow:hidden;font-size:10px;padding:0 3px;border-radius:5px;border:1px solid #bfae8f;background:${it.color || '#e7ddc9'};white-space:nowrap;${onDrop ? 'cursor:grab;' : ''}` }, it.label)));
+  // Pointer Events work on Safari trackpads and touch screens. Native HTML drag/drop
+  // otherwise often selects the button's text instead of starting a drag.
+  const lane = h('div', { class: 'vs-lane', 'data-vs-lane': name, style: `position:relative;height:30px;width:${Math.ceil(total * PX)}px;background:var(--paper);border:1px solid var(--line);border-radius:6px` },
+    items.map((it) => {
+      const button = h('button', { type: 'button', draggable: false, class: 'vs-item' + (sel === it.key ? ' sel' : ''), 'data-vs-item': it.key, title: it.title || it.label,
+        style: `position:absolute;left:${it.start * PX}px;width:${Math.max(6, (it.end - it.start) * PX)}px;top:2px;height:24px;overflow:hidden;font-size:10px;padding:0 3px;border-radius:5px;border:1px solid #bfae8f;background:${it.color || '#e7ddc9'};white-space:nowrap;${onDrop ? 'cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;' : ''}` }, it.label);
+      if (!onDrop) { button.addEventListener('click', () => onPick(it)); return button; }
+      let dragging = null;
+      button.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 && e.pointerType === 'mouse') return;
+        e.preventDefault();
+        dragging = { id: e.pointerId, x: e.clientX, moved: false };
+        button.setPointerCapture(e.pointerId);
+      });
+      button.addEventListener('pointermove', (e) => {
+        if (!dragging || dragging.id !== e.pointerId) return;
+        const dx = e.clientX - dragging.x;
+        if (Math.abs(dx) > 4) dragging.moved = true;
+        if (dragging.moved) {
+          button.style.transform = `translateX(${dx}px)`;
+          button.style.opacity = '0.75';
+        }
+      });
+      button.addEventListener('pointerup', (e) => {
+        if (!dragging || dragging.id !== e.pointerId) return;
+        const { x, moved } = dragging;
+        dragging = null;
+        button.style.transform = '';
+        button.style.opacity = '';
+        if (button.hasPointerCapture(e.pointerId)) button.releasePointerCapture(e.pointerId);
+        if (moved) {
+          // Preserve the point where the user grabbed the block; snap its NEW
+          // start, rather than snapping the pointer's absolute lane position.
+          const sec = Math.max(0, snap(it.start + (e.clientX - x) / PX));
+          onDrop(it.key, sec);
+        } else onPick(it);
+      });
+      button.addEventListener('pointercancel', () => {
+        dragging = null; button.style.transform = ''; button.style.opacity = '';
+      });
+      return button;
+    }));
   return h('div', { class: 'row', style: 'gap:8px;align-items:center;flex-wrap:nowrap' }, h('div', { class: 'small', style: 'width:64px;flex:none', 'data-vs-track': name }, name), lane);
 }
 
