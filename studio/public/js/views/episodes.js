@@ -71,7 +71,7 @@ function episodeCard(e, { archivedView = false } = {}) {
   const done = e.steps.filter((x) => x.state === 'done').length;
   const status = e.published ? ['게시 완료', 'done'] : e.finalApproved ? ['최종 승인', 'done'] : done > 2 ? ['제작 중', 'attention'] : ['초안', ''];
   return h('article', { class: 'card ep-card', 'data-episode': e.id, style: 'padding:0;overflow:hidden;display:grid;grid-template-columns:120px 1fr' },
-    h('div', { class: 'thumb', style: 'border-radius:0;border:0;border-right:1px solid var(--line)' }, e.thumb ? h('video', { src: e.thumb, muted: true, playsinline: true, preload: 'metadata' }) : h('div', { style: 'height:100%;display:grid;place-items:center;color:var(--muted);font-size:12px;text-align:center;padding:8px' }, '미리보기 없음')),
+    h('div', { class: 'thumb', style: 'border-radius:0;border:0;border-right:1px solid var(--line)' }, e.thumb ? h('video', { src: e.thumb, poster: e.poster || undefined, muted: true, playsinline: true, preload: 'metadata', style: 'width:100%;height:100%;object-fit:cover;background:var(--surface)' }) : e.poster ? h('img', { src: e.poster, alt: e.title + ' 시작 이미지', loading: 'lazy', style: 'width:100%;height:100%;object-fit:cover' }) : h('div', { style: 'height:100%;display:grid;place-items:center;color:var(--muted);font-size:12px;text-align:center;padding:8px' }, '미리보기 없음')),
     h('div', { class: 'stack', style: 'padding:16px;gap:8px' },
       h('div', { class: 'row between' }, h('span', { class: 'eyebrow' }, e.id), h('div', { class: 'row', style: 'gap:6px' }, archivedView ? chip('보관됨', 'mock') : null, e.onHold ? chip('보류 중', 'mock') : null, chip(status[0], status[1]))),
       h('h3', { style: 'font-size:17px' }, e.title),
