@@ -158,12 +158,18 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     };
   }
 
+  function videoPromptWithOutfit(ep, scene, prompt) {
+    const locks = ep.outfitLock || {};
+    const directives = (scene.characters || []).filter((id) => locks[id]).map((id) => 'OUTFIT CONTINUITY LOCK '+id+': same exact approved outfit as shown in the start frame; preserve colours, clothing silhouette, sleeves, accessories, no wardrobe changes. '+String(locks[id].description || '').slice(0,400));
+    return [prompt, ...directives].filter(Boolean).join('\n');
+  }
+
   function keyFor(ep, scene, model) {
     const p = ep.prompts && ep.prompts[scene.id];
     const img = startImage(ep, scene);
     if (!p || img.error) return '';
     const variant = model.id === 'seedance-2.5' ? JSON.stringify(ep.animation && ep.animation[scene.id] && { mode: ep.animation[scene.id].seedanceMode, draftId: ep.animation[scene.id].draftRequestId, resolution: ep.animation[scene.id].resolution }) : '';
-    return jobKey({ model, prompt: composePrompt(ep, scene.id, p.video) + variant, negative: p.negative, clipSec: clipSecFor(model, clipTarget(ep, scene).durationSec), aspectRatio: '9:16', imageSha256: img.sha256 });
+    return jobKey({ model, prompt: videoPromptWithOutfit(ep, scene, composePrompt(ep, scene.id, p.video)) + variant, negative: p.negative, clipSec: clipSecFor(model, clipTarget(ep, scene).durationSec), aspectRatio: '9:16', imageSha256: img.sha256 });
   }
 
   function pickScenes(ep, sceneIds) {
@@ -391,7 +397,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       });
       let sub;
       try {
-        sub = await provider.submit({ model, prompt: seedanceTimedPrompt(store.episodes.get(epId), sceneId, model, composePrompt(store.episodes.get(epId), sceneId, prompt.video)), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative && model.supportsNegativePrompt !== false ? prompt.negative + SILENT_NEGATIVE : undefined, extra: seedanceExtra, silent: true });
+        sub = await provider.submit({ model, prompt: seedanceTimedPrompt(store.episodes.get(epId), sceneId, model, videoPromptWithOutfit(store.episodes.get(epId), scene, composePrompt(store.episodes.get(epId), sceneId, prompt.video))), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative && model.supportsNegativePrompt !== false ? prompt.negative + SILENT_NEGATIVE : undefined, extra: seedanceExtra, silent: true });
       } catch (e) {
         const definitelyRefused = ['AUTH', 'BAD_REQUEST', 'CREDITS', 'RATE_LIMIT'].includes(e.code);
         await setJob(epId, job.id, { status: definitelyRefused ? 'failed' : 'uncertain', billed: definitelyRefused ? false : null, error: errInfo(e) });
