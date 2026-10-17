@@ -182,9 +182,9 @@ test('generation → review → cache reuse; failed jobs are never auto-retried'
   await s.gen.review('EP01', 'S1', 1, 'approve');
   assert.equal(s.episodeView('EP01').scenes[0].clips.approvedVersion, 1);
   const clipFile = path.join(cfg.studioDir, 'episodes', 'EP01', 'clips', 'S1');
-  const f = require('node:child_process').execSync(`find ${clipFile} -name "*.mp4" | head -1`).toString().trim();
+  const f = path.join(clipFile, 'v1.mp4');
   fs.appendFileSync(f, 'tamper');
-  const f2 = require('node:child_process').execSync(`find ${path.join(cfg.studioDir, 'episodes', 'EP01', 'clips', 'S2')} -name "*.mp4" | head -1`).toString().trim();
+  const f2 = path.join(cfg.studioDir, 'episodes', 'EP01', 'clips', 'S2', 'v1.mp4');
   fs.appendFileSync(f2, 'tamper');
   await assert.rejects(s.gen.review('EP01', 'S2', 1, 'approve'), (e) => e.code === 'CHECKSUM');
   const stored = JSON.stringify(s.episodeView('EP01'));
