@@ -77,7 +77,7 @@ function createStartImages({ store, products, router, lib, charRefs, productAnal
     }
     // The approved structure description rides along ONLY with the real product images that are attached (text alone never replaces the reference image).
     const pctx = productIds.length && productAnalysis ? productAnalysis.contextFor(ep.productId, productIds) : null;
-    try { charRefs.enforce({ chars: ci.chars, product: productParts }); } catch (e) { if (e.details) e.details.sceneId = scene.id; e.message = `${scene.id}: ${e.message}`; throw e; } // model input limits, before any paid call
+    try { charRefs.enforce({ chars: ci.chars, product: productParts.concat(outfit.images.map((im, i) => ({ assetId: 'outfit-lock-' + i, name: im.label }))) }); } catch (e) { if (e.details) e.details.sceneId = scene.id; e.message = `${scene.id}: ${e.message}`; throw e; } // model input limits, before any paid call
     const facts = scene.showsProduct ? (ep.product.verifiedFeatures || []) : [];
     const prompt = [
       headFor(ep, scene),
