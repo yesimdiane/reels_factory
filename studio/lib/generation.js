@@ -22,6 +22,7 @@ const { sceneSetHash } = require('./approvals');
 const { modelById, clipSecFor, estimateRun, jobKey, spentUsd, limitFor, round } = require('./budget');
 const { ProviderError } = require('./providers');
 const { probe } = require('../../renderer/lib/ffmpeg');
+const { browserMp4 } = require('./browserclip');
 
 const AUTH_TTL_MS = 30 * 60 * 1000;
 const ACTIVE = new Set(['preparing', 'submitting', 'processing']);
@@ -281,14 +282,14 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
 
   async function addClipVersion(epId, sceneId, tmpFile, meta) {
     const info = await validateClip(tmpFile);
-    const hash = sha256File(tmpFile);
-    const size = fs.statSync(tmpFile).size;
     return store.episodes.update(epId, (ep) => {
       const c = (ep.clips[sceneId] = ep.clips[sceneId] || { versions: [], approvedVersion: null });
       const v = c.versions.length + 1;
       const rel = path.join('clips', sceneId, 'v' + v + '.mp4');
       fs.mkdirSync(path.dirname(store.episodes.file(epId, rel)), { recursive: true });
       fs.copyFileSync(tmpFile, store.episodes.file(epId, rel));
+      const hash = sha256File(store.episodes.file(epId, rel));
+      const size = fs.statSync(store.episodes.file(epId, rel)).size;
       c.versions.push(Object.assign({ v, file: rel, sha256: hash, size, ...info, status: 'pending_review', createdAt: nowIso() }, meta));
       return v;
     });
