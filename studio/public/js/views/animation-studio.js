@@ -257,7 +257,7 @@ function outfitLockPanel(ep) {
     h('p', { class: 'small muted' }, '선택한 승인 캐릭터 사진을 이후 시작 이미지 생성에 실제 첨부합니다. 기존 이미지와 영상은 변경되지 않습니다. 의상 변경은 확인 후에만 적용됩니다.'),
     cast.map((c) => h('label', { class: 'field' }, h('span', null, c.name || c.id),
       h('select', { 'data-outfit-select': c.id, onchange: (e) => { if (e.target.value) selection[c.id] = { refId: e.target.value, description: selection[c.id]?.description || '' }; else delete selection[c.id]; } },
-        [h('option', { value: '' }, '의상 잠금 없음')].concat((c.references || []).filter((r) => r.approved && !r.placeholder).map((r) => h('option', { value: r.id, selected: selection[c.id]?.refId === r.id }, r.label || r.id))))))),
+        [h('option', { value: '' }, '의상 잠금 없음')].concat((c.references || []).filter((r) => r.approved && !r.placeholder).map((r) => h('option', { value: r.id, selected: selection[c.id]?.refId === r.id }, r.label || r.id)))))),
     h('button', { type: 'button', class: 'btn clay', 'data-outfit-save': '', onclick: async () => {
       const ok = await confirmDialog({ title: '이 에피소드 의상을 승인할까요?', body: '앞으로 생성하는 시작 이미지에 선택한 승인 의상 사진을 실제 전달합니다. 이미 만든 이미지는 덮어쓰지 않으며 재생성에는 별도의 비용 승인이 필요합니다.', confirm: '의상 고정 승인' });
       if (ok) await act(() => api.put('/api/episodes/' + ep.id + '/outfit-lock', { selection, confirm: true }), { ok: '에피소드 의상 잠금이 승인됐습니다.' });
