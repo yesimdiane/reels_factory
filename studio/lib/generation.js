@@ -22,6 +22,7 @@ const { sceneSetHash } = require('./approvals');
 const { modelById, clipSecFor, estimateRun, jobKey, spentUsd, limitFor, round } = require('./budget');
 const { ProviderError } = require('./providers');
 const { probe } = require('../../renderer/lib/ffmpeg');
+const { browserMp4 } = require('./browserclip');
 
 const AUTH_TTL_MS = 30 * 60 * 1000;
 const ACTIVE = new Set(['preparing', 'submitting', 'processing']);
@@ -157,12 +158,18 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
     };
   }
 
+  function videoPromptWithOutfit(ep, scene, prompt) {
+    const locks = ep.outfitLock || {};
+    const directives = (scene.characters || []).filter((id) => locks[id]).map((id) => 'OUTFIT CONTINUITY LOCK '+id+': same exact approved outfit as shown in the start frame; preserve colours, clothing silhouette, sleeves, accessories, no wardrobe changes. '+String(locks[id].description || '').slice(0,400));
+    return [prompt, ...directives].filter(Boolean).join('\n');
+  }
+
   function keyFor(ep, scene, model) {
     const p = ep.prompts && ep.prompts[scene.id];
     const img = startImage(ep, scene);
     if (!p || img.error) return '';
     const variant = model.id === 'seedance-2.5' ? JSON.stringify(ep.animation && ep.animation[scene.id] && { mode: ep.animation[scene.id].seedanceMode, draftId: ep.animation[scene.id].draftRequestId, resolution: ep.animation[scene.id].resolution }) : '';
-    return jobKey({ model, prompt: composePrompt(ep, scene.id, p.video) + variant, negative: p.negative, clipSec: clipSecFor(model, clipTarget(ep, scene).durationSec), aspectRatio: '9:16', imageSha256: img.sha256 });
+    return jobKey({ model, prompt: videoPromptWithOutfit(ep, scene, composePrompt(ep, scene.id, p.video)) + variant, negative: p.negative, clipSec: clipSecFor(model, clipTarget(ep, scene).durationSec), aspectRatio: '9:16', imageSha256: img.sha256 });
   }
 
   function pickScenes(ep, sceneIds) {
@@ -281,17 +288,20 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
 
   async function addClipVersion(epId, sceneId, tmpFile, meta) {
     const info = await validateClip(tmpFile);
-    const hash = sha256File(tmpFile);
-    const size = fs.statSync(tmpFile).size;
-    return store.episodes.update(epId, (ep) => {
+    const browserCopy = tmpFile + '.browser.mp4';
+    const browserInfo = await browserMp4(tmpFile, browserCopy, cfg);
+    try { return await store.episodes.update(epId, (ep) => {
       const c = (ep.clips[sceneId] = ep.clips[sceneId] || { versions: [], approvedVersion: null });
       const v = c.versions.length + 1;
       const rel = path.join('clips', sceneId, 'v' + v + '.mp4');
       fs.mkdirSync(path.dirname(store.episodes.file(epId, rel)), { recursive: true });
-      fs.copyFileSync(tmpFile, store.episodes.file(epId, rel));
-      c.versions.push(Object.assign({ v, file: rel, sha256: hash, size, ...info, status: 'pending_review', createdAt: nowIso() }, meta));
+      fs.copyFileSync(tmpFile, store.episodes.file(epId, path.join('clips', sceneId, 'original-v' + v + '.mp4')));
+      fs.copyFileSync(browserCopy, store.episodes.file(epId, rel));
+      const hash = sha256File(store.episodes.file(epId, rel));
+      const size = fs.statSync(store.episodes.file(epId, rel)).size;
+      c.versions.push(Object.assign({ v, file: rel, originalFile: path.join('clips', sceneId, 'original-v' + v + '.mp4'), browserCompatibility: browserInfo.compatibility, sha256: hash, size, ...info, status: 'pending_review', createdAt: nowIso() }, meta));
       return v;
-    });
+    }); } finally { fs.rmSync(browserCopy, { force: true }); }
   }
 
   async function finishDownload(epId, job, outputs) {
@@ -387,7 +397,7 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       });
       let sub;
       try {
-        sub = await provider.submit({ model, prompt: seedanceTimedPrompt(store.episodes.get(epId), sceneId, model, composePrompt(store.episodes.get(epId), sceneId, prompt.video)), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative && model.supportsNegativePrompt !== false ? prompt.negative + SILENT_NEGATIVE : undefined, extra: seedanceExtra, silent: true });
+        sub = await provider.submit({ model, prompt: seedanceTimedPrompt(store.episodes.get(epId), sceneId, model, videoPromptWithOutfit(store.episodes.get(epId), scene, composePrompt(store.episodes.get(epId), sceneId, prompt.video))), imageUrl, aspectRatio: '9:16', duration: clipSec, negativePrompt: prompt.negative && model.supportsNegativePrompt !== false ? prompt.negative + SILENT_NEGATIVE : undefined, extra: seedanceExtra, silent: true });
       } catch (e) {
         const definitelyRefused = ['AUTH', 'BAD_REQUEST', 'CREDITS', 'RATE_LIMIT'].includes(e.code);
         await setJob(epId, job.id, { status: definitelyRefused ? 'failed' : 'uncertain', billed: definitelyRefused ? false : null, error: errInfo(e) });
@@ -624,7 +634,9 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
       try {
         try { await provider.download(r.outputs[0], tmp); } catch (e) { await setJob(epId, job.id, { status: 'download_failed', outputs: r.outputs, error: errInfo(e) }); throw e; }
         const info = await validateClip(tmp);
-        const hash = sha256File(tmp);
+        const browserCopy = tmp + '.browser.mp4';
+        const browserInfo = await browserMp4(tmp, browserCopy, cfg);
+        const hash = sha256File(browserCopy);
         const size = fs.statSync(tmp).size;
         const v = await store.episodes.update(epId, (ep) => {
           ep.brollClips = ep.brollClips || {};
@@ -632,11 +644,13 @@ function createGenerationService({ store, provider, cfg, now = () => Date.now(),
           const n = c.versions.length + 1;
           const rel = path.join('brollclips', bid, 'v' + n + '.mp4');
           fs.mkdirSync(path.dirname(store.episodes.file(epId, rel)), { recursive: true });
-          fs.copyFileSync(tmp, store.episodes.file(epId, rel));
+          fs.copyFileSync(tmp, store.episodes.file(epId, path.join('brollclips', bid, 'original-v' + n + '.mp4')));
+          fs.copyFileSync(browserCopy, store.episodes.file(epId, rel));
           c.prompt = text;
-          c.versions.push({ v: n, file: rel, sha256: hash, size, ...info, status: 'pending_review', createdAt: nowIso(), jobId: job.id, requestId: job.requestId, mock: provider.mode === 'mock', modelId: model.id, imageSha256: imageSha, promptHash: job.promptHash, clipSec: est.clipSec, estimatedUsd: est.totalUsd });
+          c.versions.push({ v: n, file: rel, originalFile: path.join('brollclips', bid, 'original-v' + n + '.mp4'), browserCompatibility: browserInfo.compatibility, sha256: hash, size: fs.statSync(browserCopy).size, ...info, status: 'pending_review', createdAt: nowIso(), jobId: job.id, requestId: job.requestId, mock: provider.mode === 'mock', modelId: model.id, imageSha256: imageSha, promptHash: job.promptHash, clipSec: est.clipSec, estimatedUsd: est.totalUsd });
           return n;
         });
+        fs.rmSync(browserCopy, { force: true });
         await setJob(epId, job.id, { status: 'completed', outputs: r.outputs, clipVersion: v, sha256: hash, error: null });
         store.episodes.audit(epId, 'broll.clip.completed', { brollId: bid, version: v, by });
         return { brollId: bid, status: 'completed', version: v };

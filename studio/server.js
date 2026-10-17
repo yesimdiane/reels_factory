@@ -274,6 +274,7 @@ function createApp(studio, { token = '', port = 0, host = '127.0.0.1', log = () 
   route('DELETE', '/api/episodes/:id', async ({ p, body }) => S.trashEpisode(p.id, { confirmPublished: !!(body && body.confirmPublished), confirmApproved: !!(body && body.confirmApproved) }));
   route('POST', '/api/episodes/:id/hold', async ({ p, body }) => S.holdEpisode(p.id, body && body.reason));
   route('POST', '/api/episodes/:id/resume', async ({ p }) => S.resumeEpisode(p.id));
+  route('PUT', '/api/episodes/:id/outfit-lock', async ({ p, body }) => S.saveOutfitLock(p.id, body && body.selection, body && body.confirm));
   route('PUT', '/api/episodes/:id/meta', async ({ p, body }) => S.editEpisode(p.id, { title: body && body.title }));
   route('PUT', '/api/episodes/:id/category', async ({ p, body }) => S.setEpisodeCategory(p.id, body.category));
   // ---- storyboard assets: 0.5 s movement plan + B-roll library (no AI / video calls) ----

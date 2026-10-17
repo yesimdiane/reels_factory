@@ -12,6 +12,8 @@ export function videoSummary(ep, { startVideo }) {
   if (!vs) return h('div', null);
   const c = vs.clips; const v = vs.voice; const r = vs.render; const cost = vs.cost;
   const shown = r.lastFinal || r.lastPreview;
+  const clipPreview = !shown && (ep.scenes || []).flatMap((s) => (s.clips && s.clips.versions || []).map((v) => ({ ...v, sceneId: s.id }))).find((v) => v.url);
+  const previewAvailable = !!clipPreview;
   const busy = r.running || c.running.length > 0;
 
   const render = (preview) => async () => {
@@ -36,8 +38,8 @@ export function videoSummary(ep, { startVideo }) {
   return h('section', { class: 'card stack vs-summary', style: 'gap:14px', 'data-video-summary': ep.id },
     h('div', { class: 'vs-grid' },
       h('div', { class: 'vs-preview' },
-        shown ? h('video', { src: shown.url, controls: true, playsinline: true, preload: 'metadata', 'data-vs-player': '' }) : h('div', { class: 'ph' }, '아직 렌더가 없습니다'),
-        shown ? h('div', { class: 'small muted' }, `v${shown.v} · ${r.lastFinal ? '최종' : '미리보기'}${r.lastFinal && !r.fresh ? ' · 이전 상태(다시 렌더 필요)' : ''}`) : null),
+        shown || previewAvailable ? h('video', { src: shown ? shown.url : clipPreview.url, controls: true, playsinline: true, preload: 'metadata', 'data-vs-player': '', onerror: () => toast('미리보기 영상 파일을 재생할 수 없습니다. 영상 생성 화면에서 클립을 확인하세요.', { error: true }) }) : h('div', { class: 'ph' }, '재생 가능한 영상 클립이 없습니다'),
+        shown ? h('div', { class: 'small muted' }, `v${shown.v} · ${r.lastFinal ? '최종' : '미리보기'}${r.lastFinal && !r.fresh ? ' · 이전 상태(다시 렌더 필요)' : ''}`) : previewAvailable ? h('div', { class: 'small muted' }, `${clipPreview.sceneId} · 클립 미리보기 (전체 합본 아님, 무료)`) : null),
       h('div', { class: 'stack', style: 'gap:10px' },
         h('div', { class: 'vs-stats' },
           stat('영상 생성', `${c.approved}/${c.total} 승인`, c.approved === c.total ? 'done' : 'attention', c.running.length ? `${c.running.length}개 생성 중` : c.failed.length ? `${c.failed.length}개 실패` : `${c.generated}개 생성됨`),
@@ -52,7 +54,7 @@ export function videoSummary(ep, { startVideo }) {
     failedBox,
     vs.render.problems.length ? h('div', { class: 'small muted' }, '렌더 전에 필요한 것: ' + vs.render.problems.map((p) => p.message).join(' / ')) : null,
     h('div', { class: 'vs-actions' },
-      h('button', { class: 'btn ghost', type: 'button', 'data-vs-preview': '', disabled: !r.canRender || busy, onclick: render(true) }, icon('play'), '미리보기 (무료)'),
+      h('button', { class: 'btn ghost', type: 'button', 'data-vs-preview': '', disabled: (!r.canRender && !previewAvailable && !shown) || busy, onclick: r.canRender ? render(true) : () => { const player = document.querySelector('[data-vs-player]'); if (player) { player.currentTime = 0; player.play().catch(() => toast('브라우저에서 재생할 수 없습니다. 클립 파일을 확인하세요.', { error: true })); } } }, icon('play'), r.canRender ? '미리보기 렌더 (무료)' : '기존 클립 재생 (무료)'),
       h('button', { class: 'btn sage', type: 'button', 'data-vs-render': '', disabled: !r.canRender || busy, onclick: render(false) }, icon('render'), '최종 렌더'),
       r.lastFinal ? h('a', { class: 'btn', 'data-vs-download': '', href: r.lastFinal.downloadUrl }, icon('download'), '다운로드') : h('button', { class: 'btn', type: 'button', 'data-vs-download': '', disabled: true, title: '최종 렌더가 있어야 합니다' }, icon('download'), '다운로드')),
     h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' },

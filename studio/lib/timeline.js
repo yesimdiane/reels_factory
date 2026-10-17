@@ -25,7 +25,9 @@ function buildTimeline(ep, audioSec) {
     own.forEach((l, i) => {
       const d = audioSec(l.id);
       if (d == null) { missing.push(l.id); return; }
-      const offset = Number((ep.audioTiming || {})[l.id]);
+      const savedOffset = (ep.audioTiming || {})[l.id];
+      // An absent offset must use sequential default placement, never coerce undefined/null into zero.
+      const offset = savedOffset == null ? NaN : Number(savedOffset);
       if (Number.isFinite(offset) && offset >= 0) cursor = Math.max(cursor, sceneStart + offset);
       ownLines.push({ id: l.id, sceneId: s.id, speaker: l.speaker, start: round(cursor), end: round(cursor + d), duration: d, en: l.en, ko: l.ko });
       cursor += d + GAP;

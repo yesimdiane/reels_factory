@@ -96,18 +96,18 @@ test('the episode maximum video length is a hard limit: total over the max block
   void ep;
 });
 
-test('the fixed Jack & Diane shopping ending belongs to DRAMA only; Viral / Informational get a free structure', async () => {
+test('every newly created episode category uses the six-beat story and reusable shopping ending', async () => {
   const d = await setup('drama');
   const dep = d.s.store.episodes.get(d.id);
   assert.ok(dep.comedy_story && dep.product_ending, 'drama: six-beat story + reusable ending');
   for (const category of ['viral', 'info']) {
     const m = await setup(category);
     const ep = m.s.store.episodes.get(m.id);
-    assert.equal(ep.comedy_story, undefined, category + ': no beat structure');
-    assert.equal(ep.product_ending, undefined, category + ': no forced shopping ending');
-    assert.equal(ep.timingStrict, true);
+    assert.ok(ep.comedy_story, category + ': six beats');
+    assert.ok(ep.product_ending, category + ': fixed product ending');
+    assert.deepEqual(Object.keys(ep.comedy_story).length, 6);
     assert.ok(ep.scenes.length > 0 && ep.lines.length > 0);
-    assert.ok(!ep.scenes.some((s) => s.part === 'B'));
+    assert.ok(ep.scenes.some((s) => s.part === 'B'));
     // and it can go all the way to the hand-off
     await approveWithScenes(m.s, m.id);
     const ho = await m.s.projects.handoff(m.id);

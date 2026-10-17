@@ -144,6 +144,10 @@ export function timelineTab(ep, rerender) {
       const line = tl.lines.find((x) => x.id === id);
       if (!line) return;
       const offset = Math.max(0, Math.min(30, snap(targetSec - sceneStart(line.sceneId))));
+      const scene = tl.scenes.find((s) => s.id === line.sceneId);
+      if (scene && ep.durationPolicy && ep.durationPolicy.maxSceneSec === 5 && offset + (line.end - line.start) + 0.35 > 5.001) {
+        return toast('5초 씬을 넘길 수 없습니다. 음성 시작 위치를 앞당기거나 씬을 분할하세요.', { error: true });
+      }
       act(() => api.put(`/api/episodes/${ep.id}/audio-timing/${id}`, { offsetSec: offset }), { ok: '음성 시작 위치 저장 · 씬 합본을 다시 만드세요' });
     }),
     track('효과음', total, sfx, pick, sel, (key, targetSec) => {

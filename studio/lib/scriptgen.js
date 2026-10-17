@@ -43,7 +43,7 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
     // Cast: the universe + characters this concept was written for (a concept from before universes = the Jack & Diane cast).
     const rc = U().resolveCast(concept.cast);
     if (rc.errors.length) throw new StudioError('CAST_INVALID', rc.errors[0].message, { status: 409, details: rc.errors, recovery: 'Story Lab에서 출연진을 확인한 뒤 컨셉을 다시 만들거나 승인하세요.' });
-    const isDrama = (concept.category || 'drama') === 'drama';
+    const isDrama = true; // Every newly created episode uses the six-beat story + fixed product ending.
     const endingTemplateId = rc.universe.endingTemplateId || endings.forUniverse(rc.universe.id);
     // The fixed closing (Part B) belongs to the universe. It must not bring in characters nobody selected unless the operator approves it explicitly.
     const endingCast = isDrama ? endings.castOf({ templateId: endingTemplateId }) : [];
@@ -76,8 +76,9 @@ function createScriptGen({ store, products, storylab, episodeIds, prompts, prese
       durationPolicy: { maxSceneSec: 5 },
       formula: 1,
     };
-    // The fixed Jack & Diane drama format (six-beat Part A + reusable shopping ending) is for DRAMA only; Viral / Informational stories get a free structure.
-    if (isDrama) SF.seedFormula(seed, endings, endingTemplateId); else seed.timingStrict = true;
+    // Every episode category uses the same six-beat Part A and product-ending Part B.
+    // Preserve the selected category as metadata; do not rewrite older episode records.
+    SF.seedFormula(seed, endings, endingTemplateId);
     return seed;
     };
     // Story approval → Episode: {PRODUCT_CODE}-{NN}-{D|V|I}. The number is allocated atomically, only when the episode file is really created;

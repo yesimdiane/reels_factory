@@ -14,6 +14,7 @@ const { StudioError, nowIso, sha256 } = require('./util');
 const { isScriptApproved } = require('./episode');
 const { castDirective, identityLines, SHEET_RULE } = require('./charrules');
 const { sniffImage } = require('./extract');
+const { lockedOutfits } = require('./outfitlock');
 
 const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 const MAX_PRODUCT_REFS = 3;
@@ -63,6 +64,8 @@ function createStartImages({ store, products, router, lib, charRefs, productAnal
     // the ACTUAL approved image bytes of the characters in this scene (validated first; throws before any paid call)
     const ci = charRefs.inputsFor(ep, scene, { exclude });
     const images = ci.images.slice();
+    const outfit = lockedOutfits(ep, scene, store, L.characters);
+    images.push(...outfit.images);
     const used = ci.used;
     let productIds = []; const productParts = [];
     if (scene.showsProduct && ep.productId && ep.productRefs && (ep.productRefs.imageIds || []).length) {
@@ -74,13 +77,14 @@ function createStartImages({ store, products, router, lib, charRefs, productAnal
     }
     // The approved structure description rides along ONLY with the real product images that are attached (text alone never replaces the reference image).
     const pctx = productIds.length && productAnalysis ? productAnalysis.contextFor(ep.productId, productIds) : null;
-    try { charRefs.enforce({ chars: ci.chars, product: productParts }); } catch (e) { if (e.details) e.details.sceneId = scene.id; e.message = `${scene.id}: ${e.message}`; throw e; } // model input limits, before any paid call
+    try { charRefs.enforce({ chars: ci.chars, product: productParts.concat(outfit.images.map((im, i) => ({ assetId: 'outfit-lock-' + i, name: im.label }))) }); } catch (e) { if (e.details) e.details.sceneId = scene.id; e.message = `${scene.id}: ${e.message}`; throw e; } // model input limits, before any paid call
     const facts = scene.showsProduct ? (ep.product.verifiedFeatures || []) : [];
     const prompt = [
       headFor(ep, scene),
       castDirective(cast, L),
       ...identityLines(cast, L),
       ...ci.lines,
+      ...outfit.instructions,
       cast.length ? SHEET_RULE : '',
       pctx && pctx.block ? pctx.block : '',
       scene.showsProduct && productIds.length ? 'The product appears in this scene: draw it EXACTLY like the approved product reference(s). Never add features. Verified facts only: ' + (facts.join('; ') || 'none') : 'Do NOT show the product in this frame.',

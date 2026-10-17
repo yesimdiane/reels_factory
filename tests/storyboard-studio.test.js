@@ -84,7 +84,7 @@ test('the movement plan is appended to the video prompt at generation time (and 
   assert.match(text, /0\.5–1\.5s: Jack;[^\n]*emotion: annoyed; camera: slow push-in\./);
   const gen = fs.readFileSync(path.join(__dirname, '..', 'studio', 'lib', 'generation.js'), 'utf8');
   assert.match(gen, /composePrompt\(store\.episodes\.get\(epId\), sceneId, prompt\.video\)/, 'the provider receives the composed prompt');
-  assert.match(gen, /prompt: composePrompt\(ep, scene\.id, p\.video\)/, 'and the job key follows it');
+  assert.match(gen, /prompt: videoPromptWithOutfit\(ep, scene, composePrompt\(ep, scene\.id, p\.video\)\)/, 'and the job key includes outfit continuity');
 });
 
 test('제품 등장 ON/OFF: ON adds the structured placement and the verified product block; OFF never forces the product', async () => {
