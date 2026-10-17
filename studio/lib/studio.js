@@ -368,7 +368,7 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
       products: products.list(),
       storylab: storylabSummary(),
       ai: { routing: integrations.overview().routing, usage: usage.summary(store.settings.get().ai.limits) },
-      episodes: eps.map((e) => ({ id: e.id, displayId: e.displayId || e.id, uuid: e.uuid || '', productCode: e.productCode || '', episodeNumber: e.episodeNumber || null, category: e.category || (e.concept && e.concept.category) || '', productId: e.productId || '', concept: e.derived.concept, title: e.title, titleEn: e.titleEn, productName: e.product.name, steps: e.derived.steps, spentUsd: e.derived.spentUsd, limitUsd: e.derived.limitUsd, totalPlannedSec: e.derived.totalPlannedSec, scenes: e.scenes.length, thumb: firstClipThumb(e), published: !!(e.publishing && e.publishing.publishedAt), finalApproved: !!e.approvals.final, archived: !!e.archivedAt, onHold: !!e.holdAt, header: e.derived.header, updatedAt: e.updatedAt })),
+      episodes: eps.map((e) => ({ id: e.id, displayId: e.displayId || e.id, uuid: e.uuid || '', productCode: e.productCode || '', episodeNumber: e.episodeNumber || null, category: e.category || (e.concept && e.concept.category) || '', productId: e.productId || '', concept: e.derived.concept, title: e.title, titleEn: e.titleEn, productName: e.product.name, steps: e.derived.steps, spentUsd: e.derived.spentUsd, limitUsd: e.derived.limitUsd, totalPlannedSec: e.derived.totalPlannedSec, scenes: e.scenes.length, thumb: episodePreview(e).video, poster: episodePreview(e).poster, published: !!(e.publishing && e.publishing.publishedAt), finalApproved: !!e.approvals.final, archived: !!e.archivedAt, onHold: !!e.holdAt, header: e.derived.header, updatedAt: e.updatedAt })),
       queue,
       home: homeSummary(eps),
       totals: {
@@ -457,12 +457,19 @@ function createStudio({ cfg, store = createStore({ dir: cfg.studioDir }), provid
   episodeIds.migrate(); // old episodes keep their ids; each gets an immutable uuid + display id (idempotent)
   projects.migrateAll(); // old episodes: scenes of an already approved script stay approved; every episode joins a project (idempotent)
 
-  function firstClipThumb(e) {
-    for (const s of e.scenes) {
-      const v = s.clips.versions.find((x) => x.v === s.clips.approvedVersion) || s.clips.versions[s.clips.versions.length - 1];
-      if (v) return v.url;
+  function episodePreview(e) {
+    // Use the stored episode view: never make preview depend on a paid render.
+    // A static approved start frame is also the poster for a generated clip.
+    const withFrame = (e.scenes || []).find((s) => s.startImageInfo && s.startImageInfo.url && s.startImageInfo.approved);
+    const fallback = withFrame || (e.scenes || []).find((s) => s.startImageInfo && s.startImageInfo.url);
+    const clipScene = (e.scenes || []).find((s) => s.clips && s.clips.versions && s.clips.versions.length);
+    const poster = (clipScene && clipScene.startImageInfo && clipScene.startImageInfo.url) || (fallback && fallback.startImageInfo.url) || '';
+    if (clipScene) {
+      const c = clipScene.clips;
+      const v = c.versions.find((x) => x.v === c.approvedVersion) || c.versions[c.versions.length - 1];
+      return { video: v.url, poster };
     }
-    return '';
+    return { video: '', poster };
   }
 
   // ---------- script / storyboard editing ----------
